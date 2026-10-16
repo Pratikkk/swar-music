@@ -16,7 +16,51 @@ struct PlaybackControls: View {
                     .textSelection(.enabled)
                     .accessibilityLabel("Playback error: \(error)")
             }
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
+                CoverArt(url: player.artworkURL, title: player.subtitle.isEmpty ? player.title : player.subtitle)
+                    .frame(width: 56, height: 56)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(player.title).font(.headline).lineLimit(1)
+                    Text(player.subtitle.isEmpty ? (player.currentURL == nil ? "Choose a song to start listening" : "Local audio") : player.subtitle)
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+                if player.isBusy { ProgressView().controlSize(.small) }
+                transport
+                queueOptions
+            }
+            HStack(spacing: 10) {
+                if let info = player.formatInfo { FormatChip(info: info) }
+                Text(time(scrubbing ? seekPosition : player.position))
+                    .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    .frame(minWidth: 30, alignment: .trailing)
+                Slider(value: Binding(
+                    get: { scrubbing ? seekPosition : player.position },
+                    set: { seekPosition = $0 }
+                ), in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
+                    if editing { seekPosition = player.position }
+                    scrubbing = editing
+                    if !editing { Task { await player.seek(to: seekPosition) } }
+                })
+                .accessibilityLabel("Playback position")
+                .disabled(player.duration == 0 || player.isBusy)
+                Text(time(player.duration)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    .frame(minWidth: 30, alignment: .leading)
+            }
+            if player.underrunFrames > 0 {
+                Text("Buffer underruns: \(player.underrunFrames) frames")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(.bar)
+    }
+
+    private var transport: some View {
+        HStack(spacing: 14) {
                 Button { Task { await player.previous() } } label: {
                     Image(systemName: "backward.end.fill")
                 }
@@ -39,26 +83,11 @@ struct PlaybackControls: View {
                 .buttonStyle(.borderless).accessibilityLabel("Next Track")
                 .disabled(!player.canGoNext || player.isBusy)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(player.title).fontWeight(.semibold).lineLimit(1)
-                        if let info = player.formatInfo { FormatChip(info: info) }
-                        if player.isBusy { ProgressView().controlSize(.small) }
-                        Spacer()
-                        Text(time(scrubbing ? seekPosition : player.position) + " / " + time(player.duration))
-                            .monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    Slider(value: Binding(
-                        get: { scrubbing ? seekPosition : player.position },
-                        set: { seekPosition = $0 }
-                    ), in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
-                        if editing { seekPosition = player.position }
-                        scrubbing = editing
-                        if !editing { Task { await player.seek(to: seekPosition) } }
-                    })
-                    .accessibilityLabel("Playback position")
-                    .disabled(player.duration == 0 || player.isBusy)
-                }
+        }
+    }
+
+    private var queueOptions: some View {
+        HStack(spacing: 12) {
                 Button { player.toggleShuffle() } label: {
                     Image(systemName: "shuffle")
                         .foregroundStyle(player.shuffleEnabled ? Color.accentColor : Color.secondary)
@@ -83,15 +112,7 @@ struct PlaybackControls: View {
                 Button { showQueue.toggle() } label: { Image(systemName: "list.bullet") }
                     .buttonStyle(.borderless).accessibilityLabel("Show Queue")
                     .popover(isPresented: $showQueue) { QueueView(player: player) }
-            }
-            if player.underrunFrames > 0 {
-                Text("Buffer underruns: \(player.underrunFrames) frames")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
         }
-        .padding(20)
-        .background(.bar)
     }
 
     private func time(_ seconds: Double) -> String {

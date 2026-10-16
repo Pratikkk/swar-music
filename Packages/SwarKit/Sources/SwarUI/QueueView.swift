@@ -49,10 +49,15 @@ struct QueueView: View {
     }
 
     private func row(_ entry: QueueEntry) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        HStack(spacing: 10) {
+            CoverArt(url: entry.artworkURL, title: entry.subtitle.isEmpty ? entry.title : entry.subtitle)
+                .frame(width: 40, height: 40)
+            VStack(alignment: .leading, spacing: 3) {
             Text(entry.title).fontWeight(.medium).lineLimit(1)
             if !entry.subtitle.isEmpty { Text(entry.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
             if let error = entry.error { Text(error).font(.caption).foregroundStyle(.orange) }
+            }
         }
+        .padding(.vertical, 3)
     }
 }

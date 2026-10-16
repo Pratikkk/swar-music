@@ -2,7 +2,15 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
-## Current milestone: shuffle and repeat
+Covers appear in Songs, artist/genre track lists, albums, the Now Playing bar, and
+Up Next. The player shows title and artist/album, with transport controls above a
+separate progress row. Current tracks have a cover badge and a subtle row highlight.
+Missing artwork uses a consistent tinted music-note placeholder. Local thumbnails
+load off the main actor and share a bounded memory cache. Files opened directly also
+read their tags and embedded/folder covers without importing them into the library.
+See [artwork UI notes](Docs/Artwork.md).
+
+## Current milestone: artwork throughout the player
 
 The app has a native library sidebar and a single-file playback harness. Use
 **File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
@@ -155,7 +163,7 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 54 tests, including fourteen device-free queue tests, library
+The current suite has 57 tests, including sixteen device-free queue tests, library
 search/paging across 50,001 stored tracks, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
 references and seek positions against original samples. Integer lossless fixtures

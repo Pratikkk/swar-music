@@ -80,7 +80,7 @@ struct LibraryContent: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 16) {
                     Button { self.selectedAlbum = nil } label: { Label("Albums", systemImage: "chevron.left") }
-                    Artwork(url: library.artworkURL(album.tracks.compactMap(\.artworkKey).first)).frame(width: 80, height: 80)
+                    CoverArt(url: library.artworkURL(album.tracks.compactMap(\.artworkKey).first), title: album.title).frame(width: 80, height: 80)
                     VStack(alignment: .leading) {
                         Text(album.title).font(.title2.bold())
                         Text(album.artist).foregroundStyle(.secondary)
@@ -100,7 +100,7 @@ struct LibraryContent: View {
                     ForEach(albums) { album in
                         Button { selectedAlbum = album.id } label: {
                             VStack(alignment: .leading, spacing: 7) {
-                                Artwork(url: library.artworkURL(album.tracks.compactMap(\.artworkKey).first))
+                                CoverArt(url: library.artworkURL(album.tracks.compactMap(\.artworkKey).first), title: album.title)
                                     .aspectRatio(1, contentMode: .fit)
                                 Text(album.title).fontWeight(.medium).lineLimit(1)
                                 Text(album.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -117,16 +117,29 @@ struct LibraryContent: View {
     }
 
     private func trackRow(_ track: LibraryTrack, context: [LibraryTrack]) -> some View {
-            HStack(spacing: 12) {
-                Button { Task { await play(track, context: context) } } label: {
-                    Image(systemName: track.error == nil ? "play.fill" : "exclamationmark.triangle")
+            let current = (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL && player.currentURL != nil
+            return HStack(spacing: 12) {
+                CoverArt(url: library.artworkURL(track.artworkKey), title: track.album)
+                    .frame(width: 44, height: 44)
+                    .overlay(alignment: .bottomTrailing) {
+                        if current {
+                            Image(systemName: player.isPlaying ? "waveform" : "pause.fill")
+                                .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                                .padding(4).background(Color.accentColor, in: Circle())
+                                .offset(x: 3, y: 3).accessibilityHidden(true)
+                        }
+                    }
+                Button { Task { if current { await player.togglePlayback() } else { await play(track, context: context) } } } label: {
+                    Image(systemName: track.error != nil ? "exclamationmark.triangle" : (current && player.isPlaying ? "pause.fill" : "play.fill"))
                         .frame(width: 24, height: 30)
                 }
                 .buttonStyle(.borderless)
                 .disabled(track.error != nil || player.isBusy)
-                .accessibilityLabel("Play \(track.title)")
+                .accessibilityLabel("\(current && player.isPlaying ? "Pause" : "Play") \(track.title)")
+                .accessibilityValue(current ? (player.isPlaying ? "Now playing" : "Current track, paused") : "")
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(track.title).fontWeight(.medium).lineLimit(1)
+                    Text(track.title).fontWeight(current ? .semibold : .medium)
+                        .foregroundStyle(current ? Color.accentColor : Color.primary).lineLimit(1)
                     Text(track.artist + " · " + track.album).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     if let error = track.error { Text(error).font(.caption).foregroundStyle(.orange).lineLimit(2) }
                 }
@@ -134,7 +147,8 @@ struct LibraryContent: View {
                 if let codec = track.codec { Text(codec).font(.caption).foregroundStyle(.secondary) }
                 if let rate = track.sampleRate { Text("\(rate / 1000, specifier: "%g") kHz").font(.caption).foregroundStyle(.secondary) }
                 Text(String(format: "%d:%02d", Int(track.duration) / 60, Int(track.duration) % 60)).monospacedDigit().foregroundStyle(.secondary)
-            }.padding(.vertical, 4)
+            }.padding(.vertical, 6)
+            .listRowBackground(current ? Color.accentColor.opacity(0.06) : Color.clear)
             .contextMenu {
                 Button("Play Next") { enqueue(track, next: true) }
                 Button("Add to Queue") { enqueue(track, next: false) }
@@ -145,7 +159,7 @@ struct LibraryContent: View {
     private func entry(_ track: LibraryTrack) throws -> QueueEntry {
         let location = try library.location(for: track)
         return QueueEntry(url: location.file, accessRoot: location.root, title: track.title,
-                          subtitle: track.artist + " · " + track.album)
+                          subtitle: track.artist + " · " + track.album, artworkURL: library.artworkURL(track.artworkKey))
     }
 
     private func play(_ track: LibraryTrack, context: [LibraryTrack]) async {
@@ -169,20 +183,4 @@ private struct AlbumGroup: Identifiable {
     let title: String
     let artist: String
     let tracks: [LibraryTrack]
-}
-
-private struct Artwork: View {
-    let url: URL?
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8).fill(.quaternary)
-            if let url {
-                AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { placeholder }
-            } else { placeholder }
-        }
-        .clipped()
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .accessibilityHidden(true)
-    }
-    private var placeholder: some View { Image(systemName: "music.note").font(.largeTitle).foregroundStyle(.secondary) }
 }

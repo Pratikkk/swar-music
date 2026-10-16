@@ -64,7 +64,7 @@ struct MediaInspector: Sendable {
 
     private static func number(_ value: String?) -> Int? { value.flatMap { Int($0.split(separator: "/").first ?? "") } }
 
-    private func cacheArtwork(_ data: Data) throws -> String? {
+    func cacheArtwork(_ data: Data) throws -> String? {
         guard data.count <= 20 * 1024 * 1024 else { return nil }
         let key = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() + ".png"
         let target = artworkDirectory.appendingPathComponent(key)

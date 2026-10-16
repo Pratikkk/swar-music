@@ -152,6 +152,42 @@ struct QueueTests {
         #expect(engine.opened.count == 2)
     }
 
+    @Test func artworkAndSubtitleFollowQueueTransitionsAndClearOnStandaloneOpen() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let cover = URL(fileURLWithPath: "/tmp/swar-cover.png")
+        let first = QueueEntry(url: entry("one").url, title: "One", subtitle: "Artist · Album", artworkURL: cover)
+        let second = entry("two")
+        await player.play([first, second])
+        #expect(player.artworkURL == cover)
+        #expect(player.subtitle == "Artist · Album")
+        #expect(player.currentURL == first.url)
+        engine.finish()
+        await player.refresh()
+        #expect(player.artworkURL == nil)
+        #expect(player.subtitle.isEmpty)
+        #expect(player.currentURL == second.url)
+        await player.play([first])
+        await player.open(second.url)
+        #expect(player.artworkURL == nil)
+        #expect(player.subtitle.isEmpty)
+        #expect(player.currentURL == second.url)
+    }
+
+    @Test func failedOpenDoesNotKeepThePreviousCover() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let first = QueueEntry(url: entry("one").url, artworkURL: URL(fileURLWithPath: "/tmp/cover.png"))
+        let second = entry("bad")
+        await player.play([first, second])
+        engine.fail(second.url)
+        await player.next()
+        #expect(player.artworkURL == nil)
+        #expect(player.currentURL == nil)
+        #expect(player.subtitle.isEmpty)
+        #expect(player.errorMessage != nil)
+    }
+
     @Test func pauseAndSeekToEndDoNotAdvance() async {
         let engine = QueueTestEngine()
         let player = Player(engine: engine)

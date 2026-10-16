@@ -1,7 +1,7 @@
 # Playback queue
 
 Player owns an in-memory ordered queue. Each insertion gets its own UUID, file URL,
-source-folder access URL, display title, subtitle, and optional playback error.
+source-folder access URL, display title, subtitle, cached artwork URL, and optional playback error.
 Duplicate tracks can appear independently. Library actions resolve a scoped folder
 URL; opening each queued track acquires an independent scope for its playback lifetime.
 
@@ -40,7 +40,7 @@ The format chip updates from the decoder and actual device for the new session.
 
 ## Verification
 
-Fourteen device-free queue tests use an injected engine to cover selected-track start,
+Sixteen device-free queue tests use an injected engine to cover selected-track start,
 exactly-once EOF advancement, final stop, pause/seek distinction, replay after EOF,
 previous/restart, duplicate entries, Play Next, reordering/removal, corrupt-file skip,
 standalone open behavior, and blocked edits during asynchronous opens.

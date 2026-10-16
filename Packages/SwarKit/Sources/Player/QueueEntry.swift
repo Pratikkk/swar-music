@@ -7,14 +7,16 @@ public struct QueueEntry: Identifiable, Sendable, Equatable {
     public let accessRoot: URL
     public let title: String
     public let subtitle: String
+    public let artworkURL: URL?
     public internal(set) var error: String?
 
-    public init(url: URL, accessRoot: URL? = nil, title: String? = nil, subtitle: String = "") {
+    public init(url: URL, accessRoot: URL? = nil, title: String? = nil, subtitle: String = "", artworkURL: URL? = nil) {
         id = UUID()
         self.url = url
         self.accessRoot = accessRoot ?? url
         self.title = title ?? url.deletingPathExtension().lastPathComponent
         self.subtitle = subtitle
+        self.artworkURL = artworkURL
     }
 }
 

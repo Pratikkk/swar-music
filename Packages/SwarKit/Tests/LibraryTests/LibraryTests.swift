@@ -18,6 +18,21 @@ struct LibraryTests {
         return (temporary, music, artwork)
     }
 
+    @Test func standalonePresentationReadsTagsAndCachesCoverWithoutImporting() throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let tagged = Bundle.module.resourceURL!.appendingPathComponent("Fixtures")
+        let source = music.appendingPathComponent("song.mp3")
+        try FileManager.default.copyItem(at: tagged.appendingPathComponent("44100-16.mp3"), to: source)
+        let presentation = try #require(TrackPresentation.read(url: source, artworkDirectory: artwork, codecDirectory: codecs))
+        #expect(presentation.title == "Morning Light")
+        #expect(presentation.subtitle == "Björk · Test Album")
+        let cover = try #require(presentation.artworkURL)
+        #expect(FileManager.default.fileExists(atPath: cover.path))
+        #expect(TrackPresentation.read(url: source, artworkDirectory: artwork, codecDirectory: codecs)?.artworkURL == cover)
+        #expect(TrackPresentation.read(url: music.appendingPathComponent("missing.wav"), artworkDirectory: artwork, codecDirectory: codecs) == nil)
+    }
+
     @Test func scanPersistsSearchesSkipsUnchangedAndReconcilesDeletedFiles() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

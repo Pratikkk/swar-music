@@ -2,11 +2,15 @@ import AudioEngine
 import Decoding
 import Foundation
 import FormatInfo
+import Library
 import Observation
 
 @MainActor @Observable
 public final class Player {
     public private(set) var title = "No file open"
+    public private(set) var subtitle = ""
+    public private(set) var artworkURL: URL?
+    public private(set) var currentURL: URL?
     public private(set) var sourceDescription: String?
     public private(set) var outputDescription: String?
     public private(set) var duration: Double = 0
@@ -52,15 +56,26 @@ public final class Player {
         await load(url, accessRoot: accessRoot, displayTitle: displayTitle)
     }
 
-    private func load(_ url: URL, accessRoot: URL?, displayTitle: String?) async {
+    private func load(_ url: URL, accessRoot: URL?, displayTitle: String?, entry: QueueEntry? = nil) async {
         generation += 1
         completionHandled = false
+        artworkURL = nil
+        subtitle = ""
+        currentURL = nil
         let oldAccess = scopedAccess
         scopedAccess = ScopedFileAccess(accessRoot ?? url)
         defer { withExtendedLifetime(oldAccess) {} }
         do {
             let snapshot = try await engine.open(url)
-            title = displayTitle ?? url.deletingPathExtension().lastPathComponent
+            let presentation = entry == nil && snapshot.source != nil
+                ? await Task.detached(priority: .utility) { TrackPresentation.read(url: url) }.value : nil
+            title = displayTitle ?? presentation?.title ?? url.deletingPathExtension().lastPathComponent
+            subtitle = entry?.subtitle ?? presentation?.subtitle ?? ""
+            artworkURL = entry?.artworkURL ?? presentation?.artworkURL
+            currentURL = url
+            if entry == nil {
+                standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle, artworkURL: artworkURL)
+            }
             apply(snapshot)
             errorMessage = nil
         } catch {
@@ -210,7 +225,7 @@ public final class Player {
         for index in indices {
             let entry = queue[index]
             currentEntryID = entry.id
-            await load(entry.url, accessRoot: entry.accessRoot, displayTitle: entry.title)
+            await load(entry.url, accessRoot: entry.accessRoot, displayTitle: entry.title, entry: entry)
             if errorMessage == nil {
                 queue[index].error = nil
                 do {
@@ -233,6 +248,9 @@ public final class Player {
         completionHandled = true
         engine.shutdown()
         scopedAccess = nil
+        artworkURL = nil
+        subtitle = ""
+        currentURL = nil
         isPlaying = false
         sourceDescription = nil
         outputDescription = nil
