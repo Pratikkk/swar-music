@@ -4,6 +4,7 @@ import Player
 @MainActor
 struct PlaybackControls: View {
     let player: Player
+    @State private var showQueue = false
     @State private var scrubbing = false
     @State private var seekPosition: Double = 0
 
@@ -16,6 +17,11 @@ struct PlaybackControls: View {
                     .accessibilityLabel("Playback error: \(error)")
             }
             HStack(spacing: 16) {
+                Button { Task { await player.previous() } } label: {
+                    Image(systemName: "backward.end.fill")
+                }
+                .buttonStyle(.borderless).accessibilityLabel("Previous Track")
+                .disabled(!player.canGoPrevious || player.isBusy)
                 Button {
                     Task { await player.togglePlayback() }
                 } label: {
@@ -26,6 +32,12 @@ struct PlaybackControls: View {
                 .buttonStyle(.borderless)
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
                 .disabled(player.duration == 0 || player.isBusy)
+
+                Button { Task { await player.next() } } label: {
+                    Image(systemName: "forward.end.fill")
+                }
+                .buttonStyle(.borderless).accessibilityLabel("Next Track")
+                .disabled(!player.canGoNext || player.isBusy)
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -47,6 +59,9 @@ struct PlaybackControls: View {
                     .accessibilityLabel("Playback position")
                     .disabled(player.duration == 0 || player.isBusy)
                 }
+                Button { showQueue.toggle() } label: { Image(systemName: "list.bullet") }
+                    .buttonStyle(.borderless).accessibilityLabel("Show Queue")
+                    .popover(isPresented: $showQueue) { QueueView(player: player) }
             }
             if player.underrunFrames > 0 {
                 Text("Buffer underruns: \(player.underrunFrames) frames")
@@ -67,6 +82,10 @@ struct PlaybackControls: View {
 private struct PlaybackActions {
     var open: () -> Void
     var toggle: () -> Void
+    var next: () -> Void
+    var previous: () -> Void
+    var canNext: Bool
+    var canPrevious: Bool
     var seek: (Double) -> Void
     var canOpen: Bool
     var canPlay: Bool
@@ -98,6 +117,12 @@ public struct SwarCommands: Commands {
             Button("Play / Pause") { actions?.toggle() }
                 .keyboardShortcut(.space, modifiers: [])
                 .disabled(actions?.canPlay != true)
+            Button("Next Track") { actions?.next() }
+                .keyboardShortcut(.rightArrow, modifiers: .command)
+                .disabled(actions?.canNext != true)
+            Button("Previous Track") { actions?.previous() }
+                .keyboardShortcut(.leftArrow, modifiers: .command)
+                .disabled(actions?.canPrevious != true)
             Button("Seek Forward") { actions?.seek(5) }
                 .keyboardShortcut(.rightArrow, modifiers: [])
                 .disabled(actions?.canPlay != true)
@@ -113,6 +138,10 @@ extension View {
         focusedSceneValue(\.playbackActions, PlaybackActions(
             open: open,
             toggle: { Task { await player.togglePlayback() } },
+            next: { Task { await player.next() } },
+            previous: { Task { await player.previous() } },
+            canNext: player.canGoNext && !player.isBusy,
+            canPrevious: player.canGoPrevious && !player.isBusy,
             seek: { delta in Task { await player.seek(to: player.position + delta) } },
             canOpen: !player.isBusy,
             canPlay: player.duration > 0 && !player.isBusy

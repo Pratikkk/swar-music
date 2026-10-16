@@ -27,7 +27,7 @@ let package = Package(
         .testTarget(name: "DecodingTests", dependencies: ["Decoding"], resources: [.copy("Fixtures")]),
         .testTarget(name: "RealtimeAudioTests", dependencies: ["RealtimeAudio"]),
         .testTarget(name: "AudioEngineTests", dependencies: ["AudioEngine", "Decoding"]),
-        .testTarget(name: "PlayerTests", dependencies: ["Player"])
+        .testTarget(name: "PlayerTests", dependencies: ["Player", "AudioEngine"])
     ],
     swiftLanguageModes: [.v6]
 )

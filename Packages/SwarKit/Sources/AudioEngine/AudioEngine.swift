@@ -12,13 +12,31 @@ public struct PlaybackSnapshot: Sendable {
     public let isPlaying: Bool
     public let underrunFrames: UInt64
     public let error: String?
+    public let didFinish: Bool
+
+    public init(source: SourceFormat? = nil, output: OutputDescription? = nil,
+                duration: Double = 0, position: Double = 0, isPlaying: Bool = false,
+                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false) {
+        self.source = source; self.output = output; self.duration = duration
+        self.position = position; self.isPlaying = isPlaying
+        self.underrunFrames = underrunFrames; self.error = error; self.didFinish = didFinish
+    }
+}
+
+/// Also allows queue behavior to be tested without touching an audio device.
+public protocol PlaybackDriving: Sendable {
+    func open(_ url: URL) async throws -> PlaybackSnapshot
+    func togglePlayback() async throws -> PlaybackSnapshot
+    func seek(to seconds: Double) async throws -> PlaybackSnapshot
+    func snapshot() async -> PlaybackSnapshot
+    func shutdown()
 }
 
 private let engineLog = Logger(subsystem: "catto.swar", category: "AudioEngine")
 
 /// The @unchecked boundary is limited to state owned by a single serial queue.
 /// The C callback only sees a ring pointer with atomic counters, never this object.
-public final class AudioPlaybackEngine: @unchecked Sendable {
+public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     private let queue = DispatchQueue(label: "catto.swar.audio", qos: .userInitiated)
     private let state = EngineState()
 
@@ -127,7 +145,7 @@ private final class EngineState: @unchecked Sendable {
                                 duration: session?.duration ?? 0, position: session?.position ?? 0,
                                 isPlaying: session?.isPlaying ?? false,
                                 underrunFrames: session.flatMap { $0.ring.map(swar_ring_underruns) } ?? 0,
-                                error: error)
+                                error: error, didFinish: session?.didFinish ?? false)
     }
 
     func closeSession() { session?.close(); session = nil; error = nil }
@@ -141,6 +159,7 @@ private final class OutputSession {
     private(set) var ring: OpaquePointer?
     private let scratch: UnsafeMutableRawPointer
     private var eof = false
+    private(set) var didFinish = false
     private var baseFrame: Int64 = 0
     private(set) var isPlaying = false
     private var closed = false
@@ -189,6 +208,7 @@ private final class OutputSession {
         try device.validate(rate: decoder.source.sampleRate)
         if position >= duration { try seek(0) }
         try fill()
+        didFinish = false
         try checkAudio(AudioOutputUnitStart(unit), "Start AUHAL")
         isPlaying = true
     }
@@ -208,13 +228,17 @@ private final class OutputSession {
         swar_ring_reset(ring)
         baseFrame = target
         eof = false
+        didFinish = false
         try fill()
         if resume && target < decoder.frameCount { try play() }
     }
 
     func pump() throws {
         try fill()
-        if eof, let ring, swar_ring_readable(ring) == 0 { try pause() }
+        if eof, let ring, swar_ring_readable(ring) == 0 {
+            try pause()
+            didFinish = true
+        }
     }
 
     private func fill() throws {

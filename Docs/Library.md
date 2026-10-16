@@ -56,5 +56,5 @@ The signed sandboxed Debug app was checked with a folder library, album artwork,
 track browsing, artist search, and duplicate-root rejection. The standard suite
 skips hardware playback unless its explicit environment variables are set.
 
-Queue management, playlists, playback history, tag editing, advanced sorting, and
+Playlists, playback history, tag editing, advanced sorting, and
 large-library UI performance profiling remain future work.

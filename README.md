@@ -2,7 +2,7 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
-## Current milestone: persistent music library
+## Current milestone: playback queue
 
 The app has a native library sidebar and a single-file playback harness. Use
 **File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
@@ -16,6 +16,14 @@ indexes metadata and artwork, and watches nested folders for changes. Browse Alb
 Artists, Songs, Genres, or Recently Added, and search titles, artists, and albums.
 Use a track’s play button to start playback. Removing a folder from the library leaves its files intact.
 See [library implementation and verification notes](Docs/Library.md).
+
+**Play Album** starts an album in disc/track order. A track’s play button starts at
+that track and queues the remaining tracks in the current view. Right-click a track
+for **Play Next** or **Add to Queue**. The player has previous/next controls
+(⌘← / ⌘→) and a Queue popover with Up Next, drag reordering, removal, and Clear Up Next.
+Previous restarts the current track after three seconds; otherwise it goes back.
+Queue entries that cannot open keep an error row while the player tries the next.
+See [queue behavior and verification](Docs/Queue.md).
 
 Open `swar.xcodeproj` in Xcode and run the `swar` scheme on My Mac.
 The app supports macOS 14 or later. Signing uses the existing automatic signing
@@ -72,7 +80,7 @@ are still in the signal path. **Bit-perfect output has not been verified.**
 Playback uses the default output selected when a file opens. A disconnect or external
 sample-rate change during playback stops playback with an error; reopen the file
 after selecting a working output in macOS Sound settings. An in-app device picker,
-exclusive mode, gapless playback, and automatic recovery are later work. The previous
+exclusive mode, gapless playback, and automatic device recovery are later work. The previous
 device format is restored on file replacement, session cleanup, or app quit where
 the device still uses the rate Swar requested. Pause retains the current session.
 
@@ -128,8 +136,8 @@ labels, conversion explanations, and accessibility labels were checked there.
 Full VoiceOver navigation and physical Bluetooth/AirPlay paths remain untested.
 
 Still unverified: physical DAC sample equality, a 24-bit integer-output DAC,
-hot-plug, sleep/wake, and long-running playback. Playlists, queue management,
-gapless playback, and exclusive output remain future work.
+hot-plug, sleep/wake, and long-running playback. Playlists, shuffle/repeat, queue
+restoration, gapless playback, and exclusive output remain future work.
 
 ## Codec support
 
@@ -145,8 +153,8 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The library milestone adds seven regression tests, including a 50,001-row search
-and paging test. The full suite has 39 tests, including generated format matrices and optional
+The current suite has 48 tests, including eight device-free queue tests, library
+search/paging across 50,001 stored tracks, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
 references and seek positions against original samples. Integer lossless fixtures
 cover 44.1/16, 96/24, and 192/24; float PCM and WavPack are also tested. A signed,

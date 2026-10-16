@@ -11,7 +11,11 @@ struct LibraryContent: View {
 
     private var albums: [AlbumGroup] {
         Dictionary(grouping: library.tracks, by: { $0.albumArtist + "\u{1f}" + $0.album }).map { key, tracks in
-            AlbumGroup(id: key, title: tracks[0].album, artist: tracks[0].albumArtist, tracks: tracks)
+            AlbumGroup(id: key, title: tracks[0].album, artist: tracks[0].albumArtist, tracks: tracks.sorted {
+                if $0.discNumber != $1.discNumber { return $0.discNumber < $1.discNumber }
+                if $0.trackNumber != $1.trackNumber { return $0.trackNumber < $1.trackNumber }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            })
         }.sorted {
             if section == "Recently Added" { return ($0.tracks.map(\.addedAt).max() ?? .distantPast) > ($1.tracks.map(\.addedAt).max() ?? .distantPast) }
             return $0.artist.localizedStandardCompare($1.artist) == .orderedAscending ||
@@ -47,7 +51,7 @@ struct LibraryContent: View {
                 List {
                     let groups = Dictionary(grouping: library.tracks, by: { section == "Artists" ? $0.artist : $0.genre })
                     ForEach(groups.keys.sorted(), id: \.self) { name in
-                        Section(name) { ForEach(groups[name] ?? []) { track in trackRow(track) } }
+                        Section(name) { ForEach(groups[name] ?? []) { track in trackRow(track, context: groups[name] ?? []) } }
                     }
                 }.listStyle(.inset)
             } else {
@@ -80,6 +84,11 @@ struct LibraryContent: View {
                     VStack(alignment: .leading) {
                         Text(album.title).font(.title2.bold())
                         Text(album.artist).foregroundStyle(.secondary)
+                        Button("Play Album", systemImage: "play.fill") {
+                            if let first = album.tracks.first(where: { $0.error == nil }) {
+                                Task { await play(first, context: album.tracks) }
+                            }
+                        }.disabled(player.isBusy || album.tracks.allSatisfy { $0.error != nil })
                     }
                     Spacer()
                 }.padding(20)
@@ -104,12 +113,12 @@ struct LibraryContent: View {
     }
 
     private func trackList(_ tracks: [LibraryTrack]) -> some View {
-        List(tracks) { track in trackRow(track) }.listStyle(.inset)
+        List(tracks) { track in trackRow(track, context: tracks) }.listStyle(.inset)
     }
 
-    private func trackRow(_ track: LibraryTrack) -> some View {
+    private func trackRow(_ track: LibraryTrack, context: [LibraryTrack]) -> some View {
             HStack(spacing: 12) {
-                Button { Task { await play(track) } } label: {
+                Button { Task { await play(track, context: context) } } label: {
                     Image(systemName: track.error == nil ? "play.fill" : "exclamationmark.triangle")
                         .frame(width: 24, height: 30)
                 }
@@ -126,15 +135,32 @@ struct LibraryContent: View {
                 if let rate = track.sampleRate { Text("\(rate / 1000, specifier: "%g") kHz").font(.caption).foregroundStyle(.secondary) }
                 Text(String(format: "%d:%02d", Int(track.duration) / 60, Int(track.duration) % 60)).monospacedDigit().foregroundStyle(.secondary)
             }.padding(.vertical, 4)
+            .contextMenu {
+                Button("Play Next") { enqueue(track, next: true) }
+                Button("Add to Queue") { enqueue(track, next: false) }
+            }
+            .disabled(track.error != nil || player.isBusy)
     }
 
-    private func play(_ track: LibraryTrack) async {
+    private func entry(_ track: LibraryTrack) throws -> QueueEntry {
+        let location = try library.location(for: track)
+        return QueueEntry(url: location.file, accessRoot: location.root, title: track.title,
+                          subtitle: track.artist + " · " + track.album)
+    }
+
+    private func play(_ track: LibraryTrack, context: [LibraryTrack]) async {
         guard !player.isBusy else { return }
         do {
-            let location = try library.location(for: track)
-            await player.open(location.file, accessRoot: location.root, displayTitle: track.title)
-            if player.errorMessage == nil { await player.togglePlayback() }
+            let playable = context.filter { $0.error == nil }
+            guard let index = playable.firstIndex(where: { $0.id == track.id }) else { return }
+            let entries = try playable.map { try entry($0) }
+            await player.play(entries, startingAt: index)
         } catch { player.reportImportError(error) }
+    }
+
+    private func enqueue(_ track: LibraryTrack, next: Bool) {
+        do { player.enqueue(try entry(track), playNext: next) }
+        catch { player.reportImportError(error) }
     }
 }
 
