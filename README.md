@@ -2,6 +2,9 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
+For regular use, install the packaged **Swar.app** in Applications. Build a local
+DMG with `./scripts/package-macos.sh`; see [installation and updates](Docs/Installation.md).
+
 The library uses a compact top player, a translucent native sidebar, and artwork-first
 album cards. Recently Added groups albums by month; Home opens the recent local
 library. Radio is omitted. Open an album by clicking its cover or title, or play it
