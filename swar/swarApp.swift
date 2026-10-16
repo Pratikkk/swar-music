@@ -24,7 +24,8 @@ struct swarApp: App {
                 .frame(minWidth: 760, minHeight: 500)
             #endif
         }
-        .defaultSize(width: 1100, height: 740)
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1224, height: 740)
         .commands { SwarCommands() }
     }
 }

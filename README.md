@@ -2,7 +2,13 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
-The Now Playing bar and expanded player include an output-volume slider. It controls
+The library uses a compact top player, a tinted native sidebar, and artwork-first
+album cards. Recently Added groups albums by month; Home opens the recent local
+library. Radio is omitted. Open an album by clicking its cover or title, or play it
+using the button over its artwork. Library actions (open file, add folder, rescan)
+are in the menu at the right of the section header.
+
+The top player and expanded player include an output-volume slider. It controls
 the selected playback device (or the default output before playback), follows system
 volume changes, and leaves Swar's PCM samples untouched. This is device-wide volume;
 outputs without an adjustable control show a disabled slider with an explanation.
@@ -14,8 +20,7 @@ Restoring does not open an audio device or change its sample rate. Pending queue
 show **Queue Ready** and can be started with Play. See [session restoration](Docs/Sessions.md).
 
 Covers appear in Songs, artist/genre track lists, albums, the Now Playing bar, and
-Up Next. The player shows title and artist/album, with transport controls above a
-separate progress row. Current tracks have a cover badge and a subtle row highlight.
+Up Next. The player shows title and artist/album, with transport controls and a compact scrubber in the top bar. Current tracks have a cover badge and a subtle row highlight.
 Missing artwork uses a consistent tinted music-note placeholder. Local thumbnails
 load off the main actor and share a bounded memory cache. Files opened directly also
 read their tags and embedded/folder covers without importing them into the library.
@@ -27,12 +32,12 @@ the artwork in wide windows and switches to a queue view in compact windows.
 Use the queue’s arrow buttons to move tracks earlier/later; Escape returns to the
 library without stopping playback. See [Now Playing notes](Docs/NowPlaying.md).
 
-## Current milestone: output volume control
+## Current milestone: compact library layout
 
 The app has a native library sidebar and a single-file playback harness. Use
 **File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
 five seconds; the slider scrubs. Opening a file prepares it without autoplay.
-The format chip beside the track title reports the decoder's source quality and
+The format chip in the library header reports the decoder's source quality and
 codec. Click it for source details, device format, and signal-path status. Hover
 for a compact summary. An orange dot marks a known conversion. Matching formats
 remain **Not verified** until the output path supplies sample-integrity evidence.

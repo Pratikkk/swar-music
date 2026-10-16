@@ -73,6 +73,7 @@ struct LibraryContent: View {
             }
         }
         .onChange(of: library.search) { selectedAlbum = nil }
+        .onChange(of: section) { selectedAlbum = nil }
     }
 
     @ViewBuilder private var albumContent: some View {
@@ -96,20 +97,63 @@ struct LibraryContent: View {
             }
         } else {
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 220), alignment: .top)], alignment: .leading, spacing: 24) {
-                    ForEach(albums) { album in
-                        Button { selectedAlbum = album.id } label: {
-                            VStack(alignment: .leading, spacing: 7) {
-                                CoverArt(url: library.artworkURL(album.tracks.compactMap(\.artworkKey).first), title: album.title)
-                                    .aspectRatio(1, contentMode: .fit)
-                                Text(album.title).fontWeight(.medium).lineLimit(1)
-                                Text(album.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(albumSections, id: \.title) { group in
+                        Text(group.title).font(.title3.bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 40).padding(.vertical, 14)
+                            .background(.primary.opacity(0.025))
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 180), spacing: 20, alignment: .top)], alignment: .leading, spacing: 24) {
+                            ForEach(group.albums) { album in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    ZStack(alignment: .bottomTrailing) {
+                                        Button { selectedAlbum = album.id } label: {
+                                            CoverArt(url: library.artworkURL(album.tracks.compactMap(\.artworkKey).first), title: album.title, cornerRadius: 4)
+                                                .aspectRatio(1, contentMode: .fit)
+                                        }.buttonStyle(.plain).accessibilityLabel("Open \(album.title), \(album.artist)")
+                                        Button {
+                                            if let first = album.tracks.first(where: { $0.error == nil }) {
+                                                Task { await play(first, context: album.tracks) }
+                                            }
+                                        } label: {
+                                            Image(systemName: "play.fill").font(.system(size: 13, weight: .semibold))
+                                                .foregroundStyle(.white).frame(width: 32, height: 32)
+                                                .background(.black.opacity(0.55), in: Circle())
+                                        }
+                                        .buttonStyle(.plain).padding(8).help("Play \(album.title)")
+                                        .accessibilityLabel("Play \(album.title)")
+                                        .disabled(player.isBusy || album.tracks.allSatisfy { $0.error != nil })
+                                    }
+                                    Button { selectedAlbum = album.id } label: {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(album.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                                            Text(album.artist).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                                        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                                    }.buttonStyle(.plain)
+                                }
                             }
-                        }.buttonStyle(.plain).accessibilityLabel("\(album.title), \(album.artist), open album")
+                        }.padding(.horizontal, 40).padding(.top, 10).padding(.bottom, 28)
                     }
-                }.padding(24)
+                }
             }
+
         }
+    }
+
+    private var albumSections: [(title: String, albums: [AlbumGroup])] {
+        guard section == "Recently Added" else { return [("Albums", albums)] }
+        let calendar = Calendar.current
+        let now = Date()
+        var result: [(title: String, albums: [AlbumGroup])] = []
+        for album in albums {
+            let date = album.tracks.map(\.addedAt).max() ?? .distantPast
+            let title: String
+            if calendar.isDate(date, equalTo: now, toGranularity: .month) { title = "This Month" }
+            else { title = date.formatted(.dateTime.month(.wide).year()) }
+            if let index = result.firstIndex(where: { $0.title == title }) { result[index].albums.append(album) }
+            else { result.append((title, [album])) }
+        }
+        return result
     }
 
     private func trackList(_ tracks: [LibraryTrack]) -> some View {
