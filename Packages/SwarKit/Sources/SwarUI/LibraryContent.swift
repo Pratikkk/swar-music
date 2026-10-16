@@ -150,7 +150,8 @@ struct LibraryContent: View {
                                                 .foregroundStyle(.white).frame(width: 32, height: 32)
                                                 .background(.black.opacity(0.55), in: Circle())
                                         }
-                                        .buttonStyle(.plain).padding(8).help("Play \(album.title)")
+                                        .buttonStyle(PlaybackButtonStyle(unavailable: album.tracks.allSatisfy { $0.error != nil }))
+                                        .padding(8).help("Play \(album.title)")
                                         .accessibilityLabel("Play \(album.title)")
                                         .disabled(player.isBusy || album.tracks.allSatisfy { $0.error != nil })
                                     }
@@ -282,7 +283,7 @@ private struct ArtworkPlaybackButton: View {
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 6))
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(PlaybackButtonStyle(unavailable: unavailable))
         .disabled(unavailable || busy)
         .onHover { hovered = $0 }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)

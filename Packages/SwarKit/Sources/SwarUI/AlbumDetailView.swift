@@ -19,7 +19,7 @@ struct AlbumDetailView: View {
     let enqueueAlbum: (Bool) -> Void
     var addAlbumToPlaylist: ((LibraryPlaylist) -> Void)? = nil
 
-    private var canPlay: Bool { !player.isBusy && tracks.contains { $0.error == nil } }
+    private var canPlay: Bool { tracks.contains { $0.error == nil } }
     private var metadata: String {
         let genres = Array(Set(tracks.map(\.genre).filter { !$0.isEmpty && $0 != "Unknown Genre" })).sorted()
         let years = Array(Set(tracks.compactMap(\.year).filter { !$0.isEmpty })).sorted()
@@ -58,7 +58,8 @@ struct AlbumDetailView: View {
                                 Button { playAlbum(true) } label: { albumAction("Shuffle", symbol: "shuffle") }
                                     .accessibilityLabel("Shuffle album")
                             }
-                            .buttonStyle(.plain).disabled(!canPlay).opacity(canPlay ? 1 : 0.5)
+                            .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay))
+                            .disabled(player.isBusy || !canPlay)
                         }
                         .frame(maxWidth: .infinity, minHeight: coverSize, alignment: .leading)
                     }
@@ -68,7 +69,9 @@ struct AlbumDetailView: View {
                         Spacer()
                         Menu {
                             Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { enqueueAlbum(true) }
+                                .disabled(player.isBusy)
                             Button("Add to Queue", systemImage: "text.badge.plus") { enqueueAlbum(false) }
+                                .disabled(player.isBusy)
                             if !playlists.isEmpty {
                                 Divider()
                                 Menu("Add to Playlist", systemImage: "music.note.list") {
@@ -155,7 +158,8 @@ struct AlbumSongRow: View {
                         .monospacedDigit().foregroundStyle(.secondary).frame(width: 42, alignment: .trailing)
                 }.contentShape(Rectangle())
             }
-            .buttonStyle(.plain).disabled(busy || track.error != nil)
+            .buttonStyle(PlaybackButtonStyle(unavailable: track.error != nil))
+            .disabled(busy || track.error != nil)
             .accessibilityLabel("\(playing ? "Pause" : "Play") \(track.title), \(track.artist)")
             .accessibilityValue(current ? (playing ? "Now playing" : "Paused") : "")
 

@@ -14,7 +14,7 @@ public struct PlaylistDetailView: View {
     @State private var isLoading = false
 
     private var playableTracks: [LibraryTrack] { items.map(\.track).filter { $0.error == nil } }
-    private var canPlay: Bool { !player.isBusy && !playableTracks.isEmpty }
+    private var canPlay: Bool { !playableTracks.isEmpty }
 
     private var durationDescription: String {
         let minutes = Int(items.reduce(0) { $0 + max(0, $1.track.duration) }) / 60
@@ -90,9 +90,8 @@ public struct PlaylistDetailView: View {
                                 .fixedSize()
                                 .accessibilityLabel("Playlist options")
                             }
-                            .buttonStyle(.plain)
-                            .disabled(!canPlay)
-                            .opacity(canPlay ? 1 : 0.6)
+                            .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay))
+                            .disabled(player.isBusy || !canPlay)
                         }
                         .frame(maxWidth: .infinity, minHeight: coverSize, alignment: .leading)
                     }
@@ -328,7 +327,7 @@ private struct PlaylistSongRow: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PlaybackButtonStyle(unavailable: item.track.error != nil))
             .disabled(busy || item.track.error != nil)
             .accessibilityLabel("\(playing ? "Pause" : "Play") \(item.track.title)")
 

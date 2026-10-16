@@ -182,7 +182,8 @@ struct ArtistsView: View {
                         .background(.black.opacity(0.5), in: Circle()).padding(7)
                 }
         }
-        .buttonStyle(.plain).disabled(!canPlay(album.tracks))
+        .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay(album.tracks)))
+        .disabled(player.isBusy || !canPlay(album.tracks))
         .accessibilityLabel("Play \(album.title)").help("Play \(album.title)")
     }
 
@@ -230,8 +231,8 @@ struct ArtistsView: View {
 
     private func actions(_ tracks: [LibraryTrack], label: String) -> some View {
         Menu {
-            Button("Play Next") { enqueue(tracks, true) }
-            Button("Add to Queue") { enqueue(tracks, false) }
+            Button("Play Next") { enqueue(tracks, true) }.disabled(player.isBusy)
+            Button("Add to Queue") { enqueue(tracks, false) }.disabled(player.isBusy)
             if !library.playlists.isEmpty {
                 Divider()
                 Menu("Add to Playlist") {
@@ -247,7 +248,8 @@ struct ArtistsView: View {
 
     private func playButton(_ tracks: [LibraryTrack], shuffle: Bool, label: String, symbol: String) -> some View {
         Button { start(tracks, shuffle: shuffle) } label: { circleIcon(symbol) }
-            .buttonStyle(.plain).disabled(!canPlay(tracks)).accessibilityLabel(label).help(label)
+            .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay(tracks)))
+            .disabled(player.isBusy || !canPlay(tracks)).accessibilityLabel(label).help(label)
     }
 
     private func circleIcon(_ symbol: String) -> some View {
@@ -255,7 +257,7 @@ struct ArtistsView: View {
             .frame(width: 26, height: 26).background(.primary.opacity(0.05), in: Circle())
     }
 
-    private func canPlay(_ tracks: [LibraryTrack]) -> Bool { !player.isBusy && tracks.contains { $0.error == nil } }
+    private func canPlay(_ tracks: [LibraryTrack]) -> Bool { tracks.contains { $0.error == nil } }
     private func start(_ tracks: [LibraryTrack], shuffle: Bool) {
         if let first = tracks.first(where: { $0.error == nil }) { play(first, tracks, shuffle) }
     }

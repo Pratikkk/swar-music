@@ -34,8 +34,11 @@ struct CoverArt: View {
         .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)
         .task(id: url) {
-            cover = nil; loadedURL = nil
-            guard let url else { return }
+            guard let url else {
+                cover = nil; loadedURL = nil
+                return
+            }
+            guard loadedURL != url else { return }
             let result = await CoverCache.shared.image(for: url)
             guard !Task.isCancelled else { return }
             cover = result; loadedURL = url
