@@ -6,27 +6,15 @@
 //
 
 import SwiftUI
-import SwiftData
+import SwarUI
 
 @main
 struct swarApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
-
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup("Swar") {
+            LibraryView()
+                .frame(minWidth: 760, minHeight: 500)
         }
-        .modelContainer(sharedModelContainer)
+        .defaultSize(width: 1100, height: 740)
     }
 }
