@@ -108,6 +108,12 @@ public struct LibraryView: View {
         .task { await player.restoreSession() }
         .task {
             while !Task.isCancelled {
+                await player.refreshVolume()
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { break }
+            }
+        }
+        .task {
+            while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(5)) } catch { break }
                 await player.saveSessionIfNeeded()
             }

@@ -22,6 +22,14 @@ public final class Player {
     public private(set) var formatInfo: FormatChipInfo?
     public private(set) var isRestoredSession = false
     public private(set) var sessionNotice: String?
+    public private(set) var outputVolume = OutputVolume()
+    public private(set) var volumeError: String?
+    private var settingVolume = false
+    private var pendingVolume: (Double, UInt32)?
+    private var volumeDeviceID: UInt32?
+    public var canSetOutputVolume: Bool {
+        !isBusy && !isShutDown && outputVolume.canSet && (volumeDeviceID == nil || volumeDeviceID == outputVolume.deviceID)
+    }
 
     public private(set) var queue: [QueueEntry] = []
     public private(set) var currentEntryID: UUID?
@@ -38,6 +46,7 @@ public final class Player {
     }
 
     private let engine: any PlaybackDriving
+    private let volumeController: any OutputVolumeControlling
     private let sessionStore: PlaybackSessionStore?
     private var didAttemptRestore = false
     private var isShutDown = false
@@ -46,9 +55,39 @@ public final class Player {
     private var scopedAccess: ScopedFileAccess?
     private var generation = 0
 
-    public init(engine: any PlaybackDriving = AudioPlaybackEngine(), sessionStore: PlaybackSessionStore? = nil) {
+    public init(engine: any PlaybackDriving = AudioPlaybackEngine(), sessionStore: PlaybackSessionStore? = nil, volumeController: any OutputVolumeControlling = HardwareVolumeController()) {
         self.engine = engine
         self.sessionStore = sessionStore
+        self.volumeController = volumeController
+    }
+
+    public func refreshVolume() async {
+        guard !isShutDown, !settingVolume else { return }
+        let revision = generation
+        let volume = await volumeController.snapshot(deviceID: volumeDeviceID)
+        guard !isShutDown, !settingVolume, revision == generation else { return }
+        if outputVolume.deviceID != volume.deviceID || !volume.canSet { volumeError = nil }
+        outputVolume = volume
+    }
+
+    public func setVolume(to level: Double) async {
+        guard !isShutDown, level.isFinite, canSetOutputVolume else { return }
+        pendingVolume = (max(0, min(level, 1)), outputVolume.deviceID)
+        guard !settingVolume else { return }
+        settingVolume = true
+        defer { settingVolume = false }
+        while let (value, device) = pendingVolume {
+            pendingVolume = nil
+            do {
+                let volume = try await volumeController.setLevel(value, deviceID: device)
+                guard !isShutDown else { return }
+                if outputVolume.deviceID == device { outputVolume = volume }
+                volumeError = nil
+            } catch {
+                volumeError = error.localizedDescription
+                pendingVolume = nil
+            }
+        }
     }
 
     public func restoreSession() async {
@@ -120,6 +159,7 @@ public final class Player {
         artworkURL = nil
         subtitle = ""
         currentURL = nil
+        volumeDeviceID = nil
         let oldAccess = scopedAccess
         scopedAccess = ScopedFileAccess(accessRoot ?? url)
         defer { withExtendedLifetime(oldAccess) {} }
@@ -342,6 +382,7 @@ public final class Player {
     public func shutdown() {
         guard !isShutDown else { return }
         isShutDown = true
+        pendingVolume = nil
         if didAttemptRestore, !isBusy, let sessionStore {
             do {
                 let session = sessionSnapshot()
@@ -385,6 +426,8 @@ public final class Player {
     }
 
     private func apply(_ snapshot: PlaybackSnapshot) {
+        if volumeDeviceID != snapshot.output?.id { pendingVolume = nil }
+        volumeDeviceID = snapshot.output?.id
         sourceDescription = snapshot.source?.description
         outputDescription = snapshot.output?.text
         let nextInfo = snapshot.source.map { source in

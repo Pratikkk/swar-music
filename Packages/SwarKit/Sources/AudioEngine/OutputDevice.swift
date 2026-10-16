@@ -8,6 +8,7 @@ private let deviceLog = Logger(subsystem: "catto.swar", category: "AudioDevice")
 public enum DeviceTransport: Sendable { case local, bluetooth, airPlay, unknown }
 
 public struct OutputDescription: Sendable {
+    public let id: UInt32
     public let name: String
     public let sampleRate: Double
     public let bitDepth: UInt32
@@ -100,7 +101,7 @@ final class OutputDevice {
              kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort: transport = .local
         default: transport = .unknown
         }
-        return OutputDescription(name: name, sampleRate: physical.mSampleRate, bitDepth: physical.mBitsPerChannel,
+        return OutputDescription(id: id, name: name, sampleRate: physical.mSampleRate, bitDepth: physical.mBitsPerChannel,
                                  isFloat: physical.mFormatFlags & kAudioFormatFlagIsFloat != 0,
                                  channels: physical.mChannelsPerFrame, transport: transport)
     }

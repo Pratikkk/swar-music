@@ -2,6 +2,12 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
+The Now Playing bar and expanded player include an output-volume slider. It controls
+the selected playback device (or the default output before playback), follows system
+volume changes, and leaves Swar's PCM samples untouched. This is device-wide volume;
+outputs without an adjustable control show a disabled slider with an explanation.
+See [volume control](Docs/Volume.md).
+
 Swar remembers your queue, current song, position, shuffle/repeat settings, and cover
 metadata. On launch it restores a paused session; press **Resume** when ready.
 Restoring does not open an audio device or change its sample rate. Pending queues
@@ -21,7 +27,7 @@ the artwork in wide windows and switches to a queue view in compact windows.
 Use the queue’s arrow buttons to move tracks earlier/later; Escape returns to the
 library without stopping playback. See [Now Playing notes](Docs/NowPlaying.md).
 
-## Current milestone: listening-session restoration
+## Current milestone: output volume control
 
 The app has a native library sidebar and a single-file playback harness. Use
 **File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
@@ -174,7 +180,8 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 67 tests, including sixteen device-free queue tests and nine session tests, library
+The current suite has 71 tests, including sixteen device-free queue tests, nine session tests,
+and three device-free volume tests, library
 search/paging across 50,001 stored tracks, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
 references and seek positions against original samples. Integer lossless fixtures

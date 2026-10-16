@@ -55,6 +55,7 @@ struct PlaybackControls: View {
                     if let info = player.formatInfo { FormatChip(info: info) }
                     transport
                     queueOptions
+                    VolumeControl(player: player, expanded: true)
                 }
                 .frame(maxWidth: .infinity)
             } else {
@@ -102,6 +103,7 @@ struct PlaybackControls: View {
                 .disabled(player.duration == 0 || player.isBusy)
                 Text(time(player.duration)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     .frame(minWidth: 30, alignment: .leading)
+                if !expanded { VolumeControl(player: player) }
             }
             if player.underrunFrames > 0 {
                 Text("Buffer underruns: \(player.underrunFrames) frames")
