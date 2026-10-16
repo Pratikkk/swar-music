@@ -48,7 +48,16 @@ struct LibraryContent: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if section == "Albums" || section == "Recently Added" {
                 albumContent
-            } else if section == "Artists" || section == "Genres" {
+            } else if section == "Artists" {
+                ArtistsView(library: library, player: player,
+                            play: { track, context, shuffle in Task { await play(track, context: context, shuffle: shuffle) } },
+                            enqueue: { tracks, next in
+                                do {
+                                    let entries = try tracks.filter { $0.error == nil }.map { try entry($0) }
+                                    for entry in next ? Array(entries.reversed()) : entries { player.enqueue(entry, playNext: next) }
+                                } catch { player.reportImportError(error) }
+                            })
+            } else if section == "Genres" {
                 List {
                     let groups = Dictionary(grouping: library.tracks, by: { section == "Artists" ? $0.artist : $0.genre })
                     ForEach(groups.keys.sorted(), id: \.self) { name in

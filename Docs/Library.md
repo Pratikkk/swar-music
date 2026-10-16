@@ -90,3 +90,18 @@ then copying a fixture into that folder. The shared library changed from 21 to 2
 tracks automatically. The test source was removed afterward, preserving the user's
 original music folder. The model regression also checks atomic file replacements,
 deletion reconciliation, restored bookmarks/watchers, and watcher cleanup on removal.
+
+## Artist browser
+
+Artists groups the loaded library page by album artist, falling back to track artist
+when album artist is empty. The artist list includes All Artists; selection filters
+the album pane. Albums sort by name and songs by disc, track number, then title.
+Artist thumbnails use local album artwork. Artist/album Play and Shuffle use the
+existing playback queue; action menus support Play Next, Add to Queue, and existing
+playlists. Song rows share the album detail controls, including current-track state.
+The sidebar search filters the library; a missing selected artist resets to All Artists.
+The existing loaded/total count and Load More control remain visible for paged libraries.
+
+The signed Debug app was checked with All Artists, individual artist selection,
+artist queue menus, and a narrow-window layout that stacks songs below album metadata.
+The 78-test regression suite passes; the audio engine is unchanged by this UI update.

@@ -116,7 +116,7 @@ struct AlbumDetailView: View {
     }
 }
 
-private struct AlbumSongRow: View {
+struct AlbumSongRow: View {
     let track: LibraryTrack
     let fallbackNumber: Int
     let current: Bool

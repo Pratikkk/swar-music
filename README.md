@@ -48,6 +48,11 @@ The format chip in the library header reports the decoder's source quality and
 codec. Click it for source details, device format, and signal-path status. Hover
 for a compact summary. An orange dot marks a known conversion. Matching formats
 remain **Not verified** until the output path supplies sample-integrity evidence.
+Artists uses a two-pane browser with All Artists and a selectable artist list.
+Album artists keep compilations together, with album covers, numbered songs, and
+Play/Shuffle, queue, and playlist actions. Narrow windows stack the songs below
+the album heading.
+
 Open **Swar → Settings… → Files** (⌘,) to manage monitored music folders, check
 monitoring status, or rescan. New, modified, and removed files refresh automatically
 while Swar is open; saved folders are checked again at launch.
