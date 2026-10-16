@@ -186,7 +186,8 @@ public struct PlaylistDetailView: View {
             accessRoot: location.root,
             title: track.title,
             subtitle: track.artist + " · " + track.album,
-            artworkURL: library.artworkURL(track.artworkKey)
+            artworkURL: library.artworkURL(track.artworkKey),
+            artist: track.artist, album: track.album
         )
     }
 

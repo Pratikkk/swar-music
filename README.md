@@ -25,6 +25,11 @@ metadata. On launch it restores a paused session; press **Resume** when ready.
 Restoring does not open an audio device or change its sample rate. Pending queues
 show **Queue Ready** and can be started with Play. See [session restoration](Docs/Sessions.md).
 
+Swar integrates with macOS Now Playing: play/pause, next/previous, and position
+changes use native remote commands, with title, artist, album, cover art, duration,
+and playback state supplied to Control Center. Start playback in Swar first; a
+restored paused session does not claim Now Playing. See [system media controls](Docs/SystemMediaControls.md).
+
 Covers appear in Songs, artist/genre track lists, albums, the Now Playing bar, and
 Up Next. The player shows title and artist/album, with transport controls and a compact scrubber in the top bar. Current tracks have a cover badge and a subtle row highlight.
 Missing artwork uses a consistent tinted music-note placeholder. Local thumbnails

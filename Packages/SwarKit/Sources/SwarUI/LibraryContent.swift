@@ -224,7 +224,8 @@ struct LibraryContent: View {
     private func entry(_ track: LibraryTrack) throws -> QueueEntry {
         let location = try library.location(for: track)
         return QueueEntry(url: location.file, accessRoot: location.root, title: track.title,
-                          subtitle: track.artist + " · " + track.album, artworkURL: library.artworkURL(track.artworkKey))
+                          subtitle: track.artist + " · " + track.album, artworkURL: library.artworkURL(track.artworkKey),
+                          artist: track.artist, album: track.album)
     }
 
     private func play(_ track: LibraryTrack, context: [LibraryTrack], shuffle: Bool? = nil) async {

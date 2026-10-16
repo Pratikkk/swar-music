@@ -1,12 +1,120 @@
 import AudioEngine
+import AppKit
 import Foundation
 import Observation
 import os
-import Player
+@testable import Player
 import Testing
 
 @MainActor
 struct QueueTests {
+    @Test func systemArtworkCanBeRequestedFromABackgroundQueue() async throws {
+        let context = try #require(CGContext(data: nil, width: 16, height: 16,
+            bitsPerComponent: 8, bytesPerRow: 64, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let decoded = MediaArtworkImage(try #require(context.makeImage()))
+        let hasImage = await Task.detached {
+            let artwork = MacNowPlayingOutput.makeArtwork(decoded)
+            return artwork.image(at: NSSize(width: 16, height: 16)) != nil
+        }.value
+        #expect(hasImage)
+    }
+
+    @Test func mediaCommandsAreIdempotentAndRespectQueueAndSeekBounds() async {
+        let player = Player(engine: QueueTestEngine())
+        let output = TestNowPlayingOutput()
+        let controls = SystemMediaControls(player: player, output: output)
+        controls.start()
+        controls.start()
+        #expect(output.starts == 1)
+        #expect(await controls.handle(.play) == false)
+        #expect(await controls.handle(.pause) == false)
+        let first = QueueEntry(url: entry("one").url, title: "One", artist: "Artist", album: "Album")
+        let second = entry("two")
+        await player.play([first, second])
+        #expect(await controls.handle(.pause))
+        #expect(await controls.handle(.pause))
+        #expect(!player.isPlaying)
+        #expect(output.last?.presentation.artist == "Artist")
+        #expect(output.last?.presentation.album == "Album")
+        #expect(await controls.handle(.play))
+        #expect(await controls.handle(.play))
+        #expect(player.isPlaying)
+        #expect(await controls.handle(.next))
+        #expect(player.currentURL == second.url)
+        #expect(await controls.handle(.next) == false)
+        #expect(await controls.handle(.seek(.nan)) == false)
+        #expect(await controls.handle(.seek(99)))
+        #expect(player.position == 10)
+        #expect(await controls.handle(.previous))
+        #expect(player.position == 0)
+        #expect(await controls.handle(.previous))
+        #expect(player.currentURL == first.url)
+        #expect(await controls.handle(.toggle))
+        #expect(!player.isPlaying)
+        controls.stop()
+        controls.stop()
+        #expect(output.stops == 1)
+        #expect(await controls.handle(.play) == false)
+    }
+
+    @Test func mediaCommandsRejectConflictingActionsAndStopPendingObservation() async {
+        let gate = OpenGate()
+        let player = Player(engine: QueueTestEngine(gate: gate))
+        let output = TestNowPlayingOutput()
+        let controls = SystemMediaControls(player: player, output: output)
+        controls.start()
+        let opening = Task { await player.play([entry("one"), entry("two")]) }
+        await gate.waitUntilBlocked()
+        #expect(await controls.handle(.toggle) == false)
+        #expect(await controls.handle(.next) == false)
+        #expect(await controls.handle(.seek(5)) == false)
+        controls.stop()
+        let count = output.updates
+        await gate.release()
+        await opening.value
+        await Task.yield()
+        #expect(output.updates == count)
+        #expect(output.stops == 1)
+    }
+
+    @Test func mediaTimelineUsesSystemExtrapolationButPublishesSeeksAndPauses() async {
+        let player = Player(engine: QueueTestEngine())
+        await player.play([entry("one")])
+        var timeline = MediaTimeline()
+        let initial = timeline.needsUpdate(MediaState(player), at: 100, force: false)
+        #expect(initial)
+        await player.seek(to: 0.2)
+        let regularTick = timeline.needsUpdate(MediaState(player), at: 100.2, force: false)
+        #expect(!regularTick)
+        await player.seek(to: 6)
+        let seek = timeline.needsUpdate(MediaState(player), at: 100.3, force: false)
+        #expect(seek)
+        await player.togglePlayback()
+        let pause = timeline.needsUpdate(MediaState(player), at: 100.3, force: false)
+        #expect(pause)
+        let idle = timeline.needsUpdate(MediaState(player), at: 200, force: false)
+        #expect(!idle)
+        await player.seek(to: 6.1)
+        let pausedSeek = timeline.needsUpdate(MediaState(player), at: 200, force: false)
+        #expect(pausedSeek)
+        let artworkLoaded = timeline.needsUpdate(MediaState(player), at: 200, force: true)
+        #expect(artworkLoaded)
+    }
+
+    @Test func queueMetadataDecodesOldSessionsAndRoundTripsNewFields() throws {
+        let song = QueueEntry(url: entry("one").url, subtitle: "Artist · Album", artist: "Artist", album: "Album")
+        let data = try JSONEncoder().encode(song)
+        #expect(try JSONDecoder().decode(QueueEntry.self, from: data) == song)
+        var old = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        old.removeValue(forKey: "artist")
+        old.removeValue(forKey: "album")
+        let restored = try JSONDecoder().decode(QueueEntry.self, from: JSONSerialization.data(withJSONObject: old))
+        #expect(restored.artist == nil && restored.album == nil)
+        #expect(restored.subtitle == song.subtitle)
+        #expect(restored.url == song.url)
+    }
+
     @Test func unchangedPollingDoesNotInvalidatePlaybackViews() async {
         let player = Player(engine: QueueTestEngine())
         await player.play([entry("one")])
@@ -510,4 +618,14 @@ private actor OpenGate {
         await withCheckedContinuation { entered = $0 }
     }
     func release() { pending?.resume(); pending = nil; blocked = false }
+}
+
+@MainActor private final class TestNowPlayingOutput: NowPlayingOutput {
+    var starts = 0
+    var stops = 0
+    var updates = 0
+    var last: MediaState?
+    func start(handler: @escaping @MainActor (MediaCommand) async -> Bool) { starts += 1 }
+    func update(_ state: MediaState, forceTimeline: Bool) { updates += 1; last = state }
+    func stop() { stops += 1 }
 }

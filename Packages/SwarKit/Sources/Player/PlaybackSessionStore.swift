@@ -146,7 +146,8 @@ private final class SessionStorage: @unchecked Sendable {
             let root = resolved[savedEntry.rootKey] ?? originalRoot.url
             let file = savedEntry.relativePath.map { root.appendingPathComponent($0) } ?? root
             var entry = QueueEntry(url: file, accessRoot: root, title: savedEntry.entry.title,
-                subtitle: savedEntry.entry.subtitle, artworkURL: savedEntry.entry.artworkURL, id: savedEntry.entry.id)
+                subtitle: savedEntry.entry.subtitle, artworkURL: savedEntry.entry.artworkURL,
+                artist: savedEntry.entry.artist, album: savedEntry.entry.album, id: savedEntry.entry.id)
             entry.error = resolved[savedEntry.rootKey] == nil
                 ? "File access could not be restored. Add its folder again or reopen the file."
                 : savedEntry.entry.error

@@ -31,6 +31,19 @@ public final class Player {
     private var volumeDeviceID: UInt32?
     private var describedSource: SourceFormat?
     private var describedOutput: OutputDescription?
+    @ObservationIgnored private var mediaControls: SystemMediaControls?
+
+    public func enableSystemMediaControls() {
+        guard mediaControls == nil, !isShutDown else { return }
+        let controls = SystemMediaControls(player: self, output: MacNowPlayingOutput())
+        mediaControls = controls
+        controls.start()
+    }
+
+    var currentMediaEntry: QueueEntry? {
+        guard let currentURL else { return nil }
+        return queue.first { $0.url == currentURL } ?? (standaloneEntry?.url == currentURL ? standaloneEntry : nil)
+    }
     public var canSetOutputVolume: Bool {
         !isBusy && !isShutDown && outputVolume.canSet && (volumeDeviceID == nil || volumeDeviceID == outputVolume.deviceID)
     }
@@ -191,7 +204,8 @@ public final class Player {
             artworkURL = entry?.artworkURL ?? presentation?.artworkURL
             currentURL = url
             if entry == nil {
-                standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle, artworkURL: artworkURL)
+                standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle,
+                                            artworkURL: artworkURL, artist: presentation?.artist, album: presentation?.album)
             }
             errorMessage = playbackError
             apply(snapshot)
@@ -429,6 +443,8 @@ public final class Player {
 
     public func shutdown() {
         guard !isShutDown else { return }
+        mediaControls?.stop()
+        mediaControls = nil
         isShutDown = true
         pendingVolume = nil
         pendingSeek = nil

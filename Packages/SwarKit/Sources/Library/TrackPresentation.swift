@@ -6,6 +6,8 @@ public struct TrackPresentation: Sendable {
     public let title: String?
     public let subtitle: String
     public let artworkURL: URL?
+    public let artist: String?
+    public let album: String?
 
     public static func read(url: URL, artworkDirectory: URL? = nil, codecDirectory: URL? = nil) -> TrackPresentation? {
         guard let metadata = try? FFmpegDecoder(url: url, codecDirectory: codecDirectory) else { return nil }
@@ -21,6 +23,7 @@ public struct TrackPresentation: Sendable {
            let key = try? MediaInspector(codecDirectory: codecDirectory, artworkDirectory: cache).cacheArtwork(artwork) {
             artworkURL = cache.appendingPathComponent(key)
         }
-        return TrackPresentation(title: metadata.tag("title"), subtitle: subtitle, artworkURL: artworkURL)
+        return TrackPresentation(title: metadata.tag("title"), subtitle: subtitle, artworkURL: artworkURL,
+                                 artist: metadata.tag("artist"), album: metadata.tag("album"))
     }
 }

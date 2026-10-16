@@ -90,7 +90,10 @@ public struct LibraryView: View {
             open: { importingFolder = false; showImporter = true },
             nowPlaying: { showNowPlaying = true })
         .task { await library.start() }
-        .task { await player.restoreSession() }
+        .task {
+            player.enableSystemMediaControls()
+            await player.restoreSession()
+        }
         .task {
             while !Task.isCancelled {
                 await player.refreshVolume()

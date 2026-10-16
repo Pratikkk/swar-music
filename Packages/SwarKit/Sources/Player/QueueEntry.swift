@@ -8,15 +8,20 @@ public struct QueueEntry: Identifiable, Sendable, Equatable, Codable {
     public let title: String
     public let subtitle: String
     public let artworkURL: URL?
+    public let artist: String?
+    public let album: String?
     public internal(set) var error: String?
 
-    public init(url: URL, accessRoot: URL? = nil, title: String? = nil, subtitle: String = "", artworkURL: URL? = nil, id: UUID = UUID()) {
+    public init(url: URL, accessRoot: URL? = nil, title: String? = nil, subtitle: String = "", artworkURL: URL? = nil,
+                artist: String? = nil, album: String? = nil, id: UUID = UUID()) {
         self.id = id
         self.url = url
         self.accessRoot = accessRoot ?? url
         self.title = title ?? url.deletingPathExtension().lastPathComponent
         self.subtitle = subtitle
         self.artworkURL = artworkURL
+        self.artist = artist
+        self.album = album
     }
 }
 
