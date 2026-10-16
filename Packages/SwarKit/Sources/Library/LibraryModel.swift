@@ -9,6 +9,9 @@ public final class LibraryModel {
     public private(set) var totalCount = 0
     public private(set) var unreadableCount = 0
     public private(set) var isScanning = false
+    public private(set) var isReady = false
+    public private(set) var folderErrors: [String: String] = [:]
+    public private(set) var lastScanAt: Date?
     public private(set) var progress: LibraryProgress?
     public private(set) var errorMessage: String?
     public var search = ""
@@ -47,6 +50,7 @@ public final class LibraryModel {
             await reload()
             await reloadPlaylists()
             await rescan()
+            isReady = true
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -74,6 +78,7 @@ public final class LibraryModel {
         do {
             try await repository.removeFolder(folder.id)
             watchers[folder.id] = nil; scopes[folder.id] = nil
+            folderErrors[folder.id] = nil
             folders = try await repository.folders()
             await reload()
             errorMessage = nil
@@ -94,8 +99,13 @@ public final class LibraryModel {
                     _ = try await scanner.scan(folder: folder, root: scope.url) { [weak self] update in
                         await self?.updateProgress(update)
                     }
-                } catch { errorMessage = "\(URL(fileURLWithPath: folder.path).lastPathComponent): \(error.localizedDescription)" }
+                    folderErrors[folder.id] = nil
+                } catch {
+                    folderErrors[folder.id] = error.localizedDescription
+                    errorMessage = "\(URL(fileURLWithPath: folder.path).lastPathComponent): \(error.localizedDescription)"
+                }
             }
+            lastScanAt = Date()
             await reload()
         } while pendingRescan && !Task.isCancelled
     }
@@ -113,6 +123,8 @@ public final class LibraryModel {
             unreadableCount = page.unreadableCount
         } catch { errorMessage = error.localizedDescription }
     }
+
+    public func isMonitoring(_ folder: LibraryFolder) -> Bool { watchers[folder.id] != nil }
 
     public func loadMore() async { pageLimit += 500; await reload() }
     public func shutdown() {
@@ -215,7 +227,10 @@ public final class LibraryModel {
                 }
                 scopes[folder.id] = access
                 watch(folder: folder, url: url)
-            } catch { errorMessage = "Reconnect \(URL(fileURLWithPath: folder.path).lastPathComponent) by removing and adding the folder again. \(error.localizedDescription)" }
+            } catch {
+                folderErrors[folder.id] = error.localizedDescription
+                errorMessage = "Reconnect \(URL(fileURLWithPath: folder.path).lastPathComponent) by removing and adding the folder again. \(error.localizedDescription)"
+            }
         }
         folders = try await repository.folders()
     }

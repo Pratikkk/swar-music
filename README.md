@@ -48,6 +48,9 @@ The format chip in the library header reports the decoder's source quality and
 codec. Click it for source details, device format, and signal-path status. Hover
 for a compact summary. An orange dot marks a known conversion. Matching formats
 remain **Not verified** until the output path supplies sample-integrity evidence.
+Open **Swar → Settings… → Files** (⌘,) to manage monitored music folders, check
+monitoring status, or rescan. New, modified, and removed files refresh automatically
+while Swar is open; saved folders are checked again at launch.
 Use **Add Folder…** to import a music folder. Swar saves read-only folder access,
 indexes metadata and artwork, and watches nested folders for changes. Browse Albums,
 Artists, Songs, Genres, or Recently Added, and search titles, artists, and albums.
@@ -192,8 +195,8 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 77 tests, including twenty device-free queue tests, nine session tests,
-ten library tests (covering search, paging across 50,001 stored tracks, and playlists),
+The current suite has 78 tests, including twenty device-free queue tests, nine session tests,
+eleven library tests (covering search, paging across 50,001 stored tracks, and playlists),
 and three device-free volume tests, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
 references and seek positions against original samples. Integer lossless fixtures

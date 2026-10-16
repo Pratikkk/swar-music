@@ -195,6 +195,50 @@ extension LibraryTests {
         #expect(try await repository.page(search: "Track 49999").count == 1)
     }
 
+    @MainActor @Test func restoredMonitoredFolderAutomaticallyImportsUpdatesAndRemovesFiles() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let storage = temporary.appendingPathComponent("Store")
+        let original = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await original.start()
+        await original.addFolder(music)
+        #expect(original.isReady)
+        #expect(original.isMonitoring(try #require(original.folders.first)))
+        original.shutdown()
+
+        let restored = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await restored.start()
+        defer { restored.shutdown() }
+        let folder = try #require(restored.folders.first)
+        #expect(restored.isMonitoring(folder))
+        let nested = music.appendingPathComponent("New Album")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let song = nested.appendingPathComponent("new.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: song)
+        try await waitForLibrary { restored.tracks.contains { $0.relativePath == "New Album/new.wav" && $0.codec == "PCM" } }
+        let id = try #require(restored.tracks.first?.id)
+
+        // An atomic replacement must refresh metadata without duplicating the library entry.
+        try Data(contentsOf: fixtures.appendingPathComponent("44100-16.mp3")).write(to: song, options: .atomic)
+        try await waitForLibrary { restored.tracks.count == 1 && restored.tracks.first?.codec == "MP3" }
+        #expect(restored.tracks.first?.id == id)
+        try FileManager.default.removeItem(at: song)
+        try await waitForLibrary { restored.totalCount == 0 }
+        #expect(restored.lastScanAt != nil)
+        #expect(restored.folderErrors.isEmpty)
+        await restored.removeFolder(folder)
+        #expect(!restored.isMonitoring(folder))
+        #expect(FileManager.default.fileExists(atPath: music.path))
+    }
+
+    @MainActor private func waitForLibrary(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(12)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        #expect(condition(), "Folder monitoring did not update the library in time")
+    }
+
     @Test func folderWatcherReportsNestedChanges() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

@@ -57,11 +57,12 @@ duration, artwork, and Play/Shuffle actions. Songs and albums throughout the lib
 
 ## Verification
 
-Ten library tests cover incremental updates, deletion reconciliation, inaccessible
+Eleven library tests cover incremental updates, deletion reconciliation, inaccessible
 roots, symlink exclusion, literal search input, corrupt files, metadata across five
 containers, embedded and folder covers, cache deduplication, bookmark restoration,
 overlap rejection, nested FSEvents, paging/search across 50,001 stored tracks,
-playlist creation, track ordering, reordering, removal, cascade deletion, and model integration.
+playlist creation, track ordering, reordering, removal, cascade deletion, model integration,
+and automatic imports/metadata refresh/removal in a restored monitored folder.
 The large test exercises the database, not a 50,000-file scan or UI frame-rate target.
 Tests use temporary stores and original generated media in LibraryTests/Fixtures.
 Regenerate those fixtures with `Tools/make_library_fixtures.py` and development ffmpeg.
@@ -72,3 +73,20 @@ The standard suite skips hardware playback unless its explicit environment varia
 
 Playback history, tag editing, advanced sorting, and
 large-library UI performance profiling remain future work.
+
+## Files settings
+
+Swar → Settings… → Files (⌘,) and the library actions menu open the native settings
+window. Settings and the library window share one LibraryModel, so adding a folder
+starts the same bookmarked FSEvents watcher used by browsing. Folder selection uses
+the sandboxed folder picker. Settings shows paths, monitoring status, per-folder
+errors, scan progress, and last-check time, plus Add Folder and Rescan Now actions.
+Removal asks for confirmation and removes indexed songs and playlist references;
+the original files are untouched. Subfolders are included. Monitoring runs while
+Swar is open, and launch rescans changes made while it was closed.
+
+The signed app was checked by selecting an empty temporary folder in Files settings,
+then copying a fixture into that folder. The shared library changed from 21 to 22
+tracks automatically. The test source was removed afterward, preserving the user's
+original music folder. The model regression also checks atomic file replacements,
+deletion reconciliation, restored bookmarks/watchers, and watcher cleanup on removal.

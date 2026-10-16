@@ -41,7 +41,7 @@ public struct LibraryView: View {
     @State private var showNowPlaying = false
     @State private var windowWidth: CGFloat = 900
     @State private var importingFolder = false
-    @State private var library = LibraryModel()
+    @State private var library: LibraryModel
 
     @State private var showNewPlaylistAlert = false
     @State private var showRenameAlert = false
@@ -76,7 +76,9 @@ public struct LibraryView: View {
         albumGroups.first?.id
     }
 
-    public init() {}
+    public init(library: LibraryModel = LibraryModel()) {
+        _library = State(initialValue: library)
+    }
 
     public var body: some View {
         playbackLifecycle
@@ -278,6 +280,8 @@ public struct LibraryView: View {
                 if let info = player.formatInfo { FormatChip(info: info) }
                 Spacer()
                 Menu {
+                    SettingsLink { Label("Music Folder Settings…", systemImage: "gearshape") }
+                    Divider()
                     Button("Open Audio File…", systemImage: "doc.waveform") { importingFolder = false; showImporter = true }
                         .disabled(player.isBusy)
                     Button("Add Folder…", systemImage: "folder.badge.plus") { openFolderPicker() }
