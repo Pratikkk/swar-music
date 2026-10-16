@@ -51,6 +51,49 @@ struct QueueTests {
         #expect(player.queue.map(\.id) == entries.map(\.id))
     }
 
+    @Test func songChangePublishesPlayingStateAndPresentationTogether() async {
+        let gate = OpenGate()
+        let engine = QueueTestEngine(toggleGate: gate)
+        let player = Player(engine: engine)
+        let entries = [entry("one"), entry("two")]
+        let initial = Task { await player.play(entries) }
+        await gate.waitUntilBlocked()
+        await gate.release()
+        await initial.value
+        await player.seek(to: 5)
+
+        let changing = Task { await player.next() }
+        await gate.waitUntilBlocked()
+        #expect(player.isBusy)
+        #expect(player.isPlaying)
+        #expect(player.currentURL == entries[0].url)
+        #expect(player.title == "one")
+        #expect(player.position == 5)
+        await gate.release()
+        await changing.value
+        #expect(player.currentURL == entries[1].url)
+        #expect(player.title == "two")
+        #expect(player.position == 0)
+        #expect(player.isPlaying)
+        #expect(!player.isBusy)
+    }
+
+    @Test func failedStartShowsOpenedSongAndDoesNotSkipToNextEntry() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let entries = [entry("one"), entry("two")]
+        engine.failNextToggle()
+        await player.play(entries)
+        #expect(player.currentURL == entries[0].url)
+        #expect(engine.opened == [entries[0].url])
+        #expect(player.errorMessage != nil)
+        #expect(player.queue[0].error != nil)
+        #expect(!player.isPlaying && !player.isBusy)
+        await player.togglePlayback()
+        #expect(player.isPlaying)
+        #expect(player.errorMessage == nil)
+    }
+
     @Test func rapidSeeksKeepLatestPositionAndSkipIntermediateDecoderWork() async {
         let gate = OpenGate()
         let engine = QueueTestEngine(seekGate: gate)
@@ -389,11 +432,16 @@ private final class QueueTestEngine: PlaybackDriving, @unchecked Sendable {
     private let lock = NSLock()
     private let gate: OpenGate?
     private let seekGate: OpenGate?
+    private let toggleGate: OpenGate?
+    private var toggleFailure = false
+    func failNextToggle() { lock.withLock { toggleFailure = true } }
     private var seekHistory: [Double] = []
     private var seekFailure = false
     func failNextSeek() { lock.withLock { seekFailure = true } }
     var sought: [Double] { lock.withLock { seekHistory } }
-    init(gate: OpenGate? = nil, seekGate: OpenGate? = nil) { self.gate = gate; self.seekGate = seekGate }
+    init(gate: OpenGate? = nil, seekGate: OpenGate? = nil, toggleGate: OpenGate? = nil) {
+        self.gate = gate; self.seekGate = seekGate; self.toggleGate = toggleGate
+    }
     private var value = PlaybackSnapshot()
     private var failures: Set<URL> = []
     private var history: [URL] = []
@@ -411,7 +459,9 @@ private final class QueueTestEngine: PlaybackDriving, @unchecked Sendable {
         }
     }
     func togglePlayback() async throws -> PlaybackSnapshot {
-        lock.withLock {
+        if let toggleGate { await toggleGate.block() }
+        return try lock.withLock {
+            if toggleFailure { toggleFailure = false; throw CocoaError(.fileReadUnknown) }
             value = PlaybackSnapshot(duration: 10, position: value.position, isPlaying: !value.isPlaying)
             return value
         }

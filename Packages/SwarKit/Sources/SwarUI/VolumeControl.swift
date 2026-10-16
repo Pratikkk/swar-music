@@ -27,7 +27,8 @@ struct VolumeControl: View {
                 dragging = editing
             })
             .controlSize(.small)
-            .disabled(!player.canSetOutputVolume)
+            .disabled(!player.outputVolume.canSet)
+            .allowsHitTesting(player.canSetOutputVolume)
             .accessibilityLabel("Output volume")
             .accessibilityValue(player.outputVolume.level.map { "\(Int(((dragging ? value : $0) * 100).rounded())) percent\(player.outputVolume.isMuted ? ", muted" : "")" } ?? "Unavailable")
             if player.volumeError != nil {

@@ -153,7 +153,9 @@ public final class Player {
         await load(url, accessRoot: accessRoot, displayTitle: displayTitle)
     }
 
-    private func load(_ url: URL, accessRoot: URL?, displayTitle: String?, entry: QueueEntry? = nil) async {
+    @discardableResult
+    private func load(_ url: URL, accessRoot: URL?, displayTitle: String?, entry: QueueEntry? = nil,
+                      startPlayback: Bool = false) async -> Bool {
         generation += 1
         let revision = generation
         completionHandled = false
@@ -165,11 +167,23 @@ public final class Player {
         scopedAccess = ScopedFileAccess(accessRoot ?? url)
         defer { withExtendedLifetime(oldAccess) {} }
         do {
-            let snapshot = try await engine.open(url)
-            guard generation == revision, !isShutDown else { return }
+            var snapshot = try await engine.open(url)
+            guard generation == revision, !isShutDown else { return false }
             let presentation = entry == nil && snapshot.source != nil
                 ? await Task.detached(priority: .utility) { TrackPresentation.read(url: url) }.value : nil
-            guard generation == revision, !isShutDown else { return }
+            guard generation == revision, !isShutDown else { return false }
+            // Publish the new song and its playing snapshot together. An open
+            // snapshot is paused, which would briefly flash the Play icon and
+            // reset the seek bar before the following start completes.
+            var playbackError: String?
+            if startPlayback {
+                do { snapshot = try await engine.togglePlayback() }
+                catch {
+                    snapshot = await engine.snapshot()
+                    playbackError = error.localizedDescription
+                }
+                guard generation == revision, !isShutDown else { return false }
+            }
             title = displayTitle ?? presentation?.title ?? url.deletingPathExtension().lastPathComponent
             subtitle = entry?.subtitle ?? presentation?.subtitle ?? ""
             artworkURL = entry?.artworkURL ?? presentation?.artworkURL
@@ -177,9 +191,11 @@ public final class Player {
             if entry == nil {
                 standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle, artworkURL: artworkURL)
             }
+            errorMessage = playbackError
             apply(snapshot)
-            errorMessage = nil
+            return true
         } catch {
+            guard generation == revision, !isShutDown else { return false }
             currentURL = nil
             artworkURL = nil
             subtitle = ""
@@ -190,6 +206,7 @@ public final class Player {
             duration = 0; position = 0; isPlaying = false; underrunFrames = 0
             scopedAccess = nil
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -398,20 +415,11 @@ public final class Player {
         for index in indices {
             let entry = queue[index]
             currentEntryID = entry.id
-            await load(entry.url, accessRoot: entry.accessRoot, displayTitle: entry.title, entry: entry)
+            let opened = await load(entry.url, accessRoot: entry.accessRoot, displayTitle: entry.title,
+                                    entry: entry, startPlayback: true)
             guard !isShutDown else { return }
-            if errorMessage == nil {
-                queue[index].error = nil
-                do {
-                    apply(try await engine.togglePlayback())
-                } catch {
-                    apply(await engine.snapshot())
-                    errorMessage = error.localizedDescription
-                    queue[index].error = errorMessage
-                }
-                return
-            }
             queue[index].error = errorMessage
+            if opened { return }
         }
     }
 

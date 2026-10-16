@@ -13,10 +13,7 @@ struct ToolbarPlayer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ViewThatFits(in: .horizontal) {
-                bar(showModes: true)
-                bar(showModes: false)
-            }
+            bar
             if let notice = player.sessionNotice {
                 HStack {
                     Label(notice, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
@@ -43,53 +40,72 @@ struct ToolbarPlayer: View {
         }
     }
 
-    private func bar(showModes: Bool) -> some View {
-        HStack(spacing: 14) {
-            HStack(spacing: 10) {
-                if showModes {
-                    Button { player.toggleShuffle() } label: {
-                        Image(systemName: "shuffle").foregroundStyle(player.shuffleEnabled ? Color.accentColor : .secondary)
-                    }.accessibilityLabel("Shuffle").accessibilityValue(player.shuffleEnabled ? "On" : "Off")
-                        .disabled(player.isBusy)
+    private var bar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Button { player.toggleShuffle() } label: {
+                    Image(systemName: "shuffle").foregroundStyle(player.shuffleEnabled ? Color.accentColor : .secondary)
+                        .frame(width: 24, height: 32)
+                }.accessibilityLabel("Shuffle").accessibilityValue(player.shuffleEnabled ? "On" : "Off")
+                    .disabled(player.isBusy)
+                Button { Task { await player.previous() } } label: {
+                    Image(systemName: "backward.fill").frame(width: 24, height: 32)
                 }
-                Button { Task { await player.previous() } } label: { Image(systemName: "backward.fill") }
+                    .buttonStyle(PlaybackButtonStyle(unavailable: !player.canGoPrevious))
                     .accessibilityLabel("Previous Track").disabled(!player.canGoPrevious || player.isBusy)
                 Button { Task { await player.togglePlayback() } } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title2).frame(width: 26, height: 32)
                 }.accessibilityLabel(player.isPlaying ? "Pause" : (player.isRestoredSession ? "Resume" : "Play"))
                     .disabled(!player.canTogglePlayback || player.isBusy)
-                Button { Task { await player.next() } } label: { Image(systemName: "forward.fill") }
-                    .accessibilityLabel("Next Track").disabled(!player.canGoNext || player.isBusy)
-                if showModes {
-                    Menu {
-                        ForEach(RepeatMode.allCases, id: \.self) { mode in
-                            Button { player.setRepeatMode(mode) } label: {
-                                if player.repeatMode == mode { Label("Repeat " + mode.rawValue, systemImage: "checkmark") }
-                                else { Text("Repeat " + mode.rawValue) }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                            .foregroundStyle(player.repeatMode == .off ? Color.secondary : .accentColor)
-                    }.menuStyle(.borderlessButton).fixedSize()
-                        .accessibilityLabel("Repeat: " + player.repeatMode.rawValue).disabled(player.isBusy)
+                Button { Task { await player.next() } } label: {
+                    Image(systemName: "forward.fill").frame(width: 24, height: 32)
                 }
+                    .buttonStyle(PlaybackButtonStyle(unavailable: !player.canGoNext))
+                    .accessibilityLabel("Next Track").disabled(!player.canGoNext || player.isBusy)
+                Menu {
+                    ForEach(RepeatMode.allCases, id: \.self) { mode in
+                        Button { player.setRepeatMode(mode) } label: {
+                            if player.repeatMode == mode { Label("Repeat " + mode.rawValue, systemImage: "checkmark") }
+                            else { Text("Repeat " + mode.rawValue) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : .accentColor)
+                        .frame(width: 24, height: 32)
+                }.menuStyle(.borderlessButton).menuIndicator(.hidden)
+                    .frame(width: 24, height: 32)
+                    .accessibilityLabel("Repeat: " + player.repeatMode.rawValue)
+                    .disabled(!player.canTogglePlayback)
             }
+            .buttonStyle(PlaybackButtonStyle())
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button(action: openNowPlaying) {
                     CoverArt(url: player.artworkURL, title: player.subtitle, cornerRadius: 3)
                         .frame(width: 42, height: 42)
+                        .overlay(alignment: .bottomTrailing) {
+                            ProgressView().controlSize(.mini)
+                                .frame(width: 16, height: 16)
+                                .background(.regularMaterial, in: Circle())
+                                .opacity(showActivity ? 1 : 0)
+                                .accessibilityHidden(!showActivity)
+                        }
                 }.buttonStyle(.plain).accessibilityLabel("Open Now Playing").help("Open Now Playing (⇧⌘N)")
+                    .fixedSize()
                 VStack(spacing: 1) {
                     Button(action: openNowPlaying) {
                         VStack(spacing: 2) {
-                            Text(player.isBusy ? player.title : (player.currentURL == nil ? (player.queue.isEmpty ? "Swar" : "Queue Ready") : player.title))
+                            Text(player.currentURL == nil ? (player.queue.isEmpty ? "Swar" : "Queue Ready") : player.title)
                                 .font(.system(size: 12, weight: .medium))
+                                .frame(maxWidth: .infinity)
                             Text(player.subtitle.isEmpty ? "Your music, in full detail" : player.subtitle)
                                 .font(.system(size: 11)).foregroundStyle(.secondary)
-                        }.lineLimit(1).frame(maxWidth: .infinity)
+                                .frame(maxWidth: .infinity)
+                        }.lineLimit(1).truncationMode(.tail)
+                            .frame(minWidth: 0, maxWidth: .infinity)
                     }.buttonStyle(.plain).accessibilityLabel("Open Now Playing")
                     Slider(value: Binding(get: { scrubbing ? seekPosition : player.position }, set: { seekPosition = $0 }),
                            in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
@@ -99,20 +115,20 @@ struct ToolbarPlayer: View {
                     })
                     .controlSize(.mini).accessibilityLabel("Playback position")
                     .accessibilityValue("\(Int(player.position)) of \(Int(player.duration)) seconds")
-                    .disabled(player.duration == 0 || (player.isBusy && !player.isSeeking))
+                    // Ignore conflicting input without fading the whole seek bar
+                    // each time the decoder opens a different song.
+                    .disabled(player.duration == 0)
+                    .allowsHitTesting(!player.isBusy || player.isSeeking)
                 }
-                ProgressView().controlSize(.mini)
-                    .frame(width: 16, height: 16)
-                    .opacity(showActivity ? 1 : 0)
-                    .accessibilityHidden(!showActivity)
+                .frame(minWidth: 0, maxWidth: .infinity)
             }
-            .padding(.horizontal, 4).frame(minWidth: 170, maxWidth: .infinity)
+            .frame(minWidth: 0, maxWidth: .infinity)
             VolumeControl(player: player)
-            Button { showQueue.toggle() } label: { Image(systemName: "list.bullet") }
+            Button { showQueue.toggle() } label: { Image(systemName: "list.bullet").frame(width: 24, height: 32) }
                 .foregroundStyle(showQueue ? Color.accentColor : .secondary)
                 .accessibilityLabel("Show Queue").help("Up Next")
                 .popover(isPresented: $showQueue) { QueueView(player: player) }
         }
-        .buttonStyle(.borderless).padding(.horizontal, 18).frame(height: 56)
+        .buttonStyle(.borderless).padding(.horizontal, 16).frame(height: 56)
     }
 }
