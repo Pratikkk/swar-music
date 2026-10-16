@@ -28,6 +28,7 @@ struct ArtistsView: View {
     let play: (LibraryTrack, [LibraryTrack], Bool?) -> Void
     let enqueue: ([LibraryTrack], Bool) -> Void
     @State private var selection: ArtistSelection? = .all
+    @FocusState private var artistListFocused: Bool
 
     private var artists: [ArtistCollection] {
         Dictionary(grouping: library.tracks, by: { $0.albumArtist.isEmpty ? $0.artist : $0.albumArtist })
@@ -74,33 +75,61 @@ struct ArtistsView: View {
     }
 
     private var artistList: some View {
-        List(selection: $selection) {
-            Label {
-                Text("All Artists").fontWeight(.semibold)
-            } icon: {
-                Image(systemName: "music.mic").font(.title2).frame(width: 36, height: 36)
-                    .foregroundStyle(selection == .all ? Color.white : .pink)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 9)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .foregroundStyle(selection == .all ? Color.white : .primary)
-            .background(selection == .all ? Color.pink : .clear)
-            .listRowInsets(EdgeInsets()).tag(ArtistSelection.all)
-            ForEach(artists) { artist in
-                HStack(spacing: 9) {
-                    CoverArt(url: library.artworkURL(artist.tracks.compactMap(\.artworkKey).first), title: artist.name)
-                        .frame(width: 36, height: 36).clipShape(Circle())
-                    Text(artist.name).font(.system(size: 12)).lineLimit(1)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    selectionRow(.all) {
+                        HStack(spacing: 9) {
+                            Image(systemName: "music.mic").font(.title2).frame(width: 36, height: 36)
+                                .foregroundStyle(selection == .all ? Color.white : .pink)
+                            Text("All Artists").fontWeight(.semibold)
+                        }
+                    }
+                    ForEach(artists) { artist in
+                        selectionRow(.artist(artist.name)) {
+                            HStack(spacing: 9) {
+                                CoverArt(url: library.artworkURL(artist.tracks.compactMap(\.artworkKey).first), title: artist.name)
+                                    .frame(width: 36, height: 36).clipShape(Circle())
+                                Text(artist.name).font(.system(size: 12)).lineLimit(1)
+                            }
+                        }.help(artist.name)
+                    }
                 }
+            }
+            .focusable().focused($artistListFocused).focusEffectDisabled()
+            .onMoveCommand(perform: moveArtistSelection)
+            .onChange(of: selection) { _, choice in
+                if let choice { proxy.scrollTo(choice) }
+            }
+            .accessibilityElement(children: .contain).accessibilityLabel("Artists")
+        }
+    }
+
+    private func selectionRow<Content: View>(_ choice: ArtistSelection, @ViewBuilder content: () -> Content) -> some View {
+        Button {
+            selection = choice
+            artistListFocused = true
+        } label: {
+            content()
                 .padding(.horizontal, 10).padding(.vertical, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(selection == .artist(artist.name) ? Color.white : .primary)
-                .background(selection == .artist(artist.name) ? Color.pink : .clear)
-                .listRowInsets(EdgeInsets()).tag(ArtistSelection.artist(artist.name)).help(artist.name)
-            }
+                .foregroundStyle(selection == choice ? Color.white : .primary)
+                .background(selection == choice ? Color.pink : .clear)
+                .contentShape(Rectangle())
         }
-        .listStyle(.plain).scrollContentBackground(.hidden)
-        .accessibilityLabel("Artists")
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selection == choice ? .isSelected : [])
+        .id(choice)
+    }
+
+    private func moveArtistSelection(_ direction: MoveCommandDirection) {
+        let choices: [ArtistSelection] = [.all] + artists.map { .artist($0.name) }
+        let index = choices.firstIndex(of: selection ?? .all) ?? 0
+        switch direction {
+        case .up: selection = choices[max(0, index - 1)]
+        case .down: selection = choices[min(choices.count - 1, index + 1)]
+        default: break
+        }
     }
 
     private func artistSection(_ artist: ArtistCollection, compact: Bool) -> some View {
