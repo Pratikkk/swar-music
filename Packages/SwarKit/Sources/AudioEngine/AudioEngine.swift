@@ -196,7 +196,7 @@ private final class OutputSession {
             try checkAudio(AudioUnitSetProperty(created, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &pcm, UInt32(MemoryLayout.size(ofValue: pcm))), "Set AUHAL client format")
             try checkAudio(swar_install_render_callback(created, buffer), "Install PCM render callback")
             try checkAudio(AudioUnitInitialize(created), "Initialize AUHAL")
-            try fill()
+            try prime()
             engineLog.info("Opened \(decoder.source.description, privacy: .public)")
         } catch { close(); throw error }
     }
@@ -207,7 +207,7 @@ private final class OutputSession {
         guard let unit, !closed else { throw AudioFailure("The output session is closed.") }
         try device.validate(rate: decoder.source.sampleRate)
         if position >= duration { try seek(0) }
-        try fill()
+        try prime()
         didFinish = false
         try checkAudio(AudioOutputUnitStart(unit), "Start AUHAL")
         isPlaying = true
@@ -229,7 +229,7 @@ private final class OutputSession {
         baseFrame = target
         eof = false
         didFinish = false
-        try fill()
+        try prime()
         if resume && target < decoder.frameCount { try play() }
     }
 
@@ -241,10 +241,19 @@ private final class OutputSession {
         }
     }
 
-    private func fill() throws {
+    private func prime() throws {
+        // Start with 200 ms, then let the 10 ms producer timer fill the one-second ring.
+        // Capacity is unchanged; only synchronous decode work before start/seek is bounded.
+        try fill(upTo: UInt32(ceil(decoder.source.sampleRate * 0.2)))
+    }
+
+    private func fill(upTo targetFrames: UInt32 = .max) throws {
         guard let ring, !eof else { return }
         while swar_ring_writable(ring) > 0 {
-            let count = try decoder.read(into: scratch, frames: min(4096, swar_ring_writable(ring)))
+            let readable = swar_ring_readable(ring)
+            guard readable < targetFrames else { break }
+            let requested = min(4096, swar_ring_writable(ring), targetFrames - readable)
+            let count = try decoder.read(into: scratch, frames: requested)
             if count == 0 { eof = true; swar_ring_finish(ring); break }
             guard swar_ring_write(ring, scratch, count) == count else { throw AudioFailure("PCM buffer write failed.") }
         }

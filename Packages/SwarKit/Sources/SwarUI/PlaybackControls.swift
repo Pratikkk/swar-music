@@ -7,6 +7,7 @@ struct PlaybackControls: View {
     var expanded = false
     var openNowPlaying: (() -> Void)?
     @State private var showQueue = false
+    @State private var showActivity = false
     @State private var scrubbing = false
     @State private var seekPosition: Double = 0
 
@@ -41,12 +42,12 @@ struct PlaybackControls: View {
                         .frame(width: 240, height: 240)
                         .shadow(color: .black.opacity(0.14), radius: 16, y: 8)
                         .overlay {
-                            if player.isBusy {
+                            if showActivity {
                                 ProgressView().padding(12).background(.regularMaterial, in: Circle())
                             }
                         }
                     VStack(spacing: 6) {
-                        Text(player.isBusy ? "Loading song…" : (player.currentURL == nil ? (player.queue.isEmpty ? "Nothing Playing" : "Queue Ready") : player.title))
+                        Text(player.isBusy ? player.title : (player.currentURL == nil ? (player.queue.isEmpty ? "Nothing Playing" : "Queue Ready") : player.title))
                             .font(.title2.weight(.semibold)).lineLimit(2).textSelection(.enabled)
                         Text(player.subtitle.isEmpty ? (player.queue.isEmpty ? "Choose a song from your library" : "Press Play to start your queue") : player.subtitle)
                             .foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
@@ -81,7 +82,7 @@ struct PlaybackControls: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(1)
-                    if player.isBusy { ProgressView().controlSize(.small) }
+                    if showActivity { ProgressView().controlSize(.small) }
                     transport
                     queueOptions
                 }
@@ -100,7 +101,7 @@ struct PlaybackControls: View {
                     if !editing { Task { await player.seek(to: seekPosition) } }
                 })
                 .accessibilityLabel("Playback position")
-                .disabled(player.duration == 0 || player.isBusy)
+                .disabled(player.duration == 0 || (player.isBusy && !player.isSeeking))
                 Text(time(player.duration)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     .frame(minWidth: 30, alignment: .leading)
                 if !expanded { VolumeControl(player: player) }
@@ -114,6 +115,12 @@ struct PlaybackControls: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background { if !expanded { Rectangle().fill(.bar) } }
+        .task(id: player.isBusy) {
+            showActivity = false
+            guard player.isBusy else { return }
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            showActivity = true
+        }
     }
 
     private var transport: some View {
@@ -253,7 +260,7 @@ extension View {
             seek: { delta in Task { await player.seek(to: player.position + delta) } },
             canOpen: canOpen && !player.isBusy,
             canPlay: player.canTogglePlayback && !player.isBusy,
-            canSeek: player.duration > 0 && !player.isBusy
+            canSeek: player.duration > 0 && (!player.isBusy || player.isSeeking)
         ))
     }
 }

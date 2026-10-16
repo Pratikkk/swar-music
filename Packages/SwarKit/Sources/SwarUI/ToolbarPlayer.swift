@@ -7,6 +7,7 @@ struct ToolbarPlayer: View {
     let player: Player
     let openNowPlaying: () -> Void
     @State private var showQueue = false
+    @State private var showActivity = false
     @State private var scrubbing = false
     @State private var seekPosition: Double = 0
 
@@ -34,6 +35,12 @@ struct ToolbarPlayer: View {
             }
         }
         .background(.bar)
+        .task(id: player.isBusy) {
+            showActivity = false
+            guard player.isBusy else { return }
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            showActivity = true
+        }
     }
 
     private func bar(showModes: Bool) -> some View {
@@ -78,7 +85,7 @@ struct ToolbarPlayer: View {
                 VStack(spacing: 1) {
                     Button(action: openNowPlaying) {
                         VStack(spacing: 2) {
-                            Text(player.isBusy ? "Loading song…" : (player.currentURL == nil ? (player.queue.isEmpty ? "Swar" : "Queue Ready") : player.title))
+                            Text(player.isBusy ? player.title : (player.currentURL == nil ? (player.queue.isEmpty ? "Swar" : "Queue Ready") : player.title))
                                 .font(.system(size: 12, weight: .medium))
                             Text(player.subtitle.isEmpty ? "Your music, in full detail" : player.subtitle)
                                 .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -92,9 +99,9 @@ struct ToolbarPlayer: View {
                     })
                     .controlSize(.mini).accessibilityLabel("Playback position")
                     .accessibilityValue("\(Int(player.position)) of \(Int(player.duration)) seconds")
-                    .disabled(player.duration == 0 || player.isBusy)
+                    .disabled(player.duration == 0 || (player.isBusy && !player.isSeeking))
                 }
-                if player.isBusy { ProgressView().controlSize(.mini) }
+                if showActivity { ProgressView().controlSize(.mini) }
             }
             .padding(.horizontal, 4).frame(minWidth: 170, maxWidth: .infinity)
             VolumeControl(player: player)

@@ -35,6 +35,10 @@ the artwork in wide windows and switches to a queue view in compact windows.
 Use the queue’s arrow buttons to move tracks earlier/later; Escape returns to the
 library without stopping playback. See [Now Playing notes](Docs/NowPlaying.md).
 
+Playback starts and seeks use a smaller initial decode buffer, retain song details,
+and coalesce rapid seek requests to the latest position. See [responsiveness notes](Docs/PlaybackResponsiveness.md)
+for hardware timings and remaining limitations.
+
 ## Current milestone: compact library layout
 
 The app has a native library sidebar and a single-file playback harness. Use
@@ -188,7 +192,7 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 74 tests, including seventeen device-free queue tests, nine session tests,
+The current suite has 77 tests, including twenty device-free queue tests, nine session tests,
 ten library tests (covering search, paging across 50,001 stored tracks, and playlists),
 and three device-free volume tests, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256

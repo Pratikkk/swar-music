@@ -17,6 +17,7 @@ struct HardwarePlaybackTests {
         #expect(first.source?.sampleRate == 44_100)
         #expect(first.source?.bitDepth == 16)
         #expect(first.output?.sampleRate == 44_100)
+        let openingStart = ContinuousClock.now
         let opened = try await engine.open(URL(fileURLWithPath: path))
         #expect(opened.source?.codec == "ALAC")
         #expect(opened.source?.sampleRate == 96_000)
@@ -24,7 +25,10 @@ struct HardwarePlaybackTests {
         #expect(opened.output?.sampleRate == 96_000)
         #expect(!opened.isPlaying)
         #expect(opened.position == 0)
+        print("Audio open including rate change: \(ContinuousClock.now - openingStart)")
+        let playStart = ContinuousClock.now
         let playing = try await engine.togglePlayback()
+        print("Audio start: \(ContinuousClock.now - playStart)")
         #expect(playing.isPlaying)
         try await Task.sleep(for: .milliseconds(400))
         let paused = try await engine.togglePlayback()
@@ -33,7 +37,9 @@ struct HardwarePlaybackTests {
         try await Task.sleep(for: .milliseconds(150))
         let stillPaused = await engine.snapshot()
         #expect(stillPaused.position == paused.position)
+        let seekStart = ContinuousClock.now
         let sought = try await engine.seek(to: 1.25)
+        print("Paused seek: \(ContinuousClock.now - seekStart)")
         #expect(abs(sought.position - 1.25) < 0.001)
         #expect(!sought.isPlaying)
         _ = try await engine.togglePlayback()
@@ -42,6 +48,17 @@ struct HardwarePlaybackTests {
         #expect(resumed.position > sought.position)
         #expect(resumed.error == nil)
         #expect(resumed.underrunFrames == 0)
+        for target in [0.5, 1.0, 0.2] {
+            let started = ContinuousClock.now
+            let seeking = try await engine.seek(to: target)
+            print("Playing seek: \(ContinuousClock.now - started)")
+            #expect(seeking.isPlaying)
+            #expect(abs(seeking.position - target) < 0.05)
+            try await Task.sleep(for: .milliseconds(250))
+            let settled = await engine.snapshot()
+            #expect(settled.isPlaying && settled.error == nil)
+            #expect(settled.underrunFrames == 0)
+        }
         _ = try await engine.seek(to: opened.duration - 0.1)
         try await Task.sleep(for: .milliseconds(300))
         let ended = await engine.snapshot()

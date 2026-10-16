@@ -51,6 +51,60 @@ struct QueueTests {
         #expect(player.queue.map(\.id) == entries.map(\.id))
     }
 
+    @Test func rapidSeeksKeepLatestPositionAndSkipIntermediateDecoderWork() async {
+        let gate = OpenGate()
+        let engine = QueueTestEngine(seekGate: gate)
+        let player = Player(engine: engine)
+        let entries = [entry("one"), entry("two")]
+        await player.play(entries)
+        let title = player.title
+        let seeking = Task { await player.seek(to: 2) }
+        await gate.waitUntilBlocked()
+        #expect(player.isSeeking && player.isBusy)
+        #expect(player.position == 2)
+        await player.seek(to: 4)
+        await player.seek(to: 8)
+        #expect(player.position == 8)
+        #expect(player.title == title)
+        #expect(player.currentEntryID == entries[0].id)
+        await gate.release()
+        await seeking.value
+        #expect(engine.sought == [2, 8])
+        #expect(player.position == 8)
+        #expect(player.isPlaying)
+        #expect(!player.isBusy && !player.isSeeking)
+    }
+
+    @Test func failedSeekRestoresActualPositionAndAllowsRetry() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        await player.play([entry("one")])
+        engine.failNextSeek()
+        await player.seek(to: 5)
+        #expect(player.errorMessage != nil)
+        #expect(player.position == 0)
+        #expect(!player.isBusy && !player.isSeeking)
+        await player.seek(to: 6)
+        #expect(player.position == 6)
+        #expect(player.errorMessage == nil)
+    }
+
+    @Test func shutdownDuringSeekDoesNotRestoreStalePlaybackState() async {
+        let gate = OpenGate()
+        let engine = QueueTestEngine(seekGate: gate)
+        let player = Player(engine: engine)
+        await player.play([entry("one")])
+        let seeking = Task { await player.seek(to: 2) }
+        await gate.waitUntilBlocked()
+        await player.seek(to: 8)
+        player.shutdown()
+        await gate.release()
+        await seeking.value
+        #expect(engine.sought == [2])
+        #expect(player.position == 0)
+        #expect(!player.isPlaying && !player.isSeeking && !player.isBusy)
+    }
+
     @Test func queueEditsAreBlockedDuringAnAsynchronousOpen() async {
         let gate = OpenGate()
         let engine = QueueTestEngine(gate: gate)
@@ -307,7 +361,12 @@ struct QueueTests {
 private final class QueueTestEngine: PlaybackDriving, @unchecked Sendable {
     private let lock = NSLock()
     private let gate: OpenGate?
-    init(gate: OpenGate? = nil) { self.gate = gate }
+    private let seekGate: OpenGate?
+    private var seekHistory: [Double] = []
+    private var seekFailure = false
+    func failNextSeek() { lock.withLock { seekFailure = true } }
+    var sought: [Double] { lock.withLock { seekHistory } }
+    init(gate: OpenGate? = nil, seekGate: OpenGate? = nil) { self.gate = gate; self.seekGate = seekGate }
     private var value = PlaybackSnapshot()
     private var failures: Set<URL> = []
     private var history: [URL] = []
@@ -331,7 +390,10 @@ private final class QueueTestEngine: PlaybackDriving, @unchecked Sendable {
         }
     }
     func seek(to seconds: Double) async throws -> PlaybackSnapshot {
-        lock.withLock {
+        let first = lock.withLock { seekHistory.append(seconds); return seekHistory.count == 1 }
+        if first, let seekGate { await seekGate.block() }
+        return try lock.withLock {
+            if seekFailure { seekFailure = false; throw CocoaError(.fileReadCorruptFile) }
             value = PlaybackSnapshot(duration: 10, position: seconds, isPlaying: value.isPlaying)
             return value
         }

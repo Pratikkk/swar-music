@@ -17,6 +17,8 @@ public final class Player {
     public private(set) var position: Double = 0
     public private(set) var isPlaying = false
     public private(set) var isBusy = false
+    public private(set) var isSeeking = false
+    private var pendingSeek: Double?
     public private(set) var errorMessage: String?
     public private(set) var underrunFrames: UInt64 = 0
     public private(set) var formatInfo: FormatChipInfo?
@@ -156,8 +158,9 @@ public final class Player {
         let revision = generation
         completionHandled = false
         isRestoredSession = false
-        artworkURL = nil
-        subtitle = ""
+        artworkURL = entry?.artworkURL
+        subtitle = entry?.subtitle ?? ""
+        title = displayTitle ?? url.deletingPathExtension().lastPathComponent
         currentURL = nil
         volumeDeviceID = nil
         let oldAccess = scopedAccess
@@ -224,12 +227,39 @@ public final class Player {
     }
 
     public func seek(to seconds: Double) async {
+        guard !isShutDown, seconds.isFinite, duration > 0 else { return }
         if isRestoredSession {
-            guard !isBusy, !isShutDown, seconds.isFinite else { return }
+            guard !isBusy else { return }
             position = max(0, min(seconds, duration))
             return
         }
-        await control { try await self.engine.seek(to: seconds) }
+        guard !isBusy || isSeeking else { return }
+        let target = max(0, min(seconds, duration))
+        pendingSeek = target
+        position = target
+        guard !isSeeking else { return }
+        generation += 1
+        isSeeking = true
+        isBusy = true
+        defer { isSeeking = false; isBusy = false }
+        // One decoder operation at a time; intermediate drag/key requests are superseded.
+        while let target = pendingSeek, !isShutDown {
+            pendingSeek = nil
+            do {
+                let snapshot = try await engine.seek(to: target)
+                guard !isShutDown else { return }
+                errorMessage = nil
+                if !snapshot.didFinish { completionHandled = false }
+                if pendingSeek == nil { apply(snapshot) }
+            } catch {
+                pendingSeek = nil
+                let snapshot = await engine.snapshot()
+                guard !isShutDown else { return }
+                apply(snapshot)
+                errorMessage = error.localizedDescription
+                return
+            }
+        }
     }
 
     public func refresh() async {
@@ -390,6 +420,7 @@ public final class Player {
         guard !isShutDown else { return }
         isShutDown = true
         pendingVolume = nil
+        pendingSeek = nil
         if didAttemptRestore, !isBusy, let sessionStore {
             do {
                 let session = sessionSnapshot()
