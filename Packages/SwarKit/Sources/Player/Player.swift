@@ -20,6 +20,8 @@ public final class Player {
     public private(set) var errorMessage: String?
     public private(set) var underrunFrames: UInt64 = 0
     public private(set) var formatInfo: FormatChipInfo?
+    public private(set) var isRestoredSession = false
+    public private(set) var sessionNotice: String?
 
     public private(set) var queue: [QueueEntry] = []
     public private(set) var currentEntryID: UUID?
@@ -28,6 +30,7 @@ public final class Player {
     private var unshuffledOrder: [UUID] = []
     public var currentQueueIndex: Int? { queue.firstIndex { $0.id == currentEntryID } }
     public var canGoNext: Bool { currentQueueIndex.map { $0 + 1 < queue.count || (repeatMode == .all && !queue.isEmpty) } ?? !queue.isEmpty }
+    public var canTogglePlayback: Bool { duration > 0 || isRestoredSession || (currentEntryID == nil && !queue.isEmpty) }
     public var canGoPrevious: Bool { currentQueueIndex.map { $0 > 0 || position > 0 } ?? false }
     public var upcomingEntries: [QueueEntry] {
         guard let index = currentQueueIndex else { return queue }
@@ -35,18 +38,71 @@ public final class Player {
     }
 
     private let engine: any PlaybackDriving
+    private let sessionStore: PlaybackSessionStore?
+    private var didAttemptRestore = false
+    private var isShutDown = false
+    private var lastSavedSession: PlaybackSession?
     private var completionHandled = false
     private var scopedAccess: ScopedFileAccess?
     private var generation = 0
 
-    public init(engine: any PlaybackDriving = AudioPlaybackEngine()) { self.engine = engine }
+    public init(engine: any PlaybackDriving = AudioPlaybackEngine(), sessionStore: PlaybackSessionStore? = nil) {
+        self.engine = engine
+        self.sessionStore = sessionStore
+    }
+
+    public func restoreSession() async {
+        guard !didAttemptRestore, !isBusy, !isShutDown else { return }
+        didAttemptRestore = true
+        guard queue.isEmpty, currentURL == nil else { return }
+        lastSavedSession = sessionSnapshot()
+        guard let sessionStore else { return }
+        isBusy = true
+        generation += 1
+        let revision = generation
+        defer { isBusy = false }
+        do {
+            guard let saved = try await sessionStore.load(), generation == revision, !isShutDown else { return }
+            queue = saved.entries; currentEntryID = saved.currentID
+            unshuffledOrder = saved.originalOrder
+            shuffleEnabled = saved.shuffle; repeatMode = saved.repeatMode
+            if let entry = queue.first(where: { $0.id == saved.currentID }) {
+                title = entry.title; subtitle = entry.subtitle; artworkURL = entry.artworkURL
+                currentURL = entry.url; duration = saved.duration; position = saved.position
+                isRestoredSession = true
+                errorMessage = entry.error
+            }
+            lastSavedSession = sessionSnapshot()
+        } catch { sessionNotice = "Couldn’t restore the previous session: " + error.localizedDescription }
+    }
+
+    public func saveSessionIfNeeded() async {
+        guard didAttemptRestore, !isBusy, !isShutDown, let sessionStore else { return }
+        let session = sessionSnapshot()
+        guard session != lastSavedSession else { return }
+        do {
+            try await sessionStore.save(session)
+            lastSavedSession = session
+            sessionNotice = nil
+        } catch { sessionNotice = "Couldn’t save your listening session: " + error.localizedDescription }
+    }
+
+    public func dismissSessionNotice() { sessionNotice = nil }
+
+    private func sessionSnapshot() -> PlaybackSession {
+        let standalone = queue.isEmpty && duration > 0 ? standaloneEntry : nil
+        let entries = standalone.map { [$0] } ?? queue
+        return PlaybackSession(entries: entries, currentID: standalone?.id ?? currentEntryID,
+            position: position, duration: duration, shuffle: shuffleEnabled, repeatMode: repeatMode,
+            originalOrder: standalone.map { [$0.id] } ?? unshuffledOrder)
+    }
 
     deinit {
         engine.shutdown()
     }
 
     public func open(_ url: URL, accessRoot: URL? = nil, displayTitle: String? = nil) async {
-        guard !isBusy else { return }
+        guard !isBusy, !isShutDown else { return }
         isBusy = true
         defer { isBusy = false }
         queue = []
@@ -58,7 +114,9 @@ public final class Player {
 
     private func load(_ url: URL, accessRoot: URL?, displayTitle: String?, entry: QueueEntry? = nil) async {
         generation += 1
+        let revision = generation
         completionHandled = false
+        isRestoredSession = false
         artworkURL = nil
         subtitle = ""
         currentURL = nil
@@ -67,8 +125,10 @@ public final class Player {
         defer { withExtendedLifetime(oldAccess) {} }
         do {
             let snapshot = try await engine.open(url)
+            guard generation == revision, !isShutDown else { return }
             let presentation = entry == nil && snapshot.source != nil
                 ? await Task.detached(priority: .utility) { TrackPresentation.read(url: url) }.value : nil
+            guard generation == revision, !isShutDown else { return }
             title = displayTitle ?? presentation?.title ?? url.deletingPathExtension().lastPathComponent
             subtitle = entry?.subtitle ?? presentation?.subtitle ?? ""
             artworkURL = entry?.artworkURL ?? presentation?.artworkURL
@@ -90,15 +150,50 @@ public final class Player {
     }
 
     public func togglePlayback() async {
+        if !isBusy, !isShutDown, duration == 0, currentEntryID == nil, !queue.isEmpty {
+            await next()
+            return
+        }
+        if isRestoredSession {
+            guard !isBusy, !isShutDown, let index = currentQueueIndex else { return }
+            isBusy = true
+            defer { isBusy = false }
+            let target = position
+            let cachedDuration = duration
+            let entry = queue[index]
+            await load(entry.url, accessRoot: entry.accessRoot, displayTitle: entry.title, entry: entry)
+            guard !isShutDown else { return }
+            if errorMessage == nil {
+                do {
+                    apply(try await engine.seek(to: min(target, duration)))
+                    apply(try await engine.togglePlayback())
+                    queue[index].error = nil
+                } catch { errorMessage = error.localizedDescription }
+            }
+            if let errorMessage {
+                queue[index].error = errorMessage
+                isRestoredSession = true
+                title = entry.title; subtitle = entry.subtitle; artworkURL = entry.artworkURL
+                currentURL = entry.url; duration = cachedDuration; position = target
+                isPlaying = false
+                sourceDescription = nil; outputDescription = nil; formatInfo = nil
+            }
+            return
+        }
         await control { try await self.engine.togglePlayback() }
     }
 
     public func seek(to seconds: Double) async {
+        if isRestoredSession {
+            guard !isBusy, !isShutDown, seconds.isFinite else { return }
+            position = max(0, min(seconds, duration))
+            return
+        }
         await control { try await self.engine.seek(to: seconds) }
     }
 
     public func refresh() async {
-        guard !isBusy else { return }
+        guard !isBusy, !isShutDown, !isRestoredSession else { return }
         let revision = generation
         let snapshot = await engine.snapshot()
         guard generation == revision, !isBusy else { return }
@@ -112,7 +207,7 @@ public final class Player {
 
     /// Replaces the queue and starts at the selected entry.
     public func play(_ entries: [QueueEntry], startingAt index: Int = 0) async {
-        guard !isBusy, entries.indices.contains(index) else { return }
+        guard !isBusy, !isShutDown, entries.indices.contains(index) else { return }
         queue = entries
         unshuffledOrder = entries.map(\.id)
         if shuffleEnabled { shuffleUpcoming(after: index) }
@@ -120,7 +215,7 @@ public final class Player {
     }
 
     public func enqueue(_ entry: QueueEntry, playNext: Bool = false) {
-        guard !isBusy else { return }
+        guard !isBusy, !isShutDown else { return }
         // Include a standalone file in the queue before adding its successor.
         if queue.isEmpty, let standaloneEntry, duration > 0 {
             queue = [standaloneEntry]; currentEntryID = standaloneEntry.id
@@ -137,7 +232,7 @@ public final class Player {
     }
 
     public func next() async {
-        guard !isBusy else { return }
+        guard !isBusy, !isShutDown else { return }
         let index = currentQueueIndex.map { $0 + 1 } ?? 0
         if queue.indices.contains(index) { await playFrom(index, wrapping: repeatMode == .all) }
         else if repeatMode == .all, !queue.isEmpty { await playFrom(0) }
@@ -154,12 +249,12 @@ public final class Player {
     }
 
     public func setRepeatMode(_ mode: RepeatMode) {
-        guard !isBusy else { return }
+        guard !isBusy, !isShutDown else { return }
         repeatMode = mode
     }
 
     public func toggleShuffle() {
-        guard !isBusy else { return }
+        guard !isBusy, !isShutDown else { return }
         shuffleEnabled.toggle()
         let start = currentQueueIndex.map { $0 + 1 } ?? 0
         if shuffleEnabled { shuffleUpcoming(after: start - 1) }
@@ -177,24 +272,24 @@ public final class Player {
     }
 
     public func previous() async {
-        guard !isBusy, let index = currentQueueIndex else { return }
+        guard !isBusy, !isShutDown, let index = currentQueueIndex else { return }
         if position > 3 || index == 0 { await seek(to: 0) }
         else { await playFrom(index - 1) }
     }
 
     public func playEntry(_ id: UUID) async {
-        guard !isBusy, let index = queue.firstIndex(where: { $0.id == id }) else { return }
+        guard !isBusy, !isShutDown, let index = queue.firstIndex(where: { $0.id == id }) else { return }
         await playFrom(index)
     }
 
     public func removeUpcoming(_ id: UUID) {
-        guard !isBusy, upcomingEntries.contains(where: { $0.id == id }) else { return }
+        guard !isBusy, !isShutDown, upcomingEntries.contains(where: { $0.id == id }) else { return }
         queue.removeAll { $0.id == id }
         unshuffledOrder.removeAll { $0 == id }
     }
 
     public func moveUpcoming(from offsets: IndexSet, to destination: Int) {
-        guard !isBusy else { return }
+        guard !isBusy, !isShutDown else { return }
         let start = currentQueueIndex.map { $0 + 1 } ?? 0
         var upcoming = Array(queue.dropFirst(start))
         guard destination >= 0, destination <= upcoming.count,
@@ -208,7 +303,7 @@ public final class Player {
     }
 
     public func clearUpcoming() {
-        guard !isBusy else { return }
+        guard !isBusy, !isShutDown else { return }
         if let index = currentQueueIndex { queue = Array(queue.prefix(index + 1)) }
         else { queue = [] }
         let retained = Set(queue.map(\.id))
@@ -226,6 +321,7 @@ public final class Player {
             let entry = queue[index]
             currentEntryID = entry.id
             await load(entry.url, accessRoot: entry.accessRoot, displayTitle: entry.title, entry: entry)
+            guard !isShutDown else { return }
             if errorMessage == nil {
                 queue[index].error = nil
                 do {
@@ -244,6 +340,15 @@ public final class Player {
     public func reportImportError(_ error: any Error) { errorMessage = error.localizedDescription }
 
     public func shutdown() {
+        guard !isShutDown else { return }
+        isShutDown = true
+        if didAttemptRestore, !isBusy, let sessionStore {
+            do {
+                let session = sessionSnapshot()
+                if session != lastSavedSession { try sessionStore.saveSynchronously(session) }
+            }
+            catch { sessionNotice = "Couldn’t save your listening session: " + error.localizedDescription }
+        }
         generation += 1
         completionHandled = true
         engine.shutdown()
@@ -251,6 +356,7 @@ public final class Player {
         artworkURL = nil
         subtitle = ""
         currentURL = nil
+        isRestoredSession = false
         isPlaying = false
         sourceDescription = nil
         outputDescription = nil
@@ -260,12 +366,14 @@ public final class Player {
     }
 
     private func control(_ action: () async throws -> PlaybackSnapshot) async {
-        guard !isBusy, duration > 0 else { return }
+        guard !isBusy, !isShutDown, duration > 0 else { return }
         generation += 1
+        let revision = generation
         isBusy = true
         defer { isBusy = false }
         do {
             let snapshot = try await action()
+            guard generation == revision, !isShutDown else { return }
             if !snapshot.didFinish { completionHandled = false }
             errorMessage = nil
             apply(snapshot)

@@ -28,7 +28,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
 @MainActor
 public struct LibraryView: View {
     @State private var selection: LibrarySection? = .albums
-    @State private var player = Player()
+    @State private var player = Player(sessionStore: .applicationDefault())
     @State private var showImporter = false
     @State private var showNowPlaying = false
     @State private var windowWidth: CGFloat = 900
@@ -105,6 +105,13 @@ public struct LibraryView: View {
             nowPlaying: { showNowPlaying = true })
         .searchable(text: $library.search, placement: .sidebar, prompt: "Search title, artist, album")
         .task { await library.start() }
+        .task { await player.restoreSession() }
+        .task {
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(5)) } catch { break }
+                await player.saveSessionIfNeeded()
+            }
+        }
         .task(id: selection) {
             library.recentFirst = selection == .recentlyAdded
             await library.reload(resetLimit: true)

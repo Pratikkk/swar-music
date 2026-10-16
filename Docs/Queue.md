@@ -1,6 +1,6 @@
 # Playback queue
 
-Player owns an in-memory ordered queue. Each insertion gets its own UUID, file URL,
+Player owns an ordered queue, persisted as a listening session. Each insertion gets its own UUID, file URL,
 source-folder access URL, display title, subtitle, cached artwork URL, and optional playback error.
 Duplicate tracks can appear independently. Library actions resolve a scoped folder
 URL; opening each queued track acquires an independent scope for its playback lifetime.
@@ -65,8 +65,7 @@ verified in the hardware test; drag gesture behavior has not been manually check
 ## Shuffle and repeat
 
 The player exposes Shuffle and a Repeat menu (Off, All, One). These settings affect
-queue order and advancement only; they do not process audio. They remain in memory
-for the current app session and carry across new playback selections.
+queue order and advancement only; they do not process audio. They carry across playback selections and are saved with the listening session.
 
 Shuffle randomizes only upcoming entries. The current entry and played history stay
 in place. Turning Shuffle off restores the remaining original order, retaining new
@@ -87,4 +86,5 @@ wraparound, and standalone repeat. The real AUHAL test also exercises repeat res
 and wraparound. The shuffle/repeat controls compile in the signed Release build;
 the new controls have not been manually checked with VoiceOver.
 
-Queue persistence, media keys, and gapless handoff remain future work.
+Queue persistence is described in [session restoration](Sessions.md). Media keys and
+gapless handoff remain future work.

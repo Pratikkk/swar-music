@@ -1,7 +1,7 @@
 import Foundation
 
 /// Each insertion has its own identity, so the same track can appear more than once.
-public struct QueueEntry: Identifiable, Sendable, Equatable {
+public struct QueueEntry: Identifiable, Sendable, Equatable, Codable {
     public let id: UUID
     public let url: URL
     public let accessRoot: URL
@@ -10,8 +10,8 @@ public struct QueueEntry: Identifiable, Sendable, Equatable {
     public let artworkURL: URL?
     public internal(set) var error: String?
 
-    public init(url: URL, accessRoot: URL? = nil, title: String? = nil, subtitle: String = "", artworkURL: URL? = nil) {
-        id = UUID()
+    public init(url: URL, accessRoot: URL? = nil, title: String? = nil, subtitle: String = "", artworkURL: URL? = nil, id: UUID = UUID()) {
+        self.id = id
         self.url = url
         self.accessRoot = accessRoot ?? url
         self.title = title ?? url.deletingPathExtension().lastPathComponent
@@ -20,7 +20,7 @@ public struct QueueEntry: Identifiable, Sendable, Equatable {
     }
 }
 
-public enum RepeatMode: String, CaseIterable, Sendable {
+public enum RepeatMode: String, CaseIterable, Sendable, Codable {
     case off = "Off"
     case all = "All"
     case one = "One"

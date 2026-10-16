@@ -12,6 +12,23 @@ struct PlaybackControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let notice = player.sessionNotice {
+                HStack(alignment: .top) {
+                    Label(notice, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                    Spacer()
+                    Button { player.dismissSessionNotice() } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.borderless).accessibilityLabel("Dismiss session notice")
+                }
+            }
+            if player.isRestoredSession {
+                HStack {
+                    Label(player.errorMessage == nil ? "Previous session · Ready to resume" : "Previous session · Choose another song or retry", systemImage: "clock.arrow.circlepath")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Resume") { Task { await player.togglePlayback() } }
+                        .buttonStyle(.borderless).disabled(player.isBusy)
+                }
+            }
             if let error = player.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -29,9 +46,9 @@ struct PlaybackControls: View {
                             }
                         }
                     VStack(spacing: 6) {
-                        Text(player.isBusy ? "Loading song…" : (player.currentURL == nil ? "Nothing Playing" : player.title))
+                        Text(player.isBusy ? "Loading song…" : (player.currentURL == nil ? (player.queue.isEmpty ? "Nothing Playing" : "Queue Ready") : player.title))
                             .font(.title2.weight(.semibold)).lineLimit(2).textSelection(.enabled)
-                        Text(player.subtitle.isEmpty ? "Choose a song from your library" : player.subtitle)
+                        Text(player.subtitle.isEmpty ? (player.queue.isEmpty ? "Choose a song from your library" : "Press Play to start your queue") : player.subtitle)
                             .foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
                     }
                     .multilineTextAlignment(.center)
@@ -57,8 +74,8 @@ struct PlaybackControls: View {
                     .accessibilityLabel("Open Now Playing")
                     .help("Open Now Playing (⇧⌘N)")
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(player.title).font(.headline).lineLimit(1)
-                        Text(player.subtitle.isEmpty ? (player.currentURL == nil ? "Choose a song to start listening" : "Local audio") : player.subtitle)
+                        Text(player.currentURL == nil && !player.queue.isEmpty ? "Queue Ready" : player.title).font(.headline).lineLimit(1)
+                        Text(player.subtitle.isEmpty ? (player.currentURL == nil ? (player.queue.isEmpty ? "Choose a song to start listening" : "Press Play to start your queue") : "Local audio") : player.subtitle)
                             .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -112,8 +129,8 @@ struct PlaybackControls: View {
                         .frame(width: expanded ? 56 : 36, height: expanded ? 56 : 36)
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
-                .disabled(player.duration == 0 || player.isBusy)
+                .accessibilityLabel(player.isPlaying ? "Pause" : (player.isRestoredSession ? "Resume" : "Play"))
+                .disabled(!player.canTogglePlayback || player.isBusy)
 
                 Button { Task { await player.next() } } label: {
                     Image(systemName: "forward.end.fill").font(expanded ? .title3 : .body)
@@ -172,6 +189,7 @@ private struct PlaybackActions {
     var seek: (Double) -> Void
     var canOpen: Bool
     var canPlay: Bool
+    var canSeek: Bool
 }
 
 private struct PlaybackActionsKey: FocusedValueKey {
@@ -212,10 +230,10 @@ public struct SwarCommands: Commands {
                 .disabled(actions?.canPrevious != true)
             Button("Seek Forward") { actions?.seek(5) }
                 .keyboardShortcut(.rightArrow, modifiers: [])
-                .disabled(actions?.canPlay != true)
+                .disabled(actions?.canSeek != true)
             Button("Seek Backward") { actions?.seek(-5) }
                 .keyboardShortcut(.leftArrow, modifiers: [])
-                .disabled(actions?.canPlay != true)
+                .disabled(actions?.canSeek != true)
         }
     }
 }
@@ -232,7 +250,8 @@ extension View {
             canPrevious: player.canGoPrevious && !player.isBusy,
             seek: { delta in Task { await player.seek(to: player.position + delta) } },
             canOpen: canOpen && !player.isBusy,
-            canPlay: player.duration > 0 && !player.isBusy
+            canPlay: player.canTogglePlayback && !player.isBusy,
+            canSeek: player.duration > 0 && !player.isBusy
         ))
     }
 }

@@ -2,6 +2,11 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
+Swar remembers your queue, current song, position, shuffle/repeat settings, and cover
+metadata. On launch it restores a paused session; press **Resume** when ready.
+Restoring does not open an audio device or change its sample rate. Pending queues
+show **Queue Ready** and can be started with Play. See [session restoration](Docs/Sessions.md).
+
 Covers appear in Songs, artist/genre track lists, albums, the Now Playing bar, and
 Up Next. The player shows title and artist/album, with transport controls above a
 separate progress row. Current tracks have a cover badge and a subtle row highlight.
@@ -16,7 +21,7 @@ the artwork in wide windows and switches to a queue view in compact windows.
 Use the queue’s arrow buttons to move tracks earlier/later; Escape returns to the
 library without stopping playback. See [Now Playing notes](Docs/NowPlaying.md).
 
-## Current milestone: expanded Now Playing
+## Current milestone: listening-session restoration
 
 The app has a native library sidebar and a single-file playback harness. Use
 **File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
@@ -152,8 +157,8 @@ labels, conversion explanations, and accessibility labels were checked there.
 Full VoiceOver navigation and physical Bluetooth/AirPlay paths remain untested.
 
 Still unverified: physical DAC sample equality, a 24-bit integer-output DAC,
-hot-plug, sleep/wake, and long-running playback. Playlists, queue
-restoration, gapless playback, and exclusive output remain future work.
+hot-plug, sleep/wake, and long-running playback. Playlists,
+gapless playback, and exclusive output remain future work.
 
 ## Codec support
 
@@ -169,7 +174,7 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 57 tests, including sixteen device-free queue tests, library
+The current suite has 67 tests, including sixteen device-free queue tests and nine session tests, library
 search/paging across 50,001 stored tracks, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
 references and seek positions against original samples. Integer lossless fixtures

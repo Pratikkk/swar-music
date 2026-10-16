@@ -27,4 +27,5 @@ keyboard seeking while paused, Escape back to the library, queue display, moves
 in both directions, side-by-side wide layout, compact switching, and blocking file
 dialogs while the sheet is open. The queue regression test now also verifies a downward move.
 The full 57-test suite passes. Playback remains on the existing engine; this step
-does not add gapless handoff, media keys, full-screen mode, or queue persistence.
+does not add gapless handoff, media keys, or full-screen mode. Queue persistence was
+added in the [session restoration milestone](Sessions.md).
