@@ -171,7 +171,6 @@ public struct LibraryView: View {
 
     private var windowPresentation: some View {
         libraryLayout
-        .toolbar(removing: .sidebarToggle)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .tint(.pink)
         .fileImporter(isPresented: $showImporter, allowedContentTypes: importingFolder ? [.folder] : [.item]) { result in
@@ -207,8 +206,10 @@ public struct LibraryView: View {
     private var libraryLayout: some View {
         NavigationSplitView {
             sidebar
+                .toolbar(removing: .sidebarToggle)
         } detail: {
             detailPane
+                .toolbar(removing: .sidebarToggle)
         }
     }
 
