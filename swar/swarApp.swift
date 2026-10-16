@@ -6,11 +6,13 @@
 //
 
 import SwiftUI
+import AppKit
 import SwarUI
 import Library
 
 @main
 struct swarApp: App {
+    @NSApplicationDelegateAdaptor(SwarAppDelegate.self) private var appDelegate
     @State private var library = LibraryModel()
     var body: some Scene {
         Window("Swar", id: "library") {
@@ -33,5 +35,15 @@ struct swarApp: App {
         Settings {
             LibrarySettingsView(library: library)
         }
+    }
+}
+
+/// Refresh the running Dock tile as well as the bundle's Finder/About icon.
+/// Development builds can otherwise keep a cached generic icon across rebuilds.
+final class SwarAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+              let icon = NSImage(contentsOf: url) else { return }
+        NSApplication.shared.applicationIconImage = icon
     }
 }
