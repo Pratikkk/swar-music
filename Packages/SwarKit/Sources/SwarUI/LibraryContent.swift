@@ -7,7 +7,7 @@ struct LibraryContent: View {
     let library: LibraryModel
     let player: Player
     let section: String
-    @State private var selectedAlbum: String?
+    @Binding var selectedAlbum: String?
 
     private var albums: [AlbumGroup] {
         Dictionary(grouping: library.tracks, by: { $0.albumArtist + "\u{1f}" + $0.album }).map { key, tracks in
@@ -78,23 +78,34 @@ struct LibraryContent: View {
 
     @ViewBuilder private var albumContent: some View {
         if let selectedAlbum, let album = albums.first(where: { $0.id == selectedAlbum }) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 16) {
-                    Button { self.selectedAlbum = nil } label: { Label("Albums", systemImage: "chevron.left") }
-                    CoverArt(url: library.artworkURL(album.tracks.compactMap(\.artworkKey).first), title: album.title).frame(width: 80, height: 80)
-                    VStack(alignment: .leading) {
-                        Text(album.title).font(.title2.bold())
-                        Text(album.artist).foregroundStyle(.secondary)
-                        Button("Play Album", systemImage: "play.fill") {
-                            if let first = album.tracks.first(where: { $0.error == nil }) {
-                                Task { await play(first, context: album.tracks) }
-                            }
-                        }.disabled(player.isBusy || album.tracks.allSatisfy { $0.error != nil })
+            AlbumDetailView(
+                title: album.title, artist: album.artist, tracks: album.tracks,
+                artworkURL: library.artworkURL(album.tracks.compactMap(\.artworkKey).first),
+                player: player,
+                isCurrent: { track in
+                    player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
+                },
+                playAlbum: { shuffle in
+                    let playable = album.tracks.filter { $0.error == nil }
+                    if let first = playable.first {
+                        Task { await play(first, context: album.tracks, shuffle: shuffle) }
                     }
-                    Spacer()
-                }.padding(20)
-                trackList(album.tracks)
-            }
+                },
+                playTrack: { track in
+                    Task {
+                        let current = player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
+                        if current { await player.togglePlayback() }
+                        else { await play(track, context: album.tracks) }
+                    }
+                },
+                enqueueTrack: { track, next in enqueue(track, next: next) },
+                enqueueAlbum: { next in
+                    do {
+                        let entries = try album.tracks.filter { $0.error == nil }.map { try entry($0) }
+                        for entry in next ? Array(entries.reversed()) : entries { player.enqueue(entry, playNext: next) }
+                    } catch { player.reportImportError(error) }
+                }
+            )
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -198,13 +209,13 @@ struct LibraryContent: View {
                           subtitle: track.artist + " · " + track.album, artworkURL: library.artworkURL(track.artworkKey))
     }
 
-    private func play(_ track: LibraryTrack, context: [LibraryTrack]) async {
+    private func play(_ track: LibraryTrack, context: [LibraryTrack], shuffle: Bool? = nil) async {
         guard !player.isBusy else { return }
         do {
             let playable = context.filter { $0.error == nil }
             guard let index = playable.firstIndex(where: { $0.id == track.id }) else { return }
             let entries = try playable.map { try entry($0) }
-            await player.play(entries, startingAt: index)
+            await player.play(entries, startingAt: index, shuffle: shuffle)
         } catch { player.reportImportError(error) }
     }
 

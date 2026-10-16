@@ -5,7 +5,9 @@ A native macOS local music player built with SwiftUI and Swift 6.
 The library uses a compact top player, a tinted native sidebar, and artwork-first
 album cards. Recently Added groups albums by month; Home opens the recent local
 library. Radio is omitted. Open an album by clicking its cover or title, or play it
-using the button over its artwork. Library actions (open file, add folder, rescan)
+using the button over its artwork. Album details show large cover art, artist and
+genre/year tags, Play and Shuffle actions, numbered songs, duration, and queue menus.
+Play starts in disc/track order; Shuffle includes the whole album. Library actions (open file, add folder, rescan)
 are in the menu at the right of the section header.
 
 The top player and expanded player include an output-volume slider. It controls
@@ -185,7 +187,7 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 71 tests, including sixteen device-free queue tests, nine session tests,
+The current suite has 72 tests, including seventeen device-free queue tests, nine session tests,
 and three device-free volume tests, library
 search/paging across 50,001 stored tracks, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256

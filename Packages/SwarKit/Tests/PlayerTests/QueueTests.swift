@@ -30,6 +30,27 @@ struct QueueTests {
         #expect(!player.canGoNext)
     }
 
+    @Test func explicitAlbumShufflePlaysEverySongOnceAndPlayResetsToDiscOrder() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let entries = (0..<12).map { entry("album-\($0)") }
+        await player.play(entries, shuffle: true)
+        #expect(player.shuffleEnabled)
+        #expect(player.currentEntryID == player.queue.first?.id)
+        #expect(Set(player.queue.map(\.id)) == Set(entries.map(\.id)))
+        for _ in entries {
+            engine.finish()
+            await player.refresh()
+        }
+        #expect(!player.isPlaying)
+        #expect(engine.opened.count == entries.count)
+        #expect(Set(engine.opened) == Set(entries.map(\.url)))
+        await player.play(entries, shuffle: false)
+        #expect(!player.shuffleEnabled)
+        #expect(player.currentEntryID == entries.first?.id)
+        #expect(player.queue.map(\.id) == entries.map(\.id))
+    }
+
     @Test func queueEditsAreBlockedDuringAnAsynchronousOpen() async {
         let gate = OpenGate()
         let engine = QueueTestEngine(gate: gate)

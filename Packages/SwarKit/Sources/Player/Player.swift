@@ -246,12 +246,19 @@ public final class Player {
     }
 
     /// Replaces the queue and starts at the selected entry.
-    public func play(_ entries: [QueueEntry], startingAt index: Int = 0) async {
+    public func play(_ entries: [QueueEntry], startingAt index: Int = 0, shuffle: Bool? = nil) async {
         guard !isBusy, !isShutDown, entries.indices.contains(index) else { return }
         queue = entries
         unshuffledOrder = entries.map(\.id)
-        if shuffleEnabled { shuffleUpcoming(after: index) }
-        await playFrom(index)
+        if let shuffle { shuffleEnabled = shuffle }
+        if shuffle == true {
+            // An explicit album shuffle includes every song, including the first selection.
+            queue.shuffle()
+            await playFrom(0)
+        } else {
+            if shuffleEnabled { shuffleUpcoming(after: index) }
+            await playFrom(index)
+        }
     }
 
     public func enqueue(_ entry: QueueEntry, playNext: Bool = false) {

@@ -31,6 +31,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
 public struct LibraryView: View {
     @State private var selection: LibrarySection? = .recentlyAdded
     @State private var player = Player(sessionStore: .applicationDefault())
+    @State private var selectedAlbum: String?
     @State private var showImporter = false
     @State private var showNowPlaying = false
     @State private var windowWidth: CGFloat = 900
@@ -85,8 +86,15 @@ public struct LibraryView: View {
                 ToolbarPlayer(player: player, openNowPlaying: { showNowPlaying = true })
                 Divider()
                 ZStack {
-                    Text(selection?.rawValue ?? "Recently Added").font(.headline)
+                    if selectedAlbum == nil {
+                        Text(selection?.rawValue ?? "Recently Added").font(.headline)
+                    }
                     HStack {
+                        if selectedAlbum != nil {
+                            Button { selectedAlbum = nil } label: { Image(systemName: "chevron.left") }
+                                .buttonStyle(.plain).foregroundStyle(.secondary)
+                                .accessibilityLabel("Back to albums").help("Back to albums")
+                        }
                         if let info = player.formatInfo { FormatChip(info: info) }
                         Spacer()
                         Menu {
@@ -102,7 +110,8 @@ public struct LibraryView: View {
                 }
                 .padding(.horizontal, 18).frame(height: 36).background(.bar)
                 LibraryContent(library: library, player: player,
-                               section: selection == .home ? "Recently Added" : (selection?.rawValue ?? "Recently Added"))
+                               section: selection == .home ? "Recently Added" : (selection?.rawValue ?? "Recently Added"),
+                               selectedAlbum: $selectedAlbum)
             }
             .background(Color(nsColor: .underPageBackgroundColor))
             .ignoresSafeArea(.container, edges: .top)
