@@ -47,7 +47,11 @@ struct AlbumDetailView: View {
                                 Text(metadata).font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                             }
-                            Spacer(minLength: 24)
+                            if tracks.contains(where: isCurrent), let info = player.formatInfo {
+                                FormatChip(info: info)
+                                    .padding(.top, 8)
+                            }
+                            Spacer(minLength: 20)
                             HStack(spacing: 10) {
                                 Button { playAlbum(false) } label: { albumAction("Play", symbol: "play.fill") }
                                     .accessibilityLabel("Play album in order")

@@ -277,7 +277,7 @@ public struct LibraryView: View {
                         .buttonStyle(.plain).foregroundStyle(.secondary)
                         .accessibilityLabel("Back to albums").help("Back to albums")
                 }
-                if let info = player.formatInfo { FormatChip(info: info) }
+                if selectedAlbum == nil, let info = player.formatInfo { FormatChip(info: info) }
                 Spacer()
                 Menu {
                     SettingsLink { Label("Music Folder Settings…", systemImage: "gearshape") }
