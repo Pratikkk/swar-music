@@ -1,7 +1,7 @@
 import SwiftUI
 import Player
 
-/// Compact, persistent player above the library, leaving the artwork grid unobstructed.
+/// Persistent glass player floats above the library with stable transport widths.
 @MainActor
 struct ToolbarPlayer: View {
     let player: Player
@@ -10,6 +10,7 @@ struct ToolbarPlayer: View {
     @State private var showActivity = false
     @State private var scrubbing = false
     @State private var seekPosition: Double = 0
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +32,12 @@ struct ToolbarPlayer: View {
                     .font(.caption).foregroundStyle(.orange).padding(.bottom, 6)
             }
         }
-        .background(.bar)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(.white.opacity(colorScheme == .dark ? 0.12 : 0.65), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(colorScheme == .dark ? 0.24 : 0.12), radius: 18, y: 6)
         .task(id: player.isBusy) {
             showActivity = false
             guard player.isBusy else { return }

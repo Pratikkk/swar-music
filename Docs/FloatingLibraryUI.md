@@ -1,0 +1,30 @@
+# Floating library interface
+
+The reference-inspired library uses a neutral translucent sidebar, a compact
+left-aligned section title, search and view options at the top right, and an
+artwork grid with a floating material playback bar at the bottom. It follows
+macOS appearance and uses native vibrancy rather than a simulated background blur.
+Radio, streaming accounts, and video sections are omitted for the local audio app.
+
+Albums opens its grid by default. Cards have aligned single-line titles and artist
+captions; the playback button appears on hover, keyboard focus, and the current
+album. Clicking the current album's playback button toggles playback. Cover and
+title buttons open the existing album details. View options persist sorting by
+album title, artist, or recently added, with deterministic tie-breaking.
+
+Search works through the sidebar Search action or ⌘F. Escape clears its query.
+The same top-right field filters each library section. The sidebar retains Home,
+Recently Added, Artists, Albums, Songs, Genres, playlist management, music folders,
+and Settings. Keyboard arrows navigate sidebar destinations while it has focus.
+
+The floating player retains fixed transport widths, artwork, track details, seek,
+shuffle/repeat, device volume, and Up Next. Its measured height reserves bottom
+space in the content so final rows and footers stay reachable, including when an
+error or restoration notice makes the player taller. It uses the existing guarded
+playback actions and native system media integration.
+
+Visual/manual checks in the running app covered the dark appearance, wide and
+narrow layouts, grid/detail navigation, title sorting, ⌘F search and Escape reset,
+the last Songs rows, the Up Next popover, and playback/pause from the floating bar.
+Light appearance follows semantic system colors and materials; a separate visual
+light-mode pass was not performed.

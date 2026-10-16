@@ -34,12 +34,18 @@ private enum SidebarSelection: Hashable {
 /// Local library browsing and the single-file playback surface.
 @MainActor
 public struct LibraryView: View {
-    @State private var selection: SidebarSelection? = .section(.recentlyAdded)
+    private static let brandIcon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+        .flatMap { NSImage(contentsOf: $0) } ?? NSImage(named: NSImage.applicationIconName) ?? NSImage()
+    @State private var selection: SidebarSelection? = .section(.albums)
+    @AppStorage("albumSortOrder") private var albumSortOrder: AlbumSortOrder = .artist
+    @FocusState private var searchFocused: Bool
+    @FocusState private var sidebarFocused: Bool
     @State private var player = Player(sessionStore: .applicationDefault())
     @State private var selectedAlbum: String?
     @State private var showImporter = false
     @State private var showNowPlaying = false
     @State private var windowWidth: CGFloat = 900
+    @State private var playerHeight: CGFloat = 56
     @State private var importingFolder = false
     @State private var library: LibraryModel
 
@@ -49,32 +55,6 @@ public struct LibraryView: View {
     @State private var playlistNameInput = ""
     @State private var playlistToRename: LibraryPlaylist?
     @State private var playlistToDelete: LibraryPlaylist?
-
-    private struct AlbumSummary: Identifiable {
-        let id: String
-        let title: String
-        let artist: String
-    }
-
-    private var albumGroups: [AlbumSummary] {
-        let groups = Dictionary(grouping: library.tracks, by: { $0.albumArtist + "\u{1f}" + $0.album })
-        return groups.map { key, tracks in
-            AlbumSummary(
-                id: key,
-                title: tracks[0].album,
-                artist: tracks[0].albumArtist
-            )
-        }.sorted { lhs, rhs in
-            if lhs.artist != rhs.artist {
-                return lhs.artist.localizedStandardCompare(rhs.artist) == .orderedAscending
-            }
-            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
-        }
-    }
-
-    private var defaultAlbumID: String? {
-        albumGroups.first?.id
-    }
 
     public init(library: LibraryModel = LibraryModel()) {
         _library = State(initialValue: library)
@@ -189,18 +169,11 @@ public struct LibraryView: View {
                 Color.clear
                     .onAppear {
                         windowWidth = geometry.size.width
-                        if case .section(let section) = selection, section == .albums, selectedAlbum == nil {
-                            selectedAlbum = defaultAlbumID
-                        }
                     }
                     .onChange(of: geometry.size.width) { _, width in windowWidth = width }
             }
         }
-        .onChange(of: selection) {
-            if case .section(let section) = selection, section == .albums, selectedAlbum == nil {
-                selectedAlbum = defaultAlbumID
-            }
-        }
+        .onChange(of: selection) { selectedAlbum = nil }
         .sheet(isPresented: $showNowPlaying) {
             NowPlayingView(player: player, width: max(640, min(900, windowWidth - 40)))
         }
@@ -218,15 +191,24 @@ public struct LibraryView: View {
 
     private var detailPane: some View {
         VStack(spacing: 0) {
-            ToolbarPlayer(player: player, openNowPlaying: { showNowPlaying = true })
-            Divider()
             sectionHeader
-
             selectedContent
+                .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: playerHeight + 36) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .textBackgroundColor))
         .ignoresSafeArea(.container, edges: .top)
+        .overlay(alignment: .bottom) {
+            ToolbarPlayer(player: player, openNowPlaying: { showNowPlaying = true })
+                .frame(maxWidth: 760)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.onAppear { playerHeight = geometry.size.height }
+                            .onChange(of: geometry.size.height) { _, height in playerHeight = height }
+                    }
+                }
+                .padding(.horizontal, 20).padding(.bottom, 18)
+        }
     }
 
     private var selectedContent: some View {
@@ -255,122 +237,167 @@ public struct LibraryView: View {
                 }()
                 LibraryContent(library: library, player: player,
                                section: sectionName,
-                               selectedAlbum: $selectedAlbum)
+                               selectedAlbum: $selectedAlbum, albumSortOrder: albumSortOrder)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var sectionHeader: some View {
-        ZStack {
-            if selectedAlbum == nil {
-                Group {
-                    switch selection {
-                    case .section(let s):
-                        Text(s.rawValue).font(.headline)
-                    case .playlist(let id):
-                        Text(library.playlists.first(where: { $0.id == id })?.name ?? "Playlist").font(.headline)
-                    case nil:
-                        Text("Recently Added").font(.headline)
-                    }
-                }
-            }
-            HStack {
-                if selectedAlbum != nil {
-                    Button { selectedAlbum = nil } label: { Image(systemName: "chevron.left") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
-                        .accessibilityLabel("Back to albums").help("Back to albums")
-                }
-                if selectedAlbum == nil, let info = player.formatInfo { FormatChip(info: info) }
-                Spacer()
-                Menu {
-                    SettingsLink { Label("Music Folder Settings…", systemImage: "gearshape") }
-                    Divider()
-                    Button("Open Audio File…", systemImage: "doc.waveform") { importingFolder = false; showImporter = true }
-                        .disabled(player.isBusy)
-                    Button("Add Folder…", systemImage: "folder.badge.plus") { openFolderPicker() }
-                        .disabled(library.isScanning)
-                    Button("Rescan Library", systemImage: "arrow.clockwise") { Task { await library.rescan() } }
-                        .disabled(library.isScanning || library.folders.isEmpty)
-                } label: { Image(systemName: "ellipsis.circle") }
-                .menuStyle(.borderlessButton).fixedSize().help("Library actions")
-            }
+    private var sectionTitle: String {
+        switch selection {
+        case .section(let section): section.rawValue
+        case .playlist(let id): library.playlists.first { $0.id == id }?.name ?? "Playlist"
+        case nil: "Albums"
         }
-        .padding(.horizontal, 18).frame(height: 36)
+    }
+
+    private var sectionHeader: some View {
+        HStack(spacing: 12) {
+            if selectedAlbum != nil {
+                Button { selectedAlbum = nil } label: {
+                    Image(systemName: "chevron.left").frame(width: 24, height: 28)
+                }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    .accessibilityLabel("Back to albums").help("Back to albums")
+            }
+            Text(sectionTitle).font(.system(size: 13, weight: .semibold))
+                .lineLimit(1).foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Menu {
+                if case .section(.albums) = selection {
+                    Picker("Sort Albums", selection: $albumSortOrder) {
+                        ForEach(AlbumSortOrder.allCases) { order in Text(order.rawValue).tag(order) }
+                    }
+                    Divider()
+                }
+                SettingsLink { Label("Music Folder Settings…", systemImage: "gearshape") }
+                Divider()
+                Button("Open Audio File…", systemImage: "doc.waveform") { importingFolder = false; showImporter = true }
+                    .disabled(player.isBusy)
+                Button("Add Folder…", systemImage: "folder.badge.plus") { openFolderPicker() }
+                    .disabled(library.isScanning)
+                Button("Rescan Library", systemImage: "arrow.clockwise") { Task { await library.rescan() } }
+                    .disabled(library.isScanning || library.folders.isEmpty)
+            } label: {
+                Image(systemName: "line.3.horizontal.decrease")
+                    .font(.system(size: 13)).frame(width: 30, height: 30)
+                    .background(.regularMaterial, in: Circle())
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundStyle(.secondary)
+            .help("View and library options").accessibilityLabel("View and library options")
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+                TextField("Find in \(sectionTitle)", text: $library.search)
+                    .textFieldStyle(.plain).focused($searchFocused)
+                    .accessibilityLabel("Search title, artist, album")
+                    .onKeyPress(.escape) { library.search = ""; searchFocused = false; return .handled }
+                if !library.search.isEmpty {
+                    Button { library.search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.tertiary).accessibilityLabel("Clear search")
+                }
+            }
+            .font(.system(size: 12)).padding(.horizontal, 10).frame(width: 180, height: 30)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(.primary.opacity(0.04), lineWidth: 0.5))
+        }
+        .padding(.horizontal, 24).frame(height: 54)
         .background(Color(nsColor: .textBackgroundColor))
     }
 
     private var sidebar: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 5) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-                TextField("Search", text: $library.search)
-                    .textFieldStyle(.plain)
-                    .accessibilityLabel("Search title, artist, album")
-            }
-            .padding(6).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.primary.opacity(0.15)))
-            .padding(.horizontal, 12).padding(.top, 12)
-            List(selection: $selection) {
-                Section("Swar") {
-                    Label("Home", systemImage: "house").tag(SidebarSelection.section(.home))
-                }
-                Section("Library") {
-                    ForEach(LibrarySection.allCases.filter { $0 != .home }) { section in
-                        Label(section.rawValue, systemImage: section.symbol).tag(SidebarSelection.section(section))
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    Button { searchFocused = true } label: {
+                        sidebarLabel("Search", symbol: "magnifyingglass", selected: false)
                     }
-                }
-                Section {
+                    .buttonStyle(.plain).keyboardShortcut("f", modifiers: .command).help("Find music (⌘F)")
+                    navigationRow(.section(.home), title: "Home", symbol: "house")
+                    sidebarHeading("Library").padding(.top, 18)
+                    ForEach(LibrarySection.allCases.filter { $0 != .home }) { section in
+                        navigationRow(.section(section), title: section.rawValue, symbol: section.symbol)
+                    }
+                    HStack {
+                        sidebarHeading("Playlists")
+                        Spacer()
+                        Button {
+                            playlistNameInput = ""; showNewPlaylistAlert = true
+                        } label: { Image(systemName: "plus").font(.system(size: 11)) }
+                            .buttonStyle(.plain).foregroundStyle(.secondary)
+                            .help("New Playlist").accessibilityLabel("Create New Playlist")
+                    }.padding(.top, 18).padding(.trailing, 10)
                     ForEach(library.playlists) { playlist in
-                        Label(playlist.name, systemImage: "music.note.list")
-                            .tag(SidebarSelection.playlist(playlist.id))
+                        navigationRow(.playlist(playlist.id), title: playlist.name, symbol: "music.note.list")
                             .contextMenu {
                                 Button("Rename…") {
-                                    playlistToRename = playlist
-                                    playlistNameInput = playlist.name
-                                    showRenameAlert = true
+                                    playlistToRename = playlist; playlistNameInput = playlist.name; showRenameAlert = true
                                 }
                                 Button("Delete Playlist", role: .destructive) {
-                                    playlistToDelete = playlist
-                                    showDeleteAlert = true
+                                    playlistToDelete = playlist; showDeleteAlert = true
                                 }
                             }
                     }
-                } header: {
-                    HStack {
-                        Text("Playlists")
-                        Spacer()
-                        Button {
-                            playlistNameInput = ""
-                            showNewPlaylistAlert = true
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .help("New Playlist")
-                        .accessibilityLabel("Create New Playlist")
-                    }
-                }
-                Section("Music Folders") {
+                    sidebarHeading("Music Folders").padding(.top, 18)
                     ForEach(library.folders) { folder in
                         Label(URL(fileURLWithPath: folder.path).lastPathComponent, systemImage: "folder")
-                            .help(folder.path)
+                            .font(.system(size: 12)).lineLimit(1).foregroundStyle(.secondary)
+                            .padding(.horizontal, 10).padding(.vertical, 6).help(folder.path)
                             .contextMenu {
                                 Button("Remove from Library", role: .destructive) { Task { await library.removeFolder(folder) } }
                                     .disabled(library.isScanning)
                             }
                     }
-                    Button("Add Folder…", systemImage: "folder.badge.plus") { openFolderPicker() }
-                        .disabled(library.isScanning)
-                }
+                    Button { openFolderPicker() } label: {
+                        sidebarLabel("Add Folder…", symbol: "folder.badge.plus", selected: false)
+                    }.buttonStyle(.plain).disabled(library.isScanning)
+                }.padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 16)
             }
-            .listStyle(.sidebar).scrollContentBackground(.hidden)
+            .focusable().focused($sidebarFocused).focusEffectDisabled()
+            .onMoveCommand { direction in
+                let choices = LibrarySection.allCases.map { SidebarSelection.section($0) } + library.playlists.map { .playlist($0.id) }
+                guard let selection, let index = choices.firstIndex(of: selection) else { return }
+                let next = direction == .down ? index + 1 : direction == .up ? index - 1 : index
+                if choices.indices.contains(next) { self.selection = choices[next] }
+            }
+            HStack(spacing: 8) {
+                Image(nsImage: Self.brandIcon)
+                    .resizable().frame(width: 28, height: 28).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Swar").font(.system(size: 12, weight: .semibold))
+                    Text("Your local music").font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                SettingsLink { Image(systemName: "gearshape").font(.system(size: 12)) }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Settings (⌘,)")
+                    .accessibilityLabel("Settings")
+            }.padding(12)
         }
-        .background {
-            SidebarMaterial().ignoresSafeArea()
+        .background { SidebarMaterial().ignoresSafeArea() }
+        .navigationSplitViewColumnWidth(min: 170, ideal: 184, max: 200)
+    }
+
+    private func sidebarHeading(_ title: String) -> some View {
+        Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+    }
+
+    private func navigationRow(_ choice: SidebarSelection, title: String, symbol: String) -> some View {
+        Button { selection = choice; sidebarFocused = true } label: {
+            sidebarLabel(title, symbol: symbol, selected: selection == choice)
         }
-        .navigationSplitViewColumnWidth(min: 190, ideal: 202, max: 260)
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selection == choice ? .isSelected : [])
+    }
+
+    private func sidebarLabel(_ title: String, symbol: String, selected: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol).font(.system(size: 14)).frame(width: 17)
+            Text(title).font(.system(size: 12)).lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(selected ? Color.pink : .primary)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(selected ? Color.primary.opacity(0.055) : .clear, in: RoundedRectangle(cornerRadius: 7))
+        .contentShape(Rectangle())
     }
 
     private func openFolderPicker() {

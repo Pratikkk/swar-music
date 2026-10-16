@@ -5,7 +5,7 @@ A native macOS local music player built with SwiftUI and Swift 6.
 For regular use, install the packaged **Swar.app** in Applications. Build a local
 DMG with `./scripts/package-macos.sh`; see [installation and updates](Docs/Installation.md).
 
-The library uses a compact top player, a translucent native sidebar, and artwork-first
+The library uses a floating glass player, a translucent native sidebar, and artwork-first
 album cards. Recently Added groups albums by month; Home opens the recent local
 library. Radio is omitted. Open an album by clicking its cover or title, or play it
 using the button over its artwork. Album details show large cover art, artist and
@@ -14,7 +14,7 @@ Play starts in disc/track order; Shuffle includes the whole album. Library actio
 are in the menu at the right of the section header. The sidebar uses native macOS
 blur; album backgrounds are white in light mode and dark in dark mode.
 
-The top player and expanded player include an output-volume slider. It controls
+The floating player and expanded player include an output-volume slider. It controls
 the selected playback device (or the default output before playback), follows system
 volume changes, and leaves Swar's PCM samples untouched. This is device-wide volume;
 outputs without an adjustable control show a disabled slider with an explanation.
@@ -31,7 +31,7 @@ and playback state supplied to Control Center. Start playback in Swar first; a
 restored paused session does not claim Now Playing. See [system media controls](Docs/SystemMediaControls.md).
 
 Covers appear in Songs, artist/genre track lists, albums, the Now Playing bar, and
-Up Next. The player shows title and artist/album, with transport controls and a compact scrubber in the top bar. Current tracks have a cover badge and a subtle row highlight.
+Up Next. The player shows title and artist/album, with transport controls and a compact scrubber in the bottom floating bar. Current tracks have a cover badge and a subtle row highlight.
 Missing artwork uses a consistent tinted music-note placeholder. Local thumbnails
 load off the main actor and share a bounded memory cache. Files opened directly also
 read their tags and embedded/folder covers without importing them into the library.
@@ -52,7 +52,7 @@ for hardware timings and remaining limitations.
 The app has a native library sidebar and a single-file playback harness. Use
 **File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
 five seconds; the slider scrubs. Opening a file prepares it without autoplay.
-The format chip in the library header reports the decoder's source quality and
+The format chip in album details and expanded Now Playing reports the decoder's source quality and
 codec. Click it for source details, device format, and signal-path status. Hover
 for a compact summary. An orange dot marks a known conversion. Matching formats
 remain **Not verified** until the output path supplies sample-integrity evidence.

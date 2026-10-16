@@ -69,7 +69,7 @@ struct AlbumDetailView: View {
                         .frame(maxWidth: .infinity, minHeight: coverSize, alignment: .leading)
                     }
                     HStack {
-                        Text("\(tracks.count) songs · \(durationDescription)")
+                        Text("\(tracks.count) \(tracks.count == 1 ? "song" : "songs") · \(durationDescription)")
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Menu {
