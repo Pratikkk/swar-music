@@ -63,6 +63,10 @@ public struct LibrarySettingsView: View {
             HStack {
                 Button("Add Folder…", systemImage: "folder.badge.plus") { showFolderPicker = true }
                     .disabled(!library.isReady || library.isScanning)
+                if library.hiddenTrackCount > 0 {
+                    Button("Restore Removed Songs (\(library.hiddenTrackCount))") { Task { await library.restoreRemovedTracks() } }
+                        .disabled(library.isScanning)
+                }
                 Spacer()
                 if library.isScanning { ProgressView().controlSize(.small) }
                 Button("Rescan Now", systemImage: "arrow.clockwise") { Task { await library.rescan() } }

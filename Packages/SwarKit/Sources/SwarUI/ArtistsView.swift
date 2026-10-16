@@ -181,16 +181,14 @@ struct ArtistsView: View {
                     Text("Disc \(max(1, track.discNumber))").font(.caption.bold())
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
                 }
-                AlbumSongRow(track: track, fallbackNumber: index + 1,
+                AlbumSongRow(track: track, library: library, fallbackNumber: index + 1,
                              current: isCurrent(track), playing: isCurrent(track) && player.isPlaying,
                              compact: true, alternate: false, busy: player.isBusy,
-                             playlists: library.playlists,
                              play: {
                                  if isCurrent(track) { Task { await player.togglePlayback() } }
                                  else { play(track, album.tracks, nil) }
                              },
-                             enqueue: { enqueue([track], $0) },
-                             addToPlaylist: { playlist in Task { await library.addTracks([track], to: playlist) } })
+                             enqueue: { enqueue([track], $0) })
             }
         }
     }

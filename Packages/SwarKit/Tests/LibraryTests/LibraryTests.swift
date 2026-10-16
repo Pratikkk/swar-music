@@ -255,6 +255,75 @@ extension LibraryTests {
         #expect(await counter.value > 0)
     }
 
+    @Test func songPreferencesPersistAcrossRescansAndLibraryRemovalStaysExcluded() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = music.appendingPathComponent("favourite.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: file)
+        let path = temporary.appendingPathComponent("library.sqlite").path
+        let repository = try LibraryRepository(path: path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        let scanner = LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs)
+        _ = try await scanner.scan(folder: folder, root: music)
+        let track = try #require(try await repository.page().tracks.first)
+        try await repository.setFavorite(trackID: track.id, favorite: true)
+        let reopened = try LibraryRepository(path: path)
+        #expect(try await reopened.trackPreferences().favorites == [track.id])
+        // A metadata refresh must leave user preferences intact.
+        try Data(contentsOf: fixtures.appendingPathComponent("44100-16.mp3")).write(to: file, options: .atomic)
+        _ = try await scanner.scan(folder: folder, root: music)
+        #expect(try await repository.trackPreferences().favorites == [track.id])
+        let playlist = try await repository.createPlaylist(name: "Test")
+        try await repository.addTracksToPlaylist(playlistID: playlist.id, trackIDs: [track.id, track.id])
+        try await repository.removeTrackFromLibrary(trackID: track.id)
+        #expect(try await repository.page().count == 0)
+        #expect(try await repository.page(search: "favourite").count == 0)
+        #expect(try await repository.playlistTrackItems(playlistID: playlist.id).isEmpty)
+        #expect(try await repository.trackPreferences().favorites.isEmpty)
+        #expect(try await repository.trackPreferences().hiddenCount == 1)
+        _ = try await scanner.scan(folder: folder, root: music)
+        #expect(try await reopened.page().count == 0)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        // Stale UI actions must not put an excluded song back into a playlist.
+        try await repository.addTracksToPlaylist(playlistID: playlist.id, trackIDs: [track.id])
+        try await repository.restoreRemovedTracks()
+        #expect(try await repository.page().count == 1)
+        #expect(try await repository.trackPreferences().hiddenCount == 0)
+        #expect(try await repository.playlistTrackItems(playlistID: playlist.id).isEmpty)
+        try await repository.setFavorite(trackID: track.id, favorite: true)
+        try await repository.removeFolder(folder.id)
+        #expect(try await repository.trackPreferences().favorites.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @MainActor @Test func modelPublishesSongPreferencesAndRestoration() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        await model.addFolder(music)
+        let track = try #require(model.tracks.first)
+        await model.toggleFavorite(track)
+        #expect(model.favoriteTrackIDs.contains(track.id))
+        model.shutdown()
+        let restored = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await restored.start()
+        defer { restored.shutdown() }
+        #expect(restored.favoriteTrackIDs.contains(track.id))
+        await restored.removeTrackFromLibrary(track)
+        #expect(restored.tracks.isEmpty && restored.hiddenTrackCount == 1)
+        #expect(restored.favoriteTrackIDs.isEmpty)
+        #expect(restored.trackActionsRevision == 1)
+        await restored.rescan()
+        #expect(restored.tracks.isEmpty)
+        await restored.restoreRemovedTracks()
+        #expect(restored.tracks.first?.id == track.id)
+        #expect(restored.hiddenTrackCount == 0 && restored.trackActionsRevision == 2)
+    }
+
     @Test func playlistCreationTrackManagementAndCascadeDeletion() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

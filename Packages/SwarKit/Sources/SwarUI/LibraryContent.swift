@@ -85,6 +85,9 @@ struct LibraryContent: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onChange(of: library.search) { selectedAlbum = nil }
         .onChange(of: section) { selectedAlbum = nil }
+        .onChange(of: albums.map(\.id)) { _, ids in
+            if let selectedAlbum, !ids.contains(selectedAlbum) { self.selectedAlbum = nil }
+        }
     }
 
     @ViewBuilder private var albumContent: some View {
@@ -92,7 +95,7 @@ struct LibraryContent: View {
             AlbumDetailView(
                 title: album.title, artist: album.artist, tracks: album.tracks,
                 artworkURL: library.artworkURL(album.tracks.compactMap(\.artworkKey).first),
-                player: player,
+                player: player, library: library,
                 playlists: library.playlists,
                 isCurrent: { track in
                     player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
@@ -116,9 +119,6 @@ struct LibraryContent: View {
                         let entries = try album.tracks.filter { $0.error == nil }.map { try entry($0) }
                         for entry in next ? Array(entries.reversed()) : entries { player.enqueue(entry, playNext: next) }
                     } catch { player.reportImportError(error) }
-                },
-                addToPlaylist: { track, playlist in
-                    Task { await library.addTracks([track], to: playlist) }
                 },
                 addAlbumToPlaylist: { playlist in
                     let playable = album.tracks.filter { $0.error == nil }
@@ -213,23 +213,11 @@ struct LibraryContent: View {
                 if let codec = track.codec { Text(codec).font(.caption).foregroundStyle(.secondary) }
                 if let rate = track.sampleRate { Text("\(rate / 1000, specifier: "%g") kHz").font(.caption).foregroundStyle(.secondary) }
                 Text(String(format: "%d:%02d", Int(track.duration) / 60, Int(track.duration) % 60)).monospacedDigit().foregroundStyle(.secondary)
-            }.padding(.vertical, 6)
-            .listRowBackground(current ? Color.accentColor.opacity(0.06) : Color.clear)
-            .contextMenu {
-                Button("Play Next") { enqueue(track, next: true) }
-                Button("Add to Queue") { enqueue(track, next: false) }
-                if !library.playlists.isEmpty {
-                    Divider()
-                    Menu("Add to Playlist") {
-                        ForEach(library.playlists) { playlist in
-                            Button(playlist.name) {
-                                Task { await library.addTracks([track], to: playlist) }
-                            }
-                        }
-                    }
-                }
             }
-            .disabled(track.error != nil || player.isBusy)
+            .songActions(library: library, track: track, busy: player.isBusy, enqueue: { enqueue(track, next: $0) })
+            .padding(.vertical, 6)
+            .listRowBackground(current ? Color.accentColor.opacity(0.06) : Color.clear)
+
     }
 
     private func entry(_ track: LibraryTrack) throws -> QueueEntry {

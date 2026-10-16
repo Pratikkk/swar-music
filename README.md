@@ -48,6 +48,12 @@ The format chip in the library header reports the decoder's source quality and
 codec. Click it for source details, device format, and signal-path status. Hover
 for a compact summary. An orange dot marks a known conversion. Matching formats
 remain **Not verified** until the output path supplies sample-integrity evidence.
+Song ellipsis and right-click menus offer Add to Playlist (including New Playlist),
+Play Next/Last, Get Info, Favourite, Copy, Show in Finder, and Remove from Library.
+Favourites persist locally. Library removal leaves the original file in place and
+keeps it excluded from folder scans; **Settings → Files → Restore Removed Songs**
+restores visibility. Playlist references are removed when a song is removed from the library.
+
 Artists uses a two-pane browser with All Artists and a selectable artist list.
 Album artists keep compilations together, with album covers, numbered songs, and
 Play/Shuffle, queue, and playlist actions. Narrow windows stack the songs below
@@ -200,8 +206,8 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 78 tests, including twenty device-free queue tests, nine session tests,
-eleven library tests (covering search, paging across 50,001 stored tracks, and playlists),
+The current suite has 80 tests, including twenty device-free queue tests, nine session tests,
+thirteen library tests (covering search, paging across 50,001 stored tracks, and playlists),
 and three device-free volume tests, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
 references and seek positions against original samples. Integer lossless fixtures

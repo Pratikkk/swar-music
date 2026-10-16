@@ -57,7 +57,7 @@ duration, artwork, and Play/Shuffle actions. Songs and albums throughout the lib
 
 ## Verification
 
-Eleven library tests cover incremental updates, deletion reconciliation, inaccessible
+Thirteen library tests cover incremental updates, deletion reconciliation, inaccessible
 roots, symlink exclusion, literal search input, corrupt files, metadata across five
 containers, embedded and folder covers, cache deduplication, bookmark restoration,
 overlap rejection, nested FSEvents, paging/search across 50,001 stored tracks,
@@ -104,4 +104,31 @@ The existing loaded/total count and Load More control remain visible for paged l
 
 The signed Debug app was checked with All Artists, individual artist selection,
 artist queue menus, and a narrow-window layout that stacks songs below album metadata.
-The 78-test regression suite passes; the audio engine is unchanged by this UI update.
+The 80-test regression suite passes; the audio engine is unchanged by this UI update.
+
+## Song menus and preferences
+
+SongActions supplies the same ellipsis and right-click menu for Songs, Genres,
+album details, Artists, and playlists. Add to Playlist can create a playlist when
+none exists. Play Last appends to the existing queue. Get Info is read-only and
+shows source metadata, bitrate, file size, modification time, and local path.
+Copy writes the local file URL to the pasteboard; Show in Finder reveals it using
+NSWorkspace. Playlist rows also retain their Move Up/Down and Remove from Playlist
+commands. Streaming, store, station, dislike/recommendation, and file-writing Paste
+commands are omitted.
+
+Migration library-track-preferences-v4 adds a preferences table with favourite and
+hidden flags, keyed to track IDs with cascade deletion. Metadata rescans preserve
+these flags. Remove from Library confirms the action, hides the indexed row from
+browsing/search, clears its favourites state, and removes its playlist references.
+The original file and its scan fingerprint remain; automatic monitoring therefore
+does not re-add it. Files settings can restore all excluded songs. Restoration does
+not reconstruct previous playlist references. Removing a watched folder also clears
+its track preferences. No audio-file deletion or tag-writing path is introduced.
+
+Repository/model regressions verify preference persistence, metadata replacement,
+search exclusion through rescans, playlist cleanup (including stale add requests),
+restoration, and folder cleanup. The signed Debug app was checked with the menu,
+Get Info, favourite toggling (then restored), and cancelling library removal. Copy
+and Finder use native APIs; no clipboard changes or file deletion were needed for
+that manual check.

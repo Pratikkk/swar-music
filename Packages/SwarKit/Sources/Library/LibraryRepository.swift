@@ -70,6 +70,13 @@ public actor LibraryRepository {
             try db.create(index: "playlist_tracks_order", on: "playlist_tracks", columns: ["playlistID", "position"])
             try db.create(index: "playlist_tracks_track", on: "playlist_tracks", columns: ["trackID"])
         }
+        migrator.registerMigration("library-track-preferences-v4") { db in
+            try db.create(table: "track_preferences") { t in
+                t.column("trackID", .text).primaryKey().references("tracks", onDelete: .cascade)
+                t.column("isFavorite", .boolean).notNull().defaults(to: false)
+                t.column("isHidden", .boolean).notNull().defaults(to: false)
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -110,14 +117,49 @@ public actor LibraryRepository {
         let tokens = search.split(whereSeparator: \.isWhitespace).prefix(20)
         let pattern = tokens.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"*" }.joined(separator: " AND ")
         return try database.read { db in
-            let condition = pattern.isEmpty ? "" : " WHERE rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)"
+            let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
+            let condition = " WHERE " + visible + (pattern.isEmpty ? "" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
             var arguments: StatementArguments = pattern.isEmpty ? [] : [pattern]
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0
             arguments += [max(1, limit)]
             let order = recentFirst ? "addedAt DESC, albumArtist, album, discNumber, trackNumber" : "albumArtist COLLATE NOCASE, album COLLATE NOCASE, discNumber, trackNumber, title COLLATE NOCASE"
             let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: arguments)
-            let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL") ?? 0
+            let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL AND " + visible) ?? 0
             return LibraryPage(tracks: tracks, count: count, unreadableCount: unreadable)
+        }
+    }
+
+    public func trackPreferences() throws -> (favorites: Set<String>, hiddenCount: Int) {
+        try database.read { db in
+            let favorites = try String.fetchAll(db, sql: "SELECT trackID FROM track_preferences WHERE isFavorite = 1 AND isHidden = 0")
+            let hidden = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM track_preferences WHERE isHidden = 1") ?? 0
+            return (Set(favorites), hidden)
+        }
+    }
+
+    public func setFavorite(trackID: String, favorite: Bool) throws {
+        try database.write { db in
+            try db.execute(sql: """
+                INSERT INTO track_preferences(trackID, isFavorite, isHidden) VALUES (?, ?, 0)
+                ON CONFLICT(trackID) DO UPDATE SET isFavorite = excluded.isFavorite
+                """, arguments: [trackID, favorite])
+        }
+    }
+
+    /// Retain the scan fingerprint, so monitored files do not reappear at the next scan.
+    public func removeTrackFromLibrary(trackID: String) throws {
+        try database.write { db in
+            try db.execute(sql: """
+                INSERT INTO track_preferences(trackID, isFavorite, isHidden) VALUES (?, 0, 1)
+                ON CONFLICT(trackID) DO UPDATE SET isFavorite = 0, isHidden = 1
+                """, arguments: [trackID])
+            try db.execute(sql: "DELETE FROM playlist_tracks WHERE trackID = ?", arguments: [trackID])
+        }
+    }
+
+    public func restoreRemovedTracks() throws {
+        try database.write { db in
+            try db.execute(sql: "UPDATE track_preferences SET isHidden = 0 WHERE isHidden = 1")
         }
     }
 
@@ -160,6 +202,8 @@ public actor LibraryRepository {
             var nextPosition = currentMax + 1
             let now = Date()
             for trackID in trackIDs {
+                let hidden = try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM track_preferences WHERE trackID = ? AND isHidden = 1)", arguments: [trackID]) ?? false
+                if hidden { continue }
                 let item = PlaylistTrack(playlistID: playlistID, trackID: trackID, position: nextPosition, addedAt: now)
                 try item.save(db)
                 nextPosition += 1
@@ -201,6 +245,7 @@ public actor LibraryRepository {
                 FROM playlist_tracks pt
                 INNER JOIN tracks t ON pt.trackID = t.id
                 WHERE pt.playlistID = ?
+                  AND NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = t.id AND p.isHidden = 1)
                 ORDER BY pt.position ASC
                 """, arguments: [playlistID])
             return try rows.map { row in

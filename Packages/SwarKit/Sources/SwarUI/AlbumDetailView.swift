@@ -10,13 +10,13 @@ struct AlbumDetailView: View {
     let tracks: [LibraryTrack]
     let artworkURL: URL?
     let player: Player
+    let library: LibraryModel
     var playlists: [LibraryPlaylist] = []
     let isCurrent: (LibraryTrack) -> Bool
     let playAlbum: (Bool) -> Void
     let playTrack: (LibraryTrack) -> Void
     let enqueueTrack: (LibraryTrack, Bool) -> Void
     let enqueueAlbum: (Bool) -> Void
-    var addToPlaylist: ((LibraryTrack, LibraryPlaylist) -> Void)? = nil
     var addAlbumToPlaylist: ((LibraryPlaylist) -> Void)? = nil
 
     private var canPlay: Bool { !player.isBusy && tracks.contains { $0.error == nil } }
@@ -88,12 +88,10 @@ struct AlbumDetailView: View {
                                 Text("Disc \(max(1, track.discNumber))")
                                     .font(.headline).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 14)
                             }
-                            AlbumSongRow(track: track, fallbackNumber: index + 1,
+                            AlbumSongRow(track: track, library: library, fallbackNumber: index + 1,
                                          current: isCurrent(track), playing: isCurrent(track) && player.isPlaying,
                                          compact: compact, alternate: index.isMultiple(of: 2), busy: player.isBusy,
-                                         playlists: playlists,
-                                         play: { playTrack(track) }, enqueue: { enqueueTrack(track, $0) },
-                                         addToPlaylist: { addToPlaylist?(track, $0) })
+                                         play: { playTrack(track) }, enqueue: { enqueueTrack(track, $0) })
                         }
                     }
                 }
@@ -118,16 +116,15 @@ struct AlbumDetailView: View {
 
 struct AlbumSongRow: View {
     let track: LibraryTrack
+    let library: LibraryModel
     let fallbackNumber: Int
     let current: Bool
     let playing: Bool
     let compact: Bool
     let alternate: Bool
     let busy: Bool
-    var playlists: [LibraryPlaylist] = []
     let play: () -> Void
     let enqueue: (Bool) -> Void
-    var addToPlaylist: ((LibraryPlaylist) -> Void)? = nil
     @State private var hovered = false
 
     var body: some View {
@@ -161,35 +158,11 @@ struct AlbumSongRow: View {
             .buttonStyle(.plain).disabled(busy || track.error != nil)
             .accessibilityLabel("\(playing ? "Pause" : "Play") \(track.title), \(track.artist)")
             .accessibilityValue(current ? (playing ? "Now playing" : "Paused") : "")
-            Menu {
-                Button("Play Next") { enqueue(true) }
-                Button("Add to Queue") { enqueue(false) }
-                if !playlists.isEmpty {
-                    Divider()
-                    Menu("Add to Playlist") {
-                        ForEach(playlists) { playlist in
-                            Button(playlist.name) { addToPlaylist?(playlist) }
-                        }
-                    }
-                }
-            } label: { Image(systemName: "ellipsis").frame(width: 18, height: 28) }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .accessibilityLabel("Actions for \(track.title)").disabled(busy || track.error != nil)
+
         }
+        .songActions(library: library, track: track, busy: busy, enqueue: enqueue)
         .font(.system(size: 13)).padding(.horizontal, 12).padding(.vertical, 14)
         .background(current ? Color.accentColor.opacity(0.1) : Color.primary.opacity(hovered ? 0.055 : (alternate ? 0.025 : 0)), in: RoundedRectangle(cornerRadius: 6))
         .onHover { hovered = $0 }
-        .contextMenu {
-            Button("Play Next") { enqueue(true) }.disabled(busy || track.error != nil)
-            Button("Add to Queue") { enqueue(false) }.disabled(busy || track.error != nil)
-            if !playlists.isEmpty {
-                Divider()
-                Menu("Add to Playlist") {
-                    ForEach(playlists) { playlist in
-                        Button(playlist.name) { addToPlaylist?(playlist) }
-                    }
-                }
-            }
-        }
     }
 }

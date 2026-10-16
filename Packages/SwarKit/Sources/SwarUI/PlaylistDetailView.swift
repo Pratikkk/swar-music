@@ -134,7 +134,7 @@ public struct PlaylistDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: playlist.id) {
+        .task(id: [playlist.id, String(library.trackActionsRevision)]) {
             await reloadItems()
         }
     }
@@ -332,26 +332,13 @@ private struct PlaylistSongRow: View {
             .disabled(busy || item.track.error != nil)
             .accessibilityLabel("\(playing ? "Pause" : "Play") \(item.track.title)")
 
-            Menu {
-                Button("Play Next") { enqueue(true) }
-                Button("Add to Queue") { enqueue(false) }
-                Divider()
-                if !isFirst {
-                    Button("Move Up", systemImage: "arrow.up") { moveUp() }
-                }
-                if !isLast {
-                    Button("Move Down", systemImage: "arrow.down") { moveDown() }
-                }
-                Divider()
-                Button("Remove from Playlist", systemImage: "minus.circle", role: .destructive) { remove() }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(width: 18, height: 28)
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .disabled(busy)
+
+        }
+        .songActions(library: library, track: item.track, busy: busy, enqueue: enqueue) {
+            Divider()
+            if !isFirst { Button("Move Up", systemImage: "arrow.up") { moveUp() }.disabled(busy) }
+            if !isLast { Button("Move Down", systemImage: "arrow.down") { moveDown() }.disabled(busy) }
+            Button("Remove from Playlist", systemImage: "minus.circle", role: .destructive) { remove() }.disabled(busy)
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
@@ -361,14 +348,5 @@ private struct PlaylistSongRow: View {
             in: RoundedRectangle(cornerRadius: 6)
         )
         .onHover { hovered = $0 }
-        .contextMenu {
-            Button("Play Next") { enqueue(true) }
-            Button("Add to Queue") { enqueue(false) }
-            Divider()
-            if !isFirst { Button("Move Up") { moveUp() } }
-            if !isLast { Button("Move Down") { moveDown() } }
-            Divider()
-            Button("Remove from Playlist", role: .destructive) { remove() }
-        }
     }
 }

@@ -6,6 +6,9 @@ public final class LibraryModel {
     public private(set) var folders: [LibraryFolder] = []
     public private(set) var tracks: [LibraryTrack] = []
     public private(set) var playlists: [LibraryPlaylist] = []
+    public private(set) var favoriteTrackIDs: Set<String> = []
+    public private(set) var hiddenTrackCount = 0
+    public private(set) var trackActionsRevision = 0
     public private(set) var totalCount = 0
     public private(set) var unreadableCount = 0
     public private(set) var isScanning = false
@@ -118,9 +121,12 @@ public final class LibraryModel {
         let query = search
         do {
             let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recentFirst)
+            let preferences = try await repository.trackPreferences()
             guard revision == refreshRevision, query == search else { return }
             tracks = page.tracks; totalCount = page.count
             unreadableCount = page.unreadableCount
+            favoriteTrackIDs = preferences.favorites
+            hiddenTrackCount = preferences.hiddenCount
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -131,6 +137,32 @@ public final class LibraryModel {
         watchTask?.cancel()
         watchers.removeAll()
         scopes.removeAll()
+    }
+
+    public func toggleFavorite(_ track: LibraryTrack) async {
+        guard let repository else { return }
+        do {
+            try await repository.setFavorite(trackID: track.id, favorite: !favoriteTrackIDs.contains(track.id))
+            await reload()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func removeTrackFromLibrary(_ track: LibraryTrack) async {
+        guard let repository else { return }
+        do {
+            try await repository.removeTrackFromLibrary(trackID: track.id)
+            trackActionsRevision += 1
+            await reload()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func restoreRemovedTracks() async {
+        guard let repository else { return }
+        do {
+            try await repository.restoreRemovedTracks()
+            trackActionsRevision += 1
+            await rescan()
+        } catch { errorMessage = error.localizedDescription }
     }
 
     public func reloadPlaylists() async {
