@@ -210,6 +210,102 @@ extension LibraryTests {
         }
         #expect(await counter.value > 0)
     }
+
+    @Test func playlistCreationTrackManagementAndCascadeDeletion() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song1.wav"))
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.mp3"), to: music.appendingPathComponent("song2.mp3"))
+
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+
+        let tracks = try await repository.page().tracks
+        #expect(tracks.count == 2)
+
+        // 1. Create playlist
+        let playlist = try await repository.createPlaylist(name: "Favorites")
+        #expect(playlist.name == "Favorites")
+        var allPlaylists = try await repository.playlists()
+        #expect(allPlaylists.count == 1)
+        #expect(allPlaylists.first?.id == playlist.id)
+
+        // 2. Add tracks (including duplicate, which is valid in playlists)
+        try await repository.addTracksToPlaylist(playlistID: playlist.id, trackIDs: [tracks[0].id, tracks[1].id, tracks[0].id])
+        var items = try await repository.playlistTrackItems(playlistID: playlist.id)
+        #expect(items.count == 3)
+        #expect(items[0].track.id == tracks[0].id)
+        #expect(items[0].position == 0)
+        #expect(items[1].track.id == tracks[1].id)
+        #expect(items[1].position == 1)
+        #expect(items[2].track.id == tracks[0].id)
+        #expect(items[2].position == 2)
+
+        // 3. Reorder track (move index 1 to index 0)
+        try await repository.moveTrackInPlaylist(playlistID: playlist.id, from: 1, to: 0)
+        items = try await repository.playlistTrackItems(playlistID: playlist.id)
+        #expect(items.count == 3)
+        #expect(items[0].track.id == tracks[1].id)
+        #expect(items[0].position == 0)
+        #expect(items[1].track.id == tracks[0].id)
+        #expect(items[1].position == 1)
+
+        // 4. Remove track from playlist
+        try await repository.removeTrackFromPlaylist(playlistTrackID: items[0].id)
+        items = try await repository.playlistTrackItems(playlistID: playlist.id)
+        #expect(items.count == 2)
+        #expect(items[0].track.id == tracks[0].id)
+        #expect(items[0].position == 0)
+        #expect(items[1].track.id == tracks[0].id)
+        #expect(items[1].position == 1)
+
+        // 5. Rename playlist
+        try await repository.renamePlaylist(id: playlist.id, name: "Chill Vibes")
+        let updated = try await repository.playlist(id: playlist.id)
+        #expect(updated?.name == "Chill Vibes")
+
+        // 6. Delete playlist removes its playlist_tracks
+        try await repository.deletePlaylist(id: playlist.id)
+        allPlaylists = try await repository.playlists()
+        #expect(allPlaylists.isEmpty)
+        items = try await repository.playlistTrackItems(playlistID: playlist.id)
+        #expect(items.isEmpty)
+        // Tracks themselves remain intact in library
+        #expect(try await repository.page().count == 2)
+    }
+
+    @MainActor @Test func modelManagesPlaylists() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("track.wav"))
+
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        await model.addFolder(music)
+        #expect(model.tracks.count == 1)
+
+        let playlist = try #require(await model.createPlaylist(name: "Road Trip"))
+        #expect(model.playlists.count == 1)
+        #expect(model.playlists.first?.name == "Road Trip")
+
+        await model.addTracks(model.tracks, to: playlist)
+        let items = await model.playlistTracks(for: playlist.id)
+        #expect(items.count == 1)
+        #expect(items.first?.track.title == "track")
+
+        await model.renamePlaylist(playlist, newName: "Highway Tunes")
+        #expect(model.playlists.first?.name == "Highway Tunes")
+
+        await model.removeTrack(playlistTrackID: try #require(items.first?.id), from: playlist)
+        #expect(await model.playlistTracks(for: playlist.id).isEmpty)
+
+        await model.deletePlaylist(playlist)
+        #expect(model.playlists.isEmpty)
+        model.shutdown()
+    }
 }
 
 private actor EventCounter {

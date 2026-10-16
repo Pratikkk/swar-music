@@ -5,6 +5,7 @@ import Observation
 public final class LibraryModel {
     public private(set) var folders: [LibraryFolder] = []
     public private(set) var tracks: [LibraryTrack] = []
+    public private(set) var playlists: [LibraryPlaylist] = []
     public private(set) var totalCount = 0
     public private(set) var unreadableCount = 0
     public private(set) var isScanning = false
@@ -44,6 +45,7 @@ public final class LibraryModel {
             }.value
             try await restoreFolders()
             await reload()
+            await reloadPlaylists()
             await rescan()
         } catch { errorMessage = error.localizedDescription }
     }
@@ -118,6 +120,75 @@ public final class LibraryModel {
         watchers.removeAll()
         scopes.removeAll()
     }
+
+    public func reloadPlaylists() async {
+        guard let repository else { return }
+        do {
+            playlists = try await repository.playlists()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    @discardableResult
+    public func createPlaylist(name: String) async -> LibraryPlaylist? {
+        guard let repository else { return nil }
+        do {
+            let created = try await repository.createPlaylist(name: name)
+            playlists = try await repository.playlists()
+            return created
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    public func renamePlaylist(_ playlist: LibraryPlaylist, newName: String) async {
+        guard let repository else { return }
+        do {
+            try await repository.renamePlaylist(id: playlist.id, name: newName)
+            playlists = try await repository.playlists()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func deletePlaylist(_ playlist: LibraryPlaylist) async {
+        guard let repository else { return }
+        do {
+            try await repository.deletePlaylist(id: playlist.id)
+            playlists = try await repository.playlists()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func addTracks(_ tracks: [LibraryTrack], to playlist: LibraryPlaylist) async {
+        guard let repository else { return }
+        do {
+            try await repository.addTracksToPlaylist(playlistID: playlist.id, trackIDs: tracks.map(\.id))
+            playlists = try await repository.playlists()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func removeTrack(playlistTrackID: String, from playlist: LibraryPlaylist) async {
+        guard let repository else { return }
+        do {
+            try await repository.removeTrackFromPlaylist(playlistTrackID: playlistTrackID)
+            playlists = try await repository.playlists()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func moveTrack(from: Int, to: Int, in playlist: LibraryPlaylist) async {
+        guard let repository else { return }
+        do {
+            try await repository.moveTrackInPlaylist(playlistID: playlist.id, from: from, to: to)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func playlistTracks(for playlistID: String) async -> [PlaylistTrackItem] {
+        guard let repository else { return [] }
+        do {
+            return try await repository.playlistTrackItems(playlistID: playlistID)
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
     public func artworkURL(_ key: String?) -> URL? { key.flatMap { artworkDirectory?.appendingPathComponent($0) } }
 
     public func location(for track: LibraryTrack) throws -> (file: URL, root: URL) {
@@ -153,8 +224,8 @@ public final class LibraryModel {
         watchers[folder.id] = FolderWatcher(url: url) { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                watchTask?.cancel()
-                watchTask = Task { [weak self] in
+                self.watchTask?.cancel()
+                self.watchTask = Task { [weak self] in
                     do { try await Task.sleep(for: .seconds(1)) } catch { return }
                     await self?.rescan()
                 }

@@ -2,13 +2,14 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
-The library uses a compact top player, a tinted native sidebar, and artwork-first
+The library uses a compact top player, a translucent native sidebar, and artwork-first
 album cards. Recently Added groups albums by month; Home opens the recent local
 library. Radio is omitted. Open an album by clicking its cover or title, or play it
 using the button over its artwork. Album details show large cover art, artist and
 genre/year tags, Play and Shuffle actions, numbered songs, duration, and queue menus.
 Play starts in disc/track order; Shuffle includes the whole album. Library actions (open file, add folder, rescan)
-are in the menu at the right of the section header.
+are in the menu at the right of the section header. The sidebar uses native macOS
+blur; album backgrounds are white in light mode and dark in dark mode.
 
 The top player and expanded player include an output-volume slider. It controls
 the selected playback device (or the default output before playback), follows system
@@ -170,8 +171,8 @@ labels, conversion explanations, and accessibility labels were checked there.
 Full VoiceOver navigation and physical Bluetooth/AirPlay paths remain untested.
 
 Still unverified: physical DAC sample equality, a 24-bit integer-output DAC,
-hot-plug, sleep/wake, and long-running playback. Playlists,
-gapless playback, and exclusive output remain future work.
+hot-plug, sleep/wake, and long-running playback.
+Gapless playback and exclusive output remain future work.
 
 ## Codec support
 
@@ -187,9 +188,9 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 72 tests, including seventeen device-free queue tests, nine session tests,
-and three device-free volume tests, library
-search/paging across 50,001 stored tracks, generated format matrices, and optional
+The current suite has 74 tests, including seventeen device-free queue tests, nine session tests,
+ten library tests (covering search, paging across 50,001 stored tracks, and playlists),
+and three device-free volume tests, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
 references and seek positions against original samples. Integer lossless fixtures
 cover 44.1/16, 96/24, and 192/24; float PCM and WavPack are also tested. A signed,

@@ -5,7 +5,9 @@ public actor LibraryRepository {
     private let database: DatabaseQueue
 
     public init(path: String) throws {
-        database = try DatabaseQueue(path: path)
+        var config = Configuration()
+        config.foreignKeysEnabled = true
+        database = try DatabaseQueue(path: path, configuration: config)
         var migrator = DatabaseMigrator()
         migrator.registerMigration("library-v1") { db in
             try db.create(table: "folders") { t in
@@ -50,6 +52,23 @@ public actor LibraryRepository {
                 CREATE INDEX tracks_recent ON tracks(addedAt DESC, albumArtist, album, discNumber, trackNumber);
                 CREATE INDEX tracks_errors ON tracks(id) WHERE error IS NOT NULL;
                 """)
+        }
+        migrator.registerMigration("library-playlists-v3") { db in
+            try db.create(table: "playlists") { t in
+                t.column("id", .text).primaryKey()
+                t.column("name", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("updatedAt", .datetime).notNull()
+            }
+            try db.create(table: "playlist_tracks") { t in
+                t.column("id", .text).primaryKey()
+                t.column("playlistID", .text).notNull().references("playlists", onDelete: .cascade)
+                t.column("trackID", .text).notNull().references("tracks", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.column("addedAt", .datetime).notNull()
+            }
+            try db.create(index: "playlist_tracks_order", on: "playlist_tracks", columns: ["playlistID", "position"])
+            try db.create(index: "playlist_tracks_track", on: "playlist_tracks", columns: ["trackID"])
         }
         try migrator.migrate(database)
     }
@@ -99,6 +118,98 @@ public actor LibraryRepository {
             let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: arguments)
             let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL") ?? 0
             return LibraryPage(tracks: tracks, count: count, unreadableCount: unreadable)
+        }
+    }
+
+    public func playlists() throws -> [LibraryPlaylist] {
+        try database.read { try LibraryPlaylist.fetchAll($0, sql: "SELECT * FROM playlists ORDER BY name COLLATE NOCASE") }
+    }
+
+    public func playlist(id: String) throws -> LibraryPlaylist? {
+        try database.read { try LibraryPlaylist.fetchOne($0, key: id) }
+    }
+
+    public func createPlaylist(name: String) throws -> LibraryPlaylist {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let playlist = LibraryPlaylist(name: trimmed.isEmpty ? "New Playlist" : trimmed)
+        try database.write { try playlist.save($0) }
+        return playlist
+    }
+
+    public func renamePlaylist(id: String, name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmed.isEmpty ? "New Playlist" : trimmed
+        let now = Date().timeIntervalSince1970
+        try database.write { db in
+            try db.execute(sql: "UPDATE playlists SET name = ?, updatedAt = ? WHERE id = ?", arguments: [finalName, now, id])
+        }
+    }
+
+    public func deletePlaylist(id: String) throws {
+        try database.write { db in
+            try db.execute(sql: "DELETE FROM playlist_tracks WHERE playlistID = ?", arguments: [id])
+            _ = try LibraryPlaylist.deleteOne(db, key: id)
+        }
+    }
+
+    public func addTracksToPlaylist(playlistID: String, trackIDs: [String]) throws {
+        guard !trackIDs.isEmpty else { return }
+        try database.write { db in
+            guard try LibraryPlaylist.exists(db, key: playlistID) else { return }
+            let currentMax = try Int.fetchOne(db, sql: "SELECT MAX(position) FROM playlist_tracks WHERE playlistID = ?", arguments: [playlistID]) ?? -1
+            var nextPosition = currentMax + 1
+            let now = Date()
+            for trackID in trackIDs {
+                let item = PlaylistTrack(playlistID: playlistID, trackID: trackID, position: nextPosition, addedAt: now)
+                try item.save(db)
+                nextPosition += 1
+            }
+            try db.execute(sql: "UPDATE playlists SET updatedAt = ? WHERE id = ?", arguments: [now.timeIntervalSince1970, playlistID])
+        }
+    }
+
+    public func removeTrackFromPlaylist(playlistTrackID: String) throws {
+        try database.write { db in
+            guard let item = try PlaylistTrack.fetchOne(db, key: playlistTrackID) else { return }
+            _ = try PlaylistTrack.deleteOne(db, key: playlistTrackID)
+            try db.execute(sql: "UPDATE playlist_tracks SET position = position - 1 WHERE playlistID = ? AND position > ?", arguments: [item.playlistID, item.position])
+            try db.execute(sql: "UPDATE playlists SET updatedAt = ? WHERE id = ?", arguments: [Date().timeIntervalSince1970, item.playlistID])
+        }
+    }
+
+    public func moveTrackInPlaylist(playlistID: String, from: Int, to: Int) throws {
+        guard from != to else { return }
+        try database.write { db in
+            var items = try PlaylistTrack.fetchAll(db, sql: "SELECT * FROM playlist_tracks WHERE playlistID = ? ORDER BY position ASC", arguments: [playlistID])
+            guard items.indices.contains(from), items.indices.contains(to) else { return }
+            let moved = items.remove(at: from)
+            items.insert(moved, at: to)
+            for (index, var item) in items.enumerated() {
+                if item.position != index {
+                    item.position = index
+                    try item.save(db)
+                }
+            }
+            try db.execute(sql: "UPDATE playlists SET updatedAt = ? WHERE id = ?", arguments: [Date().timeIntervalSince1970, playlistID])
+        }
+    }
+
+    public func playlistTrackItems(playlistID: String) throws -> [PlaylistTrackItem] {
+        try database.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT pt.id AS pt_id, pt.position AS pt_position, pt.playlistID AS pt_playlistID, t.*
+                FROM playlist_tracks pt
+                INNER JOIN tracks t ON pt.trackID = t.id
+                WHERE pt.playlistID = ?
+                ORDER BY pt.position ASC
+                """, arguments: [playlistID])
+            return try rows.map { row in
+                let track = try LibraryTrack(row: row)
+                let ptID: String = row["pt_id"]
+                let ptPosition: Int = row["pt_position"]
+                let ptPlaylistID: String = row["pt_playlistID"]
+                return PlaylistTrackItem(id: ptID, playlistID: ptPlaylistID, position: ptPosition, track: track)
+            }
         }
     }
 }

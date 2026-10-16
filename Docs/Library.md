@@ -42,19 +42,33 @@ the audio file. ImageIO downsamples artwork to a maximum dimension of 384 pixels
 SHA-256 keys deduplicate PNG thumbnails under `Caches/Swar/Artwork` in the container.
 Artwork cache failures do not mark otherwise playable audio as unreadable.
 
+## Playlists
+
+Playlists are stored in `playlists` and `playlist_tracks` with foreign-key cascades linked to the
+underlying tracks table. Creating, renaming, and deleting playlists update SQLite immediately.
+Tracks added to playlists preserve insertion order via an explicit `position` column. Reordering,
+track removal, and whole-playlist deletion update positions without leaving orphaned rows.
+Duplicate tracks within the same playlist are supported via unique playlist item identifiers.
+
+Playlists appear in the sidebar under their own section with a `+` creation button and context menus
+for renaming and removal. Selecting a playlist opens `PlaylistDetailView`, showing track count, total
+duration, artwork, and Play/Shuffle actions. Songs and albums throughout the library include an
+"Add to Playlist" submenu in their context and action menus.
+
 ## Verification
 
-Seven library tests cover incremental updates, deletion reconciliation, inaccessible
+Ten library tests cover incremental updates, deletion reconciliation, inaccessible
 roots, symlink exclusion, literal search input, corrupt files, metadata across five
 containers, embedded and folder covers, cache deduplication, bookmark restoration,
-overlap rejection, nested FSEvents, and paging/search across 50,001 stored tracks.
+overlap rejection, nested FSEvents, paging/search across 50,001 stored tracks,
+playlist creation, track ordering, reordering, removal, cascade deletion, and model integration.
 The large test exercises the database, not a 50,000-file scan or UI frame-rate target.
 Tests use temporary stores and original generated media in LibraryTests/Fixtures.
 Regenerate those fixtures with `Tools/make_library_fixtures.py` and development ffmpeg.
 
 The signed sandboxed Debug app was checked with a folder library, album artwork,
-track browsing, artist search, and duplicate-root rejection. The standard suite
-skips hardware playback unless its explicit environment variables are set.
+track browsing, artist search, duplicate-root rejection, and playlist creation and playback.
+The standard suite skips hardware playback unless its explicit environment variables are set.
 
-Playlists, playback history, tag editing, advanced sorting, and
+Playback history, tag editing, advanced sorting, and
 large-library UI performance profiling remain future work.

@@ -10,11 +10,14 @@ struct AlbumDetailView: View {
     let tracks: [LibraryTrack]
     let artworkURL: URL?
     let player: Player
+    var playlists: [LibraryPlaylist] = []
     let isCurrent: (LibraryTrack) -> Bool
     let playAlbum: (Bool) -> Void
     let playTrack: (LibraryTrack) -> Void
     let enqueueTrack: (LibraryTrack, Bool) -> Void
     let enqueueAlbum: (Bool) -> Void
+    var addToPlaylist: ((LibraryTrack, LibraryPlaylist) -> Void)? = nil
+    var addAlbumToPlaylist: ((LibraryPlaylist) -> Void)? = nil
 
     private var canPlay: Bool { !player.isBusy && tracks.contains { $0.error == nil } }
     private var metadata: String {
@@ -62,6 +65,14 @@ struct AlbumDetailView: View {
                         Menu {
                             Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { enqueueAlbum(true) }
                             Button("Add to Queue", systemImage: "text.badge.plus") { enqueueAlbum(false) }
+                            if !playlists.isEmpty {
+                                Divider()
+                                Menu("Add to Playlist", systemImage: "music.note.list") {
+                                    ForEach(playlists) { playlist in
+                                        Button(playlist.name) { addAlbumToPlaylist?(playlist) }
+                                    }
+                                }
+                            }
                         } label: { Image(systemName: "ellipsis.circle.fill").font(.title2) }
                         .menuStyle(.borderlessButton).fixedSize().disabled(!canPlay)
                         .accessibilityLabel("Album actions")
@@ -76,7 +87,9 @@ struct AlbumDetailView: View {
                             AlbumSongRow(track: track, fallbackNumber: index + 1,
                                          current: isCurrent(track), playing: isCurrent(track) && player.isPlaying,
                                          compact: compact, alternate: index.isMultiple(of: 2), busy: player.isBusy,
-                                         play: { playTrack(track) }, enqueue: { enqueueTrack(track, $0) })
+                                         playlists: playlists,
+                                         play: { playTrack(track) }, enqueue: { enqueueTrack(track, $0) },
+                                         addToPlaylist: { addToPlaylist?(track, $0) })
                         }
                     }
                 }
@@ -107,8 +120,10 @@ private struct AlbumSongRow: View {
     let compact: Bool
     let alternate: Bool
     let busy: Bool
+    var playlists: [LibraryPlaylist] = []
     let play: () -> Void
     let enqueue: (Bool) -> Void
+    var addToPlaylist: ((LibraryPlaylist) -> Void)? = nil
     @State private var hovered = false
 
     var body: some View {
@@ -145,6 +160,14 @@ private struct AlbumSongRow: View {
             Menu {
                 Button("Play Next") { enqueue(true) }
                 Button("Add to Queue") { enqueue(false) }
+                if !playlists.isEmpty {
+                    Divider()
+                    Menu("Add to Playlist") {
+                        ForEach(playlists) { playlist in
+                            Button(playlist.name) { addToPlaylist?(playlist) }
+                        }
+                    }
+                }
             } label: { Image(systemName: "ellipsis").frame(width: 18, height: 28) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .accessibilityLabel("Actions for \(track.title)").disabled(busy || track.error != nil)
@@ -155,6 +178,14 @@ private struct AlbumSongRow: View {
         .contextMenu {
             Button("Play Next") { enqueue(true) }.disabled(busy || track.error != nil)
             Button("Add to Queue") { enqueue(false) }.disabled(busy || track.error != nil)
+            if !playlists.isEmpty {
+                Divider()
+                Menu("Add to Playlist") {
+                    ForEach(playlists) { playlist in
+                        Button(playlist.name) { addToPlaylist?(playlist) }
+                    }
+                }
+            }
         }
     }
 }

@@ -85,3 +85,43 @@ public struct LibraryProgress: Sendable {
     public let changed: Int
     public let failed: Int
 }
+
+public struct LibraryPlaylist: Codable, FetchableRecord, PersistableRecord, Sendable, Identifiable, Equatable, Hashable {
+    public static let databaseTableName = "playlists"
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy { .timeIntervalSince1970 }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy { .timeIntervalSince1970 }
+    public var id: String
+    public var name: String
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(id: String = UUID().uuidString, name: String, createdAt: Date = Date(), updatedAt: Date = Date()) {
+        self.id = id; self.name = name; self.createdAt = createdAt; self.updatedAt = updatedAt
+    }
+}
+
+public struct PlaylistTrack: Codable, FetchableRecord, PersistableRecord, Sendable, Identifiable, Equatable {
+    public static let databaseTableName = "playlist_tracks"
+    public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy { .timeIntervalSince1970 }
+    public static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy { .timeIntervalSince1970 }
+    public var id: String
+    public var playlistID: String
+    public var trackID: String
+    public var position: Int
+    public var addedAt: Date
+
+    public init(id: String = UUID().uuidString, playlistID: String, trackID: String, position: Int, addedAt: Date = Date()) {
+        self.id = id; self.playlistID = playlistID; self.trackID = trackID; self.position = position; self.addedAt = addedAt
+    }
+}
+
+public struct PlaylistTrackItem: Identifiable, Sendable, Equatable {
+    public var id: String
+    public var playlistID: String
+    public var position: Int
+    public var track: LibraryTrack
+
+    public init(id: String, playlistID: String, position: Int, track: LibraryTrack) {
+        self.id = id; self.playlistID = playlistID; self.position = position; self.track = track
+    }
+}

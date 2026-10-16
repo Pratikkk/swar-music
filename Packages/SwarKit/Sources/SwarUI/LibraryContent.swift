@@ -45,6 +45,7 @@ struct LibraryContent: View {
                 } description: {
                     Text(library.search.isEmpty ? "Add a folder to browse your local music. Files stay where they are." : "Try a title, artist, or album name.")
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if section == "Albums" || section == "Recently Added" {
                 albumContent
             } else if section == "Artists" || section == "Genres" {
@@ -72,6 +73,7 @@ struct LibraryContent: View {
                 .font(.caption).padding(12)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onChange(of: library.search) { selectedAlbum = nil }
         .onChange(of: section) { selectedAlbum = nil }
     }
@@ -82,6 +84,7 @@ struct LibraryContent: View {
                 title: album.title, artist: album.artist, tracks: album.tracks,
                 artworkURL: library.artworkURL(album.tracks.compactMap(\.artworkKey).first),
                 player: player,
+                playlists: library.playlists,
                 isCurrent: { track in
                     player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
                 },
@@ -104,6 +107,13 @@ struct LibraryContent: View {
                         let entries = try album.tracks.filter { $0.error == nil }.map { try entry($0) }
                         for entry in next ? Array(entries.reversed()) : entries { player.enqueue(entry, playNext: next) }
                     } catch { player.reportImportError(error) }
+                },
+                addToPlaylist: { track, playlist in
+                    Task { await library.addTracks([track], to: playlist) }
+                },
+                addAlbumToPlaylist: { playlist in
+                    let playable = album.tracks.filter { $0.error == nil }
+                    Task { await library.addTracks(playable, to: playlist) }
                 }
             )
         } else {
@@ -199,6 +209,16 @@ struct LibraryContent: View {
             .contextMenu {
                 Button("Play Next") { enqueue(track, next: true) }
                 Button("Add to Queue") { enqueue(track, next: false) }
+                if !library.playlists.isEmpty {
+                    Divider()
+                    Menu("Add to Playlist") {
+                        ForEach(library.playlists) { playlist in
+                            Button(playlist.name) {
+                                Task { await library.addTracks([track], to: playlist) }
+                            }
+                        }
+                    }
+                }
             }
             .disabled(track.error != nil || player.isBusy)
     }
