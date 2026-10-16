@@ -30,6 +30,8 @@ public struct LibraryView: View {
     @State private var selection: LibrarySection? = .albums
     @State private var player = Player()
     @State private var showImporter = false
+    @State private var showNowPlaying = false
+    @State private var windowWidth: CGFloat = 900
     @State private var importingFolder = false
     @State private var library = LibraryModel()
 
@@ -69,7 +71,7 @@ public struct LibraryView: View {
             LibraryContent(library: library, player: player, section: selection?.rawValue ?? "Albums")
             .navigationTitle(selection?.rawValue ?? "Library")
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                PlaybackControls(player: player)
+                PlaybackControls(player: player, openNowPlaying: { showNowPlaying = true })
             }
             .toolbar {
                 Button("Open Audio File…", systemImage: "doc.waveform") { importingFolder = false; showImporter = true }
@@ -88,7 +90,19 @@ public struct LibraryView: View {
             case .failure(let error): player.reportImportError(error)
             }
         }
-        .playbackCommands(player: player, open: { importingFolder = false; showImporter = true })
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { windowWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { _, width in windowWidth = width }
+            }
+        }
+        .sheet(isPresented: $showNowPlaying) {
+            NowPlayingView(player: player, width: max(640, min(900, windowWidth - 40)))
+        }
+        .playbackCommands(player: player, canOpen: !showNowPlaying,
+            open: { importingFolder = false; showImporter = true },
+            nowPlaying: { showNowPlaying = true })
         .searchable(text: $library.search, placement: .sidebar, prompt: "Search title, artist, album")
         .task { await library.start() }
         .task(id: selection) {

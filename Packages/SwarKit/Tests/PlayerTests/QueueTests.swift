@@ -210,6 +210,8 @@ struct QueueTests {
         #expect(player.upcomingEntries.map(\.id) == [duplicate.id, entries[1].id, entries[2].id])
         player.moveUpcoming(from: IndexSet(integer: 2), to: 0)
         #expect(player.upcomingEntries.map(\.id) == [entries[2].id, duplicate.id, entries[1].id])
+        player.moveUpcoming(from: IndexSet(integer: 0), to: 3)
+        #expect(player.upcomingEntries.map(\.id) == [duplicate.id, entries[1].id, entries[2].id])
         player.removeUpcoming(entries[0].id)
         #expect(player.currentEntryID == entries[0].id)
         player.removeUpcoming(duplicate.id)

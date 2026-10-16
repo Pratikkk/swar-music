@@ -10,7 +10,13 @@ load off the main actor and share a bounded memory cache. Files opened directly 
 read their tags and embedded/folder covers without importing them into the library.
 See [artwork UI notes](Docs/Artwork.md).
 
-## Current milestone: artwork throughout the player
+Click the player’s cover, or press **⇧⌘N**, to open Now Playing with larger artwork,
+song details, format information, and playback controls. **Up Next** opens beside
+the artwork in wide windows and switches to a queue view in compact windows.
+Use the queue’s arrow buttons to move tracks earlier/later; Escape returns to the
+library without stopping playback. See [Now Playing notes](Docs/NowPlaying.md).
+
+## Current milestone: expanded Now Playing
 
 The app has a native library sidebar and a single-file playback harness. Use
 **File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by

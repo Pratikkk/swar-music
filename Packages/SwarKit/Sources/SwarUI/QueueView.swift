@@ -4,6 +4,7 @@ import Player
 @MainActor
 struct QueueView: View {
     let player: Player
+    var embedded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -17,7 +18,11 @@ struct QueueView: View {
                 Text("Current Track").font(.caption).foregroundStyle(.secondary)
                 row(current)
             }
-            Text("Up Next").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text("Up Next").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Text("\(player.upcomingEntries.count) \(player.upcomingEntries.count == 1 ? "track" : "tracks")").font(.caption).foregroundStyle(.tertiary)
+            }
             if player.upcomingEntries.isEmpty {
                 ContentUnavailableView("Nothing Up Next", systemImage: "music.note.list",
                     description: Text("Use Play Next or Add to Queue on a library track."))
@@ -27,7 +32,18 @@ struct QueueView: View {
                         HStack {
                             Button { Task { await player.playEntry(entry.id) } } label: { row(entry) }
                                 .buttonStyle(.plain).accessibilityLabel("Play \(entry.title)")
-                            Spacer()
+                            Spacer(minLength: 4)
+                            VStack(spacing: 3) {
+                                Button { move(entry, by: -1) } label: { Image(systemName: "chevron.up").frame(width: 22, height: 18) }
+                                    .disabled(player.upcomingEntries.first?.id == entry.id)
+                                    .accessibilityLabel("Move \(entry.title) Earlier")
+                                    .help("Move Earlier")
+                                Button { move(entry, by: 1) } label: { Image(systemName: "chevron.down").frame(width: 22, height: 18) }
+                                    .disabled(player.upcomingEntries.last?.id == entry.id)
+                                    .accessibilityLabel("Move \(entry.title) Later")
+                                    .help("Move Later")
+                            }
+                            .font(.system(size: 9, weight: .semibold)).buttonStyle(.borderless)
                             Button { player.removeUpcoming(entry.id) } label: { Image(systemName: "xmark") }
                                 .buttonStyle(.borderless).accessibilityLabel("Remove \(entry.title) from queue")
                         }
@@ -45,7 +61,16 @@ struct QueueView: View {
                 }
             }
         }
-        .padding(16).frame(width: 380, height: 420)
+        .padding(16)
+        .frame(width: embedded ? nil : 380, height: embedded ? nil : 420)
+        .frame(maxWidth: embedded ? .infinity : nil, maxHeight: embedded ? .infinity : nil, alignment: .topLeading)
+    }
+
+    private func move(_ entry: QueueEntry, by delta: Int) {
+        guard let index = player.upcomingEntries.firstIndex(where: { $0.id == entry.id }) else { return }
+        let target = index + delta
+        guard player.upcomingEntries.indices.contains(target) else { return }
+        player.moveUpcoming(from: IndexSet(integer: index), to: delta > 0 ? target + 1 : target)
     }
 
     private func row(_ entry: QueueEntry) -> some View {
@@ -59,5 +84,6 @@ struct QueueView: View {
             }
         }
         .padding(.vertical, 3)
+        .help(entry.title + (entry.subtitle.isEmpty ? "" : "\n" + entry.subtitle))
     }
 }

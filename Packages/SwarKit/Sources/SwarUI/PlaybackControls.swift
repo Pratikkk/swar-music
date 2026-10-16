@@ -4,6 +4,8 @@ import Player
 @MainActor
 struct PlaybackControls: View {
     let player: Player
+    var expanded = false
+    var openNowPlaying: (() -> Void)?
     @State private var showQueue = false
     @State private var scrubbing = false
     @State private var seekPosition: Double = 0
@@ -16,22 +18,58 @@ struct PlaybackControls: View {
                     .textSelection(.enabled)
                     .accessibilityLabel("Playback error: \(error)")
             }
-            HStack(spacing: 14) {
-                CoverArt(url: player.artworkURL, title: player.subtitle.isEmpty ? player.title : player.subtitle)
-                    .frame(width: 56, height: 56)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(player.title).font(.headline).lineLimit(1)
-                    Text(player.subtitle.isEmpty ? (player.currentURL == nil ? "Choose a song to start listening" : "Local audio") : player.subtitle)
-                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            if expanded {
+                VStack(spacing: 16) {
+                    CoverArt(url: player.artworkURL, title: player.subtitle.isEmpty ? player.title : player.subtitle, cornerRadius: 12)
+                        .frame(width: 240, height: 240)
+                        .shadow(color: .black.opacity(0.14), radius: 16, y: 8)
+                        .overlay {
+                            if player.isBusy {
+                                ProgressView().padding(12).background(.regularMaterial, in: Circle())
+                            }
+                        }
+                    VStack(spacing: 6) {
+                        Text(player.isBusy ? "Loading song…" : (player.currentURL == nil ? "Nothing Playing" : player.title))
+                            .font(.title2.weight(.semibold)).lineLimit(2).textSelection(.enabled)
+                        Text(player.subtitle.isEmpty ? "Choose a song from your library" : player.subtitle)
+                            .foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                    }
+                    .multilineTextAlignment(.center)
+                    if let info = player.formatInfo { FormatChip(info: info) }
+                    transport
+                    queueOptions
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-                if player.isBusy { ProgressView().controlSize(.small) }
-                transport
-                queueOptions
+                .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: 14) {
+                    Button { openNowPlaying?() } label: {
+                        CoverArt(url: player.artworkURL, title: player.subtitle.isEmpty ? player.title : player.subtitle)
+                            .frame(width: 56, height: 56)
+                            .overlay(alignment: .bottomTrailing) {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
+                                    .padding(3).background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 3))
+                                    .padding(3).accessibilityHidden(true)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(openNowPlaying == nil || (player.currentURL == nil && player.queue.isEmpty))
+                    .accessibilityLabel("Open Now Playing")
+                    .help("Open Now Playing (⇧⌘N)")
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(player.title).font(.headline).lineLimit(1)
+                        Text(player.subtitle.isEmpty ? (player.currentURL == nil ? "Choose a song to start listening" : "Local audio") : player.subtitle)
+                            .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
+                    if player.isBusy { ProgressView().controlSize(.small) }
+                    transport
+                    queueOptions
+                }
             }
             HStack(spacing: 10) {
-                if let info = player.formatInfo { FormatChip(info: info) }
+                if !expanded, let info = player.formatInfo { FormatChip(info: info) }
                 Text(time(scrubbing ? seekPosition : player.position))
                     .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     .frame(minWidth: 30, alignment: .trailing)
@@ -56,13 +94,13 @@ struct PlaybackControls: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
-        .background(.bar)
+        .background { if !expanded { Rectangle().fill(.bar) } }
     }
 
     private var transport: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: expanded ? 28 : 14) {
                 Button { Task { await player.previous() } } label: {
-                    Image(systemName: "backward.end.fill")
+                    Image(systemName: "backward.end.fill").font(expanded ? .title3 : .body)
                 }
                 .buttonStyle(.borderless).accessibilityLabel("Previous Track")
                 .disabled(!player.canGoPrevious || player.isBusy)
@@ -70,15 +108,15 @@ struct PlaybackControls: View {
                     Task { await player.togglePlayback() }
                 } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                        .frame(width: 36, height: 36)
+                        .font(expanded ? .largeTitle : .title2)
+                        .frame(width: expanded ? 56 : 36, height: expanded ? 56 : 36)
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
                 .disabled(player.duration == 0 || player.isBusy)
 
                 Button { Task { await player.next() } } label: {
-                    Image(systemName: "forward.end.fill")
+                    Image(systemName: "forward.end.fill").font(expanded ? .title3 : .body)
                 }
                 .buttonStyle(.borderless).accessibilityLabel("Next Track")
                 .disabled(!player.canGoNext || player.isBusy)
@@ -109,9 +147,11 @@ struct PlaybackControls: View {
                 .menuStyle(.borderlessButton).fixedSize()
                 .accessibilityLabel("Repeat: " + player.repeatMode.rawValue)
                 .disabled(player.isBusy)
+                if !expanded {
                 Button { showQueue.toggle() } label: { Image(systemName: "list.bullet") }
                     .buttonStyle(.borderless).accessibilityLabel("Show Queue")
                     .popover(isPresented: $showQueue) { QueueView(player: player) }
+                }
         }
     }
 
@@ -123,6 +163,7 @@ struct PlaybackControls: View {
 
 private struct PlaybackActions {
     var open: () -> Void
+    var nowPlaying: () -> Void
     var toggle: () -> Void
     var next: () -> Void
     var previous: () -> Void
@@ -156,6 +197,10 @@ public struct SwarCommands: Commands {
                 .disabled(actions?.canOpen != true)
         }
         CommandMenu("Playback") {
+            Button("Show Now Playing") { actions?.nowPlaying() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(actions == nil)
+            Divider()
             Button("Play / Pause") { actions?.toggle() }
                 .keyboardShortcut(.space, modifiers: [])
                 .disabled(actions?.canPlay != true)
@@ -176,16 +221,17 @@ public struct SwarCommands: Commands {
 }
 
 extension View {
-    func playbackCommands(player: Player, open: @escaping () -> Void) -> some View {
+    func playbackCommands(player: Player, canOpen: Bool = true, open: @escaping () -> Void, nowPlaying: @escaping () -> Void) -> some View {
         focusedSceneValue(\.playbackActions, PlaybackActions(
             open: open,
+            nowPlaying: nowPlaying,
             toggle: { Task { await player.togglePlayback() } },
             next: { Task { await player.next() } },
             previous: { Task { await player.previous() } },
             canNext: player.canGoNext && !player.isBusy,
             canPrevious: player.canGoPrevious && !player.isBusy,
             seek: { delta in Task { await player.seek(to: player.position + delta) } },
-            canOpen: !player.isBusy,
+            canOpen: canOpen && !player.isBusy,
             canPlay: player.duration > 0 && !player.isBusy
         ))
     }
