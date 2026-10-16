@@ -29,6 +29,8 @@ public final class Player {
     private var settingVolume = false
     private var pendingVolume: (Double, UInt32)?
     private var volumeDeviceID: UInt32?
+    private var describedSource: SourceFormat?
+    private var describedOutput: OutputDescription?
     public var canSetOutputVolume: Bool {
         !isBusy && !isShutDown && outputVolume.canSet && (volumeDeviceID == nil || volumeDeviceID == outputVolume.deviceID)
     }
@@ -69,7 +71,7 @@ public final class Player {
         let volume = await volumeController.snapshot(deviceID: volumeDeviceID)
         guard !isShutDown, !settingVolume, revision == generation else { return }
         if outputVolume.deviceID != volume.deviceID || !volume.canSet { volumeError = nil }
-        outputVolume = volume
+        if outputVolume != volume { outputVolume = volume }
     }
 
     public func setVolume(to level: Double) async {
@@ -475,6 +477,20 @@ public final class Player {
     private func apply(_ snapshot: PlaybackSnapshot) {
         if volumeDeviceID != snapshot.output?.id { pendingVolume = nil }
         volumeDeviceID = snapshot.output?.id
+        updateFormat(snapshot)
+        if duration != snapshot.duration { duration = snapshot.duration }
+        if position != snapshot.position { position = snapshot.position }
+        if isPlaying != snapshot.isPlaying { isPlaying = snapshot.isPlaying }
+        if underrunFrames != snapshot.underrunFrames { underrunFrames = snapshot.underrunFrames }
+        // Import/open errors are owned by Player. Routine polling must not erase them.
+        if let error = snapshot.error, errorMessage != error { errorMessage = error }
+    }
+
+    private func updateFormat(_ snapshot: PlaybackSnapshot) {
+        guard describedSource != snapshot.source || describedOutput != snapshot.output ||
+                (formatInfo == nil && snapshot.source != nil) else { return }
+        describedSource = snapshot.source
+        describedOutput = snapshot.output
         sourceDescription = snapshot.source?.description
         outputDescription = snapshot.output?.text
         let nextInfo = snapshot.source.map { source in
@@ -494,12 +510,6 @@ public final class Player {
             return FormatClassifier.describe(source: source, path: SignalPath(output: output, transport: transport))
         }
         if formatInfo != nextInfo { formatInfo = nextInfo }
-        duration = snapshot.duration
-        position = snapshot.position
-        isPlaying = snapshot.isPlaying
-        underrunFrames = snapshot.underrunFrames
-        // Import/open errors are owned by Player. Routine engine polling must not erase them.
-        if let error = snapshot.error { errorMessage = error }
     }
 }
 

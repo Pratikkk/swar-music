@@ -115,8 +115,8 @@ public struct LibraryView: View {
             do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
             await library.reload(resetLimit: true)
         }
-        .task {
-            while !Task.isCancelled {
+        .task(id: player.isPlaying) {
+            while player.isPlaying && !Task.isCancelled {
                 await player.refresh()
                 do { try await Task.sleep(for: .milliseconds(200)) }
                 catch { break }

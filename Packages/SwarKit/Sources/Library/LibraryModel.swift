@@ -27,6 +27,8 @@ public final class LibraryModel {
     private var pendingRescan = false
     private var refreshRevision = 0
     private var watchTask: Task<Void, Never>?
+    private var scanTask: Task<Void, Never>?
+    private var isShutDown = false
     private var started = false
     private let storageDirectory: URL?
     private let codecDirectory: URL?
@@ -37,7 +39,7 @@ public final class LibraryModel {
     }
 
     public func start() async {
-        guard !started else { return }
+        guard !started, !isShutDown else { return }
         started = true
         do {
             let support = try storageDirectory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -49,6 +51,7 @@ public final class LibraryModel {
             repository = try await Task.detached(priority: .utility) {
                 try LibraryRepository(path: support.appendingPathComponent("Library.sqlite").path)
             }.value
+            guard !isShutDown else { return }
             try await restoreFolders()
             await reload()
             await reloadPlaylists()
@@ -84,37 +87,57 @@ public final class LibraryModel {
             folderErrors[folder.id] = nil
             folders = try await repository.folders()
             await reload()
+            await reloadPlaylists()
+            trackActionsRevision += 1
             errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
     }
 
     public func rescan() async {
+        guard !isShutDown, !Task.isCancelled else { return }
         guard !isScanning else { pendingRescan = true; return }
         guard let repository, let artworkDirectory else { return }
         isScanning = true
-        defer { isScanning = false; progress = nil }
+        let task = Task { await scanFolders(repository: repository, artworkDirectory: artworkDirectory) }
+        scanTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        scanTask = nil
+        isScanning = false
+        progress = nil
+    }
+
+    private func scanFolders(repository: LibraryRepository, artworkDirectory: URL) async {
         repeat {
             pendingRescan = false
             for folder in folders {
+                guard !isShutDown, !Task.isCancelled else { return }
                 guard let scope = scopes[folder.id] else { continue }
                 do {
                     let scanner = LibraryScanner(repository: repository, artworkDirectory: artworkDirectory, codecDirectory: codecDirectory)
                     _ = try await scanner.scan(folder: folder, root: scope.url) { [weak self] update in
                         await self?.updateProgress(update)
                     }
+                    guard !isShutDown, !Task.isCancelled else { return }
                     folderErrors[folder.id] = nil
+                } catch is CancellationError {
+                    return
                 } catch {
                     folderErrors[folder.id] = error.localizedDescription
                     errorMessage = "\(URL(fileURLWithPath: folder.path).lastPathComponent): \(error.localizedDescription)"
                 }
             }
+            guard !isShutDown, !Task.isCancelled else { return }
             lastScanAt = Date()
             await reload()
         } while pendingRescan && !Task.isCancelled
     }
 
     public func reload(resetLimit: Bool = false) async {
-        guard let repository else { return }
+        guard !isShutDown, let repository else { return }
         if resetLimit { pageLimit = 500 }
         refreshRevision += 1
         let revision = refreshRevision
@@ -122,11 +145,12 @@ public final class LibraryModel {
         do {
             let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recentFirst)
             let preferences = try await repository.trackPreferences()
-            guard revision == refreshRevision, query == search else { return }
-            tracks = page.tracks; totalCount = page.count
-            unreadableCount = page.unreadableCount
-            favoriteTrackIDs = preferences.favorites
-            hiddenTrackCount = preferences.hiddenCount
+            guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search else { return }
+            if tracks != page.tracks { tracks = page.tracks }
+            if totalCount != page.count { totalCount = page.count }
+            if unreadableCount != page.unreadableCount { unreadableCount = page.unreadableCount }
+            if favoriteTrackIDs != preferences.favorites { favoriteTrackIDs = preferences.favorites }
+            if hiddenTrackCount != preferences.hiddenCount { hiddenTrackCount = preferences.hiddenCount }
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -134,7 +158,10 @@ public final class LibraryModel {
 
     public func loadMore() async { pageLimit += 500; await reload() }
     public func shutdown() {
+        isShutDown = true
         watchTask?.cancel()
+        watchTask = nil
+        scanTask?.cancel()
         watchers.removeAll()
         scopes.removeAll()
     }
@@ -241,8 +268,11 @@ public final class LibraryModel {
     }
 
     private func updateProgress(_ update: LibraryProgress) async {
+        guard !isShutDown, !Task.isCancelled else { return }
         progress = update
-        await reload()
+        // The scanner publishes after committed batches; the final reload also
+        // reconciles deletions. An unchanged scan needs no intermediate query.
+        if update.changed > 0 { await reload() }
     }
 
     private func restoreFolders() async throws {
@@ -268,13 +298,20 @@ public final class LibraryModel {
     }
 
     private func watch(folder: LibraryFolder, url: URL) {
+        guard !isShutDown else { return }
         watchers[folder.id] = FolderWatcher(url: url) { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, !self.isShutDown else { return }
+                if self.isScanning {
+                    self.pendingRescan = true
+                    return
+                }
                 self.watchTask?.cancel()
                 self.watchTask = Task { [weak self] in
                     do { try await Task.sleep(for: .seconds(1)) } catch { return }
-                    await self?.rescan()
+                    guard let self, !self.isShutDown else { return }
+                    self.watchTask = nil
+                    await self.rescan()
                 }
             }
         }

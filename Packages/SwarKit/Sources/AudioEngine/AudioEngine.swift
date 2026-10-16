@@ -108,7 +108,10 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     private func perform<T: Sendable>(_ operation: @escaping @Sendable (EngineState) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in
             let state = state
-            queue.async { continuation.resume(with: Result { try operation(state) }) }
+            queue.async {
+                defer { state.updateTimer() }
+                continuation.resume(with: Result { try operation(state) })
+            }
         }
     }
 }
@@ -118,12 +121,14 @@ private final class EngineState: @unchecked Sendable {
     var session: OutputSession?
     var error: String?
     private var timer: DispatchSourceTimer?
+    private var pumping = false
 
     func startTimer(on queue: DispatchQueue) {
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(2))
+        timer.schedule(deadline: .distantFuture)
         timer.setEventHandler { [weak self] in
             guard let self, let session, session.isPlaying else { return }
+            defer { self.updateTimer() }
             do { try session.pump() }
             catch {
                 try? session.pause()
@@ -135,7 +140,20 @@ private final class EngineState: @unchecked Sendable {
         timer.resume()
     }
 
+    func updateTimer() {
+        let shouldPump = session?.isPlaying == true
+        guard pumping != shouldPump else { return }
+        pumping = shouldPump
+        if shouldPump {
+            timer?.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(2))
+        } else {
+            // Keep the source balanced and reusable, without waking while idle.
+            timer?.schedule(deadline: .distantFuture)
+        }
+    }
+
     func snapshot() -> PlaybackSnapshot {
+        defer { updateTimer() }
         if let session, session.isPlaying {
             do { try session.device.validate(rate: session.decoder.source.sampleRate) }
             catch { try? session.pause(); self.error = error.localizedDescription }
@@ -149,7 +167,7 @@ private final class EngineState: @unchecked Sendable {
     }
 
     func closeSession() { session?.close(); session = nil; error = nil }
-    func close() { timer?.cancel(); timer = nil; closeSession() }
+    func close() { timer?.cancel(); timer = nil; pumping = false; closeSession() }
 }
 
 private final class OutputSession {

@@ -1,10 +1,25 @@
 import AudioEngine
 import Foundation
+import Observation
+import os
 import Player
 import Testing
 
 @MainActor
 struct QueueTests {
+    @Test func unchangedPollingDoesNotInvalidatePlaybackViews() async {
+        let player = Player(engine: QueueTestEngine())
+        await player.play([entry("one")])
+        let changes = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking {
+            _ = player.duration; _ = player.position; _ = player.isPlaying
+            _ = player.formatInfo; _ = player.sourceDescription; _ = player.outputDescription
+        } onChange: { changes.withLock { $0 += 1 } }
+        await player.refresh()
+        await player.refresh()
+        #expect(changes.withLock { $0 } == 0)
+    }
+
     private func entry(_ name: String) -> QueueEntry {
         QueueEntry(url: URL(fileURLWithPath: "/tmp/\(name).wav"), title: name)
     }

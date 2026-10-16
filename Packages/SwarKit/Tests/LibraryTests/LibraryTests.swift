@@ -1,8 +1,63 @@
 import Foundation
+import Observation
+import os
 import Testing
 @testable import Library
 
 struct LibraryTests {
+    @MainActor @Test func unchangedReloadAndScanDoNotInvalidateTracksAndFolderRemovalRefreshesPlaylists() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let changes = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking { _ = model.tracks } onChange: { changes.withLock { $0 += 1 } }
+        await model.reload()
+        await model.rescan()
+        #expect(changes.withLock { $0 } == 0)
+        let playlist = try #require(await model.createPlaylist(name: "Folder songs"))
+        await model.addTracks(model.tracks, to: playlist)
+        #expect(await model.playlistTracks(for: playlist.id).count == 1)
+        let revision = model.trackActionsRevision
+        await model.removeFolder(try #require(model.folders.first))
+        #expect(model.tracks.isEmpty)
+        #expect(model.trackActionsRevision == revision + 1)
+        #expect(await model.playlistTracks(for: playlist.id).isEmpty)
+        let lastScan = model.lastScanAt
+        model.shutdown()
+        await model.rescan()
+        #expect(model.lastScanAt == lastScan)
+        #expect(!model.isScanning)
+    }
+
+    @Test func cancelledScanDoesNotReconcileDeletedFiles() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = music.appendingPathComponent("song.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: file)
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        let scanner = LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs)
+        _ = try await scanner.scan(folder: folder, root: music)
+        try FileManager.default.removeItem(at: file)
+        let gate = ScanCancellationGate()
+        let scanning = Task { try await scanner.scan(folder: folder, root: music) { _ in await gate.block() } }
+        await gate.waitUntilBlocked()
+        scanning.cancel()
+        await gate.release()
+        do {
+            _ = try await scanning.value
+            Issue.record("Cancelled scanning should throw CancellationError")
+        } catch is CancellationError { }
+        #expect(try await repository.page().count == 1)
+        _ = try await scanner.scan(folder: folder, root: music)
+        #expect(try await repository.page().count == 0)
+    }
+
     private var fixtures: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("DecodingTests/Fixtures")
     }
@@ -424,4 +479,22 @@ extension LibraryTests {
 private actor EventCounter {
     var value = 0
     func increment() { value += 1 }
+}
+
+private actor ScanCancellationGate {
+    private var blocked = false
+    private var entered: CheckedContinuation<Void, Never>?
+    private var pending: CheckedContinuation<Void, Never>?
+    func block() async {
+        await withCheckedContinuation { continuation in
+            pending = continuation
+            blocked = true
+            entered?.resume(); entered = nil
+        }
+    }
+    func waitUntilBlocked() async {
+        if blocked { return }
+        await withCheckedContinuation { entered = $0 }
+    }
+    func release() { pending?.resume(); pending = nil }
 }

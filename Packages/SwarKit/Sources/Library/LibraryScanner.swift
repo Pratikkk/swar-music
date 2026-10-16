@@ -25,7 +25,13 @@ public struct LibraryScanner: Sendable {
 
     public func scan(folder: LibraryFolder, root: URL,
                      progress: @escaping @Sendable (LibraryProgress) async -> Void = { _ in }) async throws -> ScanSummary {
-        let files = try await Task.detached(priority: .utility) { try Self.enumerate(root) }.value
+        try Task.checkCancellation()
+        let enumeration = Task.detached(priority: .utility) { try Self.enumerate(root) }
+        let files = try await withTaskCancellationHandler {
+            try await enumeration.value
+        } onCancel: {
+            enumeration.cancel()
+        }
         try Task.checkCancellation()
         let prior = try await repository.existingTracks(folderID: folder.id)
         var pending: [ScanFile] = []
@@ -47,7 +53,9 @@ public struct LibraryScanner: Sendable {
             func enqueue(_ file: ScanFile) {
                 group.addTask { [inspector] in
                     try Task.checkCancellation()
-                    return inspector.inspect(file: file, folder: folder, prior: prior[file.relativePath])
+                    return autoreleasepool {
+                        inspector.inspect(file: file, folder: folder, prior: prior[file.relativePath])
+                    }
                 }
             }
             while index < min(4, pending.count) { enqueue(pending[index]); index += 1 }

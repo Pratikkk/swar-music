@@ -1,10 +1,22 @@
 import AudioEngine
 import Foundation
+import Observation
+import os
 import Player
 import Testing
 
 @MainActor
 struct VolumeTests {
+    @Test func unchangedHardwareVolumeDoesNotInvalidateViews() async {
+        let player = Player(volumeController: TestVolumeController())
+        await player.refreshVolume()
+        let changes = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking { _ = player.outputVolume } onChange: { changes.withLock { $0 += 1 } }
+        await player.refreshVolume()
+        await player.refreshVolume()
+        #expect(changes.withLock { $0 } == 0)
+    }
+
     @Test func volumeClampsRejectsInvalidValuesAndDoesNotOpenPlayback() async {
         let controller = TestVolumeController()
         let player = Player(volumeController: controller)

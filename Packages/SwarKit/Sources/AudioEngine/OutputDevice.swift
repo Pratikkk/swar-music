@@ -5,9 +5,9 @@ import os
 
 private let deviceLog = Logger(subsystem: "catto.swar", category: "AudioDevice")
 
-public enum DeviceTransport: Sendable { case local, bluetooth, airPlay, unknown }
+public enum DeviceTransport: Sendable, Equatable { case local, bluetooth, airPlay, unknown }
 
-public struct OutputDescription: Sendable {
+public struct OutputDescription: Sendable, Equatable {
     public let id: UInt32
     public let name: String
     public let sampleRate: Double
