@@ -11,10 +11,12 @@ public struct PlaylistDetailView: View {
     public let onDelete: (LibraryPlaylist) -> Void
 
     @State private var items: [PlaylistTrackItem] = []
-    @State private var isLoading = false
+    @State private var isLoading = true
+    @State private var loadedPlaylistID: String?
+    @State private var loadGeneration = UUID()
 
     private var playableTracks: [LibraryTrack] { items.map(\.track).filter { $0.error == nil } }
-    private var canPlay: Bool { !playableTracks.isEmpty }
+    private var canPlay: Bool { !isLoading && loadedPlaylistID == playlist.id && !playableTracks.isEmpty }
 
     private var durationDescription: String {
         let minutes = Int(items.reduce(0) { $0 + max(0, $1.track.duration) }) / 60
@@ -66,6 +68,8 @@ public struct PlaylistDetailView: View {
                                 } label: {
                                     actionButton("Play", symbol: "play.fill")
                                 }
+                                .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay))
+                                .disabled(player.isBusy || !canPlay)
                                 .accessibilityLabel("Play playlist in order")
 
                                 Button {
@@ -73,11 +77,15 @@ public struct PlaylistDetailView: View {
                                 } label: {
                                     actionButton("Shuffle", symbol: "shuffle")
                                 }
+                                .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay))
+                                .disabled(player.isBusy || !canPlay)
                                 .accessibilityLabel("Shuffle playlist")
 
                                 Menu {
                                     Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { enqueuePlaylist(next: true) }
+                                        .disabled(player.isBusy || !canPlay)
                                     Button("Add to Queue", systemImage: "text.badge.plus") { enqueuePlaylist(next: false) }
+                                        .disabled(player.isBusy || !canPlay)
                                     Divider()
                                     Button("Rename Playlist…", systemImage: "pencil") { onRename(playlist) }
                                     Button("Delete Playlist", systemImage: "trash", role: .destructive) { onDelete(playlist) }
@@ -90,13 +98,14 @@ public struct PlaylistDetailView: View {
                                 .fixedSize()
                                 .accessibilityLabel("Playlist options")
                             }
-                            .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay))
-                            .disabled(player.isBusy || !canPlay)
                         }
                         .frame(maxWidth: .infinity, minHeight: coverSize, alignment: .leading)
                     }
 
-                    if items.isEmpty {
+                    if isLoading && items.isEmpty {
+                        ProgressView("Loading playlist…")
+                            .frame(maxWidth: .infinity).padding(.top, 40)
+                    } else if items.isEmpty {
                         ContentUnavailableView {
                             Label("Playlist is Empty", systemImage: "music.note.list")
                         } description: {
@@ -174,8 +183,15 @@ public struct PlaylistDetailView: View {
     }
 
     private func reloadItems() async {
+        let playlistID = playlist.id
+        let generation = UUID()
+        loadGeneration = generation
+        if loadedPlaylistID != playlistID { items = [] }
         isLoading = true
-        items = await library.playlistTracks(for: playlist.id)
+        let result = await library.playlistTracks(for: playlistID)
+        guard !Task.isCancelled, loadGeneration == generation else { return }
+        items = result
+        loadedPlaylistID = playlistID
         isLoading = false
     }
 

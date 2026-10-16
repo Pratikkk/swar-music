@@ -228,6 +228,7 @@ public struct LibraryView: View {
                         showDeleteAlert = true
                     }
                 )
+                .id(playlist.id)
             } else {
                 let sectionName: String = {
                     if case .section(let s) = selection {

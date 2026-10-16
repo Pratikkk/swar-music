@@ -215,10 +215,17 @@ struct LibraryContent: View {
                     Text(track.artist + " · " + track.album).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     if let error = track.error { Text(error).font(.caption).foregroundStyle(.orange).lineLimit(2) }
                 }
-                Spacer()
-                if let codec = track.codec { Text(codec).font(.caption).foregroundStyle(.secondary) }
-                if let rate = track.sampleRate { Text("\(rate / 1000, specifier: "%g") kHz").font(.caption).foregroundStyle(.secondary) }
-                Text(String(format: "%d:%02d", Int(track.duration) / 60, Int(track.duration) % 60)).monospacedDigit().foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(track.duration.isFinite && track.duration >= 0 && track.duration < Double(Int.max)
+                         ? String(format: "%d:%02d", Int(track.duration) / 60, Int(track.duration) % 60) : "–:––")
+                        .monospacedDigit()
+                    Text([track.codec, track.sampleRate.map { String(format: "%g kHz", $0 / 1000) }]
+                        .compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).lineLimit(1)
+                }
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
             }
             .songActions(library: library, track: track, busy: player.isBusy, enqueue: { enqueue(track, next: $0) })
             .padding(.vertical, 6)

@@ -28,3 +28,11 @@ narrow layouts, grid/detail navigation, title sorting, ⌘F search and Escape re
 the last Songs rows, the Up Next popover, and playback/pause from the floating bar.
 Light appearance follows semantic system colors and materials; a separate visual
 light-mode pass was not performed.
+
+## Follow-up polish
+
+Artist selection uses inset rounded highlights with a pink label, matching the main navigation. Artist album headings reserve a 26-point format badge slot so starting playback does not shift song rows. Songs and Genres stack duration above codec/sample rate, leaving more horizontal room for titles.
+
+Playlist playback and queue actions are disabled independently of management actions: empty playlists can still be renamed or deleted. Loading displays progress instead of a premature empty state. Playlist identity isolates local state on selection changes, and cancellation plus a generation token prevents older asynchronous reloads from publishing over newer results.
+
+Validation: 92 package tests passed and the Debug app built successfully. Manual checks covered artist selection, the empty-playlist options menu and Rename dialog, cleanup of the temporary test playlist, and Songs at 1100- and 792-point window widths in dark appearance. Light appearance was not separately inspected in this pass.

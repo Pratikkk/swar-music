@@ -77,11 +77,11 @@ struct ArtistsView: View {
     private var artistList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 4) {
                     selectionRow(.all) {
                         HStack(spacing: 9) {
                             Image(systemName: "music.mic").font(.title2).frame(width: 36, height: 36)
-                                .foregroundStyle(selection == .all ? Color.white : .pink)
+                                .foregroundStyle(Color.pink)
                             Text("All Artists").fontWeight(.semibold)
                         }
                     }
@@ -95,6 +95,7 @@ struct ArtistsView: View {
                         }.help(artist.name)
                     }
                 }
+                .padding(8)
             }
             .focusable().focused($artistListFocused).focusEffectDisabled()
             .onMoveCommand(perform: moveArtistSelection)
@@ -113,9 +114,10 @@ struct ArtistsView: View {
             content()
                 .padding(.horizontal, 10).padding(.vertical, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(selection == choice ? Color.white : .primary)
-                .background(selection == choice ? Color.pink : .clear)
-                .contentShape(Rectangle())
+                .foregroundStyle(selection == choice ? Color.pink : .primary)
+                .background(selection == choice ? Color.primary.opacity(0.055) : .clear,
+                            in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(selection == choice ? .isSelected : [])
@@ -199,7 +201,13 @@ struct ArtistsView: View {
             if !metadata.isEmpty {
                 Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
-            if album.tracks.contains(where: isCurrent), let info = player.formatInfo { FormatChip(info: info) }
+            // Keep the track list stationary as playback moves between albums.
+            ZStack(alignment: .leading) {
+                if album.tracks.contains(where: isCurrent), let info = player.formatInfo {
+                    FormatChip(info: info)
+                }
+            }
+            .frame(height: 26, alignment: .leading)
         }
     }
 
