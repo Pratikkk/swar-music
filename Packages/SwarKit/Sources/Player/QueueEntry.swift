@@ -17,3 +17,9 @@ public struct QueueEntry: Identifiable, Sendable, Equatable {
         self.subtitle = subtitle
     }
 }
+
+public enum RepeatMode: String, CaseIterable, Sendable {
+    case off = "Off"
+    case all = "All"
+    case one = "One"
+}

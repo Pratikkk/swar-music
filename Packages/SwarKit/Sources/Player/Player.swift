@@ -19,8 +19,11 @@ public final class Player {
 
     public private(set) var queue: [QueueEntry] = []
     public private(set) var currentEntryID: UUID?
+    public private(set) var shuffleEnabled = false
+    public private(set) var repeatMode: RepeatMode = .off
+    private var unshuffledOrder: [UUID] = []
     public var currentQueueIndex: Int? { queue.firstIndex { $0.id == currentEntryID } }
-    public var canGoNext: Bool { currentQueueIndex.map { $0 + 1 < queue.count } ?? !queue.isEmpty }
+    public var canGoNext: Bool { currentQueueIndex.map { $0 + 1 < queue.count || (repeatMode == .all && !queue.isEmpty) } ?? !queue.isEmpty }
     public var canGoPrevious: Bool { currentQueueIndex.map { $0 > 0 || position > 0 } ?? false }
     public var upcomingEntries: [QueueEntry] {
         guard let index = currentQueueIndex else { return queue }
@@ -43,6 +46,7 @@ public final class Player {
         isBusy = true
         defer { isBusy = false }
         queue = []
+        unshuffledOrder = []
         currentEntryID = nil
         standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: displayTitle)
         await load(url, accessRoot: accessRoot, displayTitle: displayTitle)
@@ -87,7 +91,7 @@ public final class Player {
         if let error = snapshot.error, let index = currentQueueIndex { queue[index].error = error }
         if snapshot.didFinish, snapshot.error == nil, !completionHandled {
             completionHandled = true
-            await next()
+            await advanceAfterCompletion()
         }
     }
 
@@ -95,6 +99,8 @@ public final class Player {
     public func play(_ entries: [QueueEntry], startingAt index: Int = 0) async {
         guard !isBusy, entries.indices.contains(index) else { return }
         queue = entries
+        unshuffledOrder = entries.map(\.id)
+        if shuffleEnabled { shuffleUpcoming(after: index) }
         await playFrom(index)
     }
 
@@ -103,16 +109,56 @@ public final class Player {
         // Include a standalone file in the queue before adding its successor.
         if queue.isEmpty, let standaloneEntry, duration > 0 {
             queue = [standaloneEntry]; currentEntryID = standaloneEntry.id
+            unshuffledOrder = [standaloneEntry.id]
         }
-        if playNext { queue.insert(entry, at: (currentQueueIndex.map { $0 + 1 }) ?? 0) }
-        else { queue.append(entry) }
+        if playNext {
+            queue.insert(entry, at: (currentQueueIndex.map { $0 + 1 }) ?? 0)
+            let originalIndex = currentEntryID.flatMap { unshuffledOrder.firstIndex(of: $0) }
+            unshuffledOrder.insert(entry.id, at: originalIndex.map { $0 + 1 } ?? 0)
+        } else {
+            queue.append(entry)
+            unshuffledOrder.append(entry.id)
+        }
     }
 
     public func next() async {
         guard !isBusy else { return }
         let index = currentQueueIndex.map { $0 + 1 } ?? 0
-        guard queue.indices.contains(index) else { return }
-        await playFrom(index)
+        if queue.indices.contains(index) { await playFrom(index, wrapping: repeatMode == .all) }
+        else if repeatMode == .all, !queue.isEmpty { await playFrom(0) }
+    }
+
+    private func advanceAfterCompletion() async {
+        if queue.isEmpty, let standaloneEntry, duration > 0, repeatMode != .off {
+            queue = [standaloneEntry]
+            unshuffledOrder = [standaloneEntry.id]
+            currentEntryID = standaloneEntry.id
+        }
+        if repeatMode == .one, let index = currentQueueIndex { await playFrom(index) }
+        else { await next() }
+    }
+
+    public func setRepeatMode(_ mode: RepeatMode) {
+        guard !isBusy else { return }
+        repeatMode = mode
+    }
+
+    public func toggleShuffle() {
+        guard !isBusy else { return }
+        shuffleEnabled.toggle()
+        let start = currentQueueIndex.map { $0 + 1 } ?? 0
+        if shuffleEnabled { shuffleUpcoming(after: start - 1) }
+        else {
+            let ranks = Dictionary(uniqueKeysWithValues: unshuffledOrder.enumerated().map { ($1, $0) })
+            queue = Array(queue.prefix(start)) + queue.dropFirst(start).sorted {
+                (ranks[$0.id] ?? Int.max) < (ranks[$1.id] ?? Int.max)
+            }
+        }
+    }
+
+    private func shuffleUpcoming(after index: Int) {
+        let start = index + 1
+        queue = Array(queue.prefix(start)) + queue.dropFirst(start).shuffled()
     }
 
     public func previous() async {
@@ -129,6 +175,7 @@ public final class Player {
     public func removeUpcoming(_ id: UUID) {
         guard !isBusy, upcomingEntries.contains(where: { $0.id == id }) else { return }
         queue.removeAll { $0.id == id }
+        unshuffledOrder.removeAll { $0 == id }
     }
 
     public func moveUpcoming(from offsets: IndexSet, to destination: Int) {
@@ -142,21 +189,25 @@ public final class Player {
         let insertion = destination - offsets.filter { $0 < destination }.count
         upcoming.insert(contentsOf: moving, at: insertion)
         queue = Array(queue.prefix(start)) + upcoming
+        unshuffledOrder = queue.map(\.id)
     }
 
     public func clearUpcoming() {
         guard !isBusy else { return }
         if let index = currentQueueIndex { queue = Array(queue.prefix(index + 1)) }
         else { queue = [] }
+        let retained = Set(queue.map(\.id))
+        unshuffledOrder.removeAll { !retained.contains($0) }
     }
 
     private var standaloneEntry: QueueEntry?
 
-    private func playFrom(_ start: Int) async {
+    private func playFrom(_ start: Int, wrapping: Bool = false) async {
         isBusy = true
         defer { isBusy = false }
         // A bounded forward pass skips broken files without looping forever.
-        for index in start..<queue.count {
+        let indices = Array(start..<queue.count) + (wrapping ? Array(0..<start) : [])
+        for index in indices {
             let entry = queue[index]
             currentEntryID = entry.id
             await load(entry.url, accessRoot: entry.accessRoot, displayTitle: entry.title)

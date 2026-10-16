@@ -34,19 +34,21 @@ fails, playback stops and retains those errors. A device/start or mid-playback e
 stops playback rather than trying every track against a failing output device.
 
 Each transition opens a new audio session and restores/configures the device through
-the existing engine. This is sequential playback with a gap, not gapless playback.
+the existing engine. Restoration waits for HAL readback before the next session opens,
+so delayed restoration cannot overwrite the next track’s requested rate. This is sequential playback with a gap, not gapless playback.
 The format chip updates from the decoder and actual device for the new session.
 
 ## Verification
 
-Eight device-free queue tests use an injected engine to cover selected-track start,
+Fourteen device-free queue tests use an injected engine to cover selected-track start,
 exactly-once EOF advancement, final stop, pause/seek distinction, replay after EOF,
 previous/restart, duplicate entries, Play Next, reordering/removal, corrupt-file skip,
 standalone open behavior, and blocked edits during asynchronous opens.
 
 A separate opt-in test uses real AUHAL and quiet generated tones. It checks automatic
 96 kHz to 44.1 kHz advancement across a corrupt entry, actual source/output rates,
-final stop, and no buffer underruns. Run it separately from other hardware tests:
+final stop, Repeat One restart, Repeat All wrap back to 96 kHz, and no buffer
+underruns. Run it separately from other hardware tests:
 
 ```sh
 python3 Tools/make_audio_fixtures.py /tmp/swar-queue-audio
@@ -60,4 +62,29 @@ The signed sandboxed app was checked for album play controls, track context comm
 Add to Queue, and the empty/populated Up Next popover. Real queue transitions were
 verified in the hardware test; drag gesture behavior has not been manually checked.
 
-Queue persistence, shuffle/repeat, media keys, and gapless handoff remain future work.
+## Shuffle and repeat
+
+The player exposes Shuffle and a Repeat menu (Off, All, One). These settings affect
+queue order and advancement only; they do not process audio. They remain in memory
+for the current app session and carry across new playback selections.
+
+Shuffle randomizes only upcoming entries. The current entry and played history stay
+in place. Turning Shuffle off restores the remaining original order, retaining new
+Play Next/appended entries and excluding removed entries. Playing a new selection
+while Shuffle is on preserves the selected starting track and shuffles its successors.
+A manual queue reorder becomes the new order to restore; additions retain their
+explicit Play Next or append position. Repeat All reuses the current queue order.
+
+Repeat One replays the current track after natural EOF, including a standalone file.
+Manual Next still advances. Repeat All wraps from the last entry to the first on EOF
+or Next. Repeat Off stops at the end. Each advance tries each candidate at most once,
+even when wrapping, so an all-corrupt queue stops. A failed repeat-one reopen can
+fall forward to a succeeding entry rather than retrying forever. Device errors stop.
+
+Six additional device-free tests cover shuffle invariants/restoration, edited queues,
+repeat-one/manual-next semantics, repeat-all/off boundaries, bounded corrupt-file
+wraparound, and standalone repeat. The real AUHAL test also exercises repeat restart
+and wraparound. The shuffle/repeat controls compile in the signed Release build;
+the new controls have not been manually checked with VoiceOver.
+
+Queue persistence, media keys, and gapless handoff remain future work.

@@ -59,6 +59,27 @@ struct PlaybackControls: View {
                     .accessibilityLabel("Playback position")
                     .disabled(player.duration == 0 || player.isBusy)
                 }
+                Button { player.toggleShuffle() } label: {
+                    Image(systemName: "shuffle")
+                        .foregroundStyle(player.shuffleEnabled ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.borderless).accessibilityLabel(player.shuffleEnabled ? "Turn Shuffle Off" : "Turn Shuffle On")
+                .accessibilityValue(player.shuffleEnabled ? "On" : "Off")
+                .disabled(player.isBusy)
+                Menu {
+                    ForEach(RepeatMode.allCases, id: \.self) { mode in
+                        Button { player.setRepeatMode(mode) } label: {
+                            if player.repeatMode == mode { Label("Repeat " + mode.rawValue, systemImage: "checkmark") }
+                            else { Text("Repeat " + mode.rawValue) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.accentColor)
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                .accessibilityLabel("Repeat: " + player.repeatMode.rawValue)
+                .disabled(player.isBusy)
                 Button { showQueue.toggle() } label: { Image(systemName: "list.bullet") }
                     .buttonStyle(.borderless).accessibilityLabel("Show Queue")
                     .popover(isPresented: $showQueue) { QueueView(player: player) }

@@ -111,9 +111,29 @@ final class OutputDevice {
         // Avoid overwriting a rate another app has chosen since playback stopped.
         guard let current = try? Self.value(id, kAudioDevicePropertyNominalSampleRate, initial: Double(0)), current == requestedRate else { return }
         do {
-            if changedPhysical { try Self.set(stream, kAudioStreamPropertyPhysicalFormat, value: originalPhysical) }
-            if current != originalRate { try Self.set(id, kAudioDevicePropertyNominalSampleRate, value: originalRate) }
+            if changedPhysical {
+                try Self.set(stream, kAudioStreamPropertyPhysicalFormat, value: originalPhysical)
+                try waitForPhysical(originalPhysical)
+            }
+            let restoredRate = try Self.value(id, kAudioDevicePropertyNominalSampleRate, initial: Double(0))
+            if restoredRate != originalRate { try Self.set(id, kAudioDevicePropertyNominalSampleRate, value: originalRate) }
+            // HAL writes complete asynchronously. A following session must not read
+            // the old rate and then be interrupted by this pending restoration.
+            try waitForRate(originalRate)
         } catch { deviceLog.error("Restore output format: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    private func waitForPhysical(_ format: AudioStreamBasicDescription) throws {
+        for _ in 0..<100 {
+            let actual = try Self.value(stream, kAudioStreamPropertyPhysicalFormat, initial: AudioStreamBasicDescription())
+            if actual.mSampleRate == format.mSampleRate,
+               actual.mFormatID == format.mFormatID, actual.mFormatFlags == format.mFormatFlags,
+               actual.mBitsPerChannel == format.mBitsPerChannel,
+               actual.mChannelsPerFrame == format.mChannelsPerFrame,
+               actual.mBytesPerFrame == format.mBytesPerFrame { return }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        throw AudioFailure("The output did not restore its physical format in time.")
     }
 
     private func waitForRate(_ rate: Double) throws {

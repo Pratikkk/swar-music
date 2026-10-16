@@ -39,6 +39,10 @@ struct QueueTests {
         await gate.waitUntilBlocked()
         #expect(player.isBusy)
         player.enqueue(entry("extra"))
+        player.toggleShuffle()
+        player.setRepeatMode(.all)
+        #expect(!player.shuffleEnabled)
+        #expect(player.repeatMode == .off)
         player.clearUpcoming()
         player.removeUpcoming(entries[1].id)
         await player.next()
@@ -48,6 +52,104 @@ struct QueueTests {
         #expect(!player.isBusy)
         #expect(player.isPlaying)
         #expect(engine.opened.count == 1)
+    }
+
+    @Test func shufflePreservesCurrentAndHistoryAndRestoresUpcomingOrder() async {
+        let player = Player(engine: QueueTestEngine())
+        let entries = (0..<12).map { entry("track-\($0)") }
+        await player.play(entries, startingAt: 3)
+        player.toggleShuffle()
+        #expect(player.shuffleEnabled)
+        #expect(Array(player.queue.prefix(4)).map(\.id) == Array(entries.prefix(4)).map(\.id))
+        #expect(Set(player.upcomingEntries.map(\.id)) == Set(entries.dropFirst(4).map(\.id)))
+        await player.next()
+        let played = Set(player.queue.prefix(5).map(\.id))
+        player.toggleShuffle()
+        #expect(!player.shuffleEnabled)
+        #expect(player.upcomingEntries.map(\.id) == entries.filter { !played.contains($0.id) }.map(\.id))
+    }
+
+    @Test func shuffleRestorationIncludesQueueEditsAndNewSelections() async {
+        let player = Player(engine: QueueTestEngine())
+        let entries = [entry("one"), entry("two"), entry("three"), entry("four")]
+        player.toggleShuffle()
+        await player.play(entries)
+        let next = entry("next"), last = entry("last")
+        player.enqueue(next, playNext: true)
+        player.enqueue(last)
+        player.removeUpcoming(entries[2].id)
+        player.toggleShuffle()
+        #expect(player.queue.map(\.id) == [entries[0].id, next.id, entries[1].id, entries[3].id, last.id])
+    }
+
+    @Test func repeatOneReplaysOnEOFButManualNextAdvances() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let entries = [entry("one"), entry("two")]
+        player.setRepeatMode(.one)
+        await player.play(entries)
+        engine.finish()
+        await player.refresh()
+        #expect(player.currentEntryID == entries[0].id)
+        #expect(player.isPlaying)
+        #expect(engine.opened.count == 2)
+        await player.next()
+        #expect(player.currentEntryID == entries[1].id)
+        #expect(!player.canGoNext)
+    }
+
+    @Test func repeatAllWrapsAtEOFAndManualNextAndOffStops() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let entries = [entry("one"), entry("two")]
+        player.setRepeatMode(.all)
+        await player.play(entries, startingAt: 1)
+        #expect(player.canGoNext)
+        engine.finish()
+        await player.refresh()
+        #expect(player.currentEntryID == entries[0].id)
+        await player.next()
+        await player.next()
+        #expect(player.currentEntryID == entries[0].id)
+        await player.next()
+        player.setRepeatMode(.off)
+        engine.finish()
+        await player.refresh()
+        #expect(player.currentEntryID == entries[1].id)
+        #expect(!player.isPlaying)
+    }
+
+    @Test func repeatAllSkipsFailuresOncePerAdvanceAndStopsWhenAllFail() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let entries = [entry("one"), entry("two"), entry("three")]
+        await player.play(entries, startingAt: 1)
+        player.setRepeatMode(.all)
+        engine.fail(entries[0].url); engine.fail(entries[2].url)
+        await player.next()
+        #expect(player.currentEntryID == entries[1].id)
+        #expect(engine.opened.count == 4)
+        engine.fail(entries[1].url)
+        engine.finish()
+        await player.refresh()
+        await player.refresh()
+        #expect(engine.opened.count == 7)
+        #expect(!player.isPlaying)
+        #expect(player.queue.allSatisfy { $0.error != nil })
+    }
+
+    @Test func repeatOneSupportsStandaloneFiles() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let file = entry("standalone")
+        await player.open(file.url)
+        player.setRepeatMode(.one)
+        await player.togglePlayback()
+        engine.finish()
+        await player.refresh()
+        #expect(player.isPlaying)
+        #expect(player.queue.count == 1)
+        #expect(engine.opened.count == 2)
     }
 
     @Test func pauseAndSeekToEndDoNotAdvance() async {

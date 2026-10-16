@@ -2,7 +2,7 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
-## Current milestone: playback queue
+## Current milestone: shuffle and repeat
 
 The app has a native library sidebar and a single-file playback harness. Use
 **File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
@@ -22,6 +22,8 @@ that track and queues the remaining tracks in the current view. Right-click a tr
 for **Play Next** or **Add to Queue**. The player has previous/next controls
 (⌘← / ⌘→) and a Queue popover with Up Next, drag reordering, removal, and Clear Up Next.
 Previous restarts the current track after three seconds; otherwise it goes back.
+Shuffle mixes upcoming tracks while keeping the current track in place. The Repeat
+menu offers Off, All, and One; manual Next still advances in Repeat One.
 Queue entries that cannot open keep an error row while the player tries the next.
 See [queue behavior and verification](Docs/Queue.md).
 
@@ -136,7 +138,7 @@ labels, conversion explanations, and accessibility labels were checked there.
 Full VoiceOver navigation and physical Bluetooth/AirPlay paths remain untested.
 
 Still unverified: physical DAC sample equality, a 24-bit integer-output DAC,
-hot-plug, sleep/wake, and long-running playback. Playlists, shuffle/repeat, queue
+hot-plug, sleep/wake, and long-running playback. Playlists, queue
 restoration, gapless playback, and exclusive output remain future work.
 
 ## Codec support
@@ -153,7 +155,7 @@ arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only b
 recipe, exact upstream source archive, notices, and license accompany the app.
 See [codec implementation and verification notes](Docs/Codecs.md).
 
-The current suite has 48 tests, including eight device-free queue tests, library
+The current suite has 54 tests, including fourteen device-free queue tests, library
 search/paging across 50,001 stored tracks, generated format matrices, and optional
 complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
 references and seek positions against original samples. Integer lossless fixtures

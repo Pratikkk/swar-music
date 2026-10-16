@@ -45,5 +45,29 @@ struct HardwareQueueTests {
         #expect(!player.canGoNext)
         #expect(player.underrunFrames == 0)
         #expect(player.errorMessage == nil)
+
+        // Replay One must restart the final track; Repeat All must then wrap.
+        player.setRepeatMode(.one)
+        await player.togglePlayback()
+        await player.seek(to: max(0, player.duration - 0.15))
+        let repeatDeadline = Date().addingTimeInterval(5)
+        while player.position > 1, Date() < repeatDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+            await player.refresh()
+        }
+        #expect(player.currentEntryID == entries[2].id)
+        #expect(player.position < 1)
+        #expect(player.isPlaying)
+        player.setRepeatMode(.all)
+        await player.seek(to: max(0, player.duration - 0.15))
+        let wrapDeadline = Date().addingTimeInterval(5)
+        while player.currentEntryID != entries[0].id, Date() < wrapDeadline {
+            try await Task.sleep(for: .milliseconds(50))
+            await player.refresh()
+        }
+        #expect(player.currentEntryID == entries[0].id)
+        #expect(player.isPlaying)
+        #expect(await engine.snapshot().output?.sampleRate == 96_000)
+        #expect(player.errorMessage == nil)
     }
 }
