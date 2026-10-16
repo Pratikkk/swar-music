@@ -9,8 +9,12 @@ the song and its current playback state.
 
 The Now Playing bar separates title/artist/album and transport controls from the
 format chip, scrubber, and times. It fits the app's 760-point minimum window width.
-The current library row uses a subtle accent background and a waveform/paused badge.
-Its play button toggles playback rather than rebuilding the queue.
+Song-row covers are the full 44-point play/pause hit target, with a centered circular
+control and hover contrast. The separate button beside the cover has been removed,
+leaving more room for titles. The current row uses a subtle accent background, an
+accent cover border, and an accent play/pause circle. Its play button toggles playback
+rather than rebuilding the queue. Unreadable songs show a disabled warning overlay.
+Hover animation respects Reduce Motion; accessibility labels include the track title.
 
 QueueEntry carries the library thumbnail URL and subtitle through queue changes.
 Player clears presentation on failed opens and shutdown, preventing stale covers.

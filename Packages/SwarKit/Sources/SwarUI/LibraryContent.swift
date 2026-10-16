@@ -119,24 +119,16 @@ struct LibraryContent: View {
     private func trackRow(_ track: LibraryTrack, context: [LibraryTrack]) -> some View {
             let current = (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL && player.currentURL != nil
             return HStack(spacing: 12) {
-                CoverArt(url: library.artworkURL(track.artworkKey), title: track.album)
-                    .frame(width: 44, height: 44)
-                    .overlay(alignment: .bottomTrailing) {
-                        if current {
-                            Image(systemName: player.isPlaying ? "waveform" : "pause.fill")
-                                .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                                .padding(4).background(Color.accentColor, in: Circle())
-                                .offset(x: 3, y: 3).accessibilityHidden(true)
-                        }
+                ArtworkPlaybackButton(
+                    url: library.artworkURL(track.artworkKey), album: track.album,
+                    title: track.title, current: current, playing: current && player.isPlaying,
+                    unavailable: track.error != nil, busy: player.isBusy
+                ) {
+                    Task {
+                        if current { await player.togglePlayback() }
+                        else { await play(track, context: context) }
                     }
-                Button { Task { if current { await player.togglePlayback() } else { await play(track, context: context) } } } label: {
-                    Image(systemName: track.error != nil ? "exclamationmark.triangle" : (current && player.isPlaying ? "pause.fill" : "play.fill"))
-                        .frame(width: 24, height: 30)
                 }
-                .buttonStyle(.borderless)
-                .disabled(track.error != nil || player.isBusy)
-                .accessibilityLabel("\(current && player.isPlaying ? "Pause" : "Play") \(track.title)")
-                .accessibilityValue(current ? (player.isPlaying ? "Now playing" : "Current track, paused") : "")
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title).fontWeight(current ? .semibold : .medium)
                         .foregroundStyle(current ? Color.accentColor : Color.primary).lineLimit(1)
@@ -183,4 +175,47 @@ private struct AlbumGroup: Identifiable {
     let title: String
     let artist: String
     let tracks: [LibraryTrack]
+}
+
+/// The cover is the entire hit target, keeping transport out of the text columns.
+private struct ArtworkPlaybackButton: View {
+    let url: URL?
+    let album: String
+    let title: String
+    let current: Bool
+    let playing: Bool
+    let unavailable: Bool
+    let busy: Bool
+    let action: () -> Void
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: action) {
+            CoverArt(url: url, title: album)
+                .frame(width: 44, height: 44)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6).fill(.black.opacity(hovered ? 0.12 : 0))
+                    Image(systemName: unavailable ? "exclamationmark.triangle.fill" : (playing ? "pause.fill" : "play.fill"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .offset(x: !playing && !unavailable ? 1 : 0)
+                        .foregroundStyle(.white)
+                        .frame(width: 26, height: 26)
+                        .background(current ? Color.accentColor : .black.opacity(hovered ? 0.75 : 0.5), in: Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(current ? Color.accentColor : .clear, lineWidth: 1.5)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.borderless)
+        .disabled(unavailable || busy)
+        .onHover { hovered = $0 }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
+        .accessibilityLabel("\(playing ? "Pause" : "Play") \(title)")
+        .accessibilityValue(current ? (playing ? "Now playing" : "Current track, paused") : "")
+        .help(unavailable ? "This song cannot be played" : "\(playing ? "Pause" : "Play") \(title)")
+    }
 }
