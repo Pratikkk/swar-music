@@ -101,7 +101,10 @@ struct ToolbarPlayer: View {
                     .accessibilityValue("\(Int(player.position)) of \(Int(player.duration)) seconds")
                     .disabled(player.duration == 0 || (player.isBusy && !player.isSeeking))
                 }
-                if showActivity { ProgressView().controlSize(.mini) }
+                ProgressView().controlSize(.mini)
+                    .frame(width: 16, height: 16)
+                    .opacity(showActivity ? 1 : 0)
+                    .accessibilityHidden(!showActivity)
             }
             .padding(.horizontal, 4).frame(minWidth: 170, maxWidth: .infinity)
             VolumeControl(player: player)

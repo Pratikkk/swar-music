@@ -249,6 +249,33 @@ struct QueueTests {
         #expect(player.currentURL == second.url)
     }
 
+    @Test func replayAndShuffleKeepDisplayedSongUntilOpenCompletes() async {
+        let gate = OpenGate()
+        let engine = QueueTestEngine(gate: gate)
+        let player = Player(engine: engine)
+        let song = QueueEntry(url: entry("one").url, title: "One", subtitle: "Artist",
+                              artworkURL: URL(fileURLWithPath: "/tmp/cover.png"))
+        let initial = Task { await player.play([song]) }
+        await gate.waitUntilBlocked()
+        await gate.release()
+        await initial.value
+
+        for shuffle in [false, true] {
+            let replay = Task { await player.play([song], shuffle: shuffle) }
+            await gate.waitUntilBlocked()
+            #expect(player.isBusy)
+            #expect(player.currentURL == song.url)
+            #expect(player.title == "One")
+            #expect(player.subtitle == "Artist")
+            #expect(player.artworkURL == song.artworkURL)
+            await gate.release()
+            await replay.value
+            #expect(player.currentURL == song.url)
+            #expect(player.isPlaying)
+            #expect(!player.isBusy)
+        }
+    }
+
     @Test func failedOpenDoesNotKeepThePreviousCover() async {
         let engine = QueueTestEngine()
         let player = Player(engine: engine)
@@ -417,5 +444,5 @@ private actor OpenGate {
         if blocked { return }
         await withCheckedContinuation { entered = $0 }
     }
-    func release() { pending?.resume(); pending = nil }
+    func release() { pending?.resume(); pending = nil; blocked = false }
 }

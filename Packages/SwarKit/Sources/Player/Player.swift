@@ -158,10 +158,8 @@ public final class Player {
         let revision = generation
         completionHandled = false
         isRestoredSession = false
-        artworkURL = entry?.artworkURL
-        subtitle = entry?.subtitle ?? ""
-        title = displayTitle ?? url.deletingPathExtension().lastPathComponent
-        currentURL = nil
+        // Keep the displayed song intact while opening. Clearing its identity
+        // here makes album highlights and format chips disappear until open ends.
         volumeDeviceID = nil
         let oldAccess = scopedAccess
         scopedAccess = ScopedFileAccess(accessRoot ?? url)
@@ -182,6 +180,9 @@ public final class Player {
             apply(snapshot)
             errorMessage = nil
         } catch {
+            currentURL = nil
+            artworkURL = nil
+            subtitle = ""
             title = "No file open"
             sourceDescription = nil
             outputDescription = nil
