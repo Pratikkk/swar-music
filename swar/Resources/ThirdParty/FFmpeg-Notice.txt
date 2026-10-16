@@ -1,0 +1,19 @@
+Swar uses FFmpeg 9.0.2, licensed under the GNU Lesser General Public License
+version 2.1 or later. Copyright (c) the FFmpeg developers.
+
+The unmodified source archive, complete license, and build configuration accompany
+this application as FFmpeg-9.0.2.tar.xz, FFmpeg-LGPL.txt, FFmpeg-LICENSE.md, and
+FFmpeg-Build.txt. The upstream source is also available at:
+https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+
+Swar dynamically loads libavformat, libavcodec, libavutil, and libswresample from
+Contents/Frameworks. This build disables GPL and nonfree components, network I/O,
+programs, encoders, video decoders, and external libraries. libswresample is an
+internal dependency of FFmpeg's Opus decoder; Swar does not use it to change PCM
+sample rates. Library install names are adjusted for app-local loading; no FFmpeg
+source code is modified.
+
+The build recipe is Tools/build_codecs.py in the Swar source tree. Library
+replacement requires compatible major ABIs and local re-signing of the application
+and replacement libraries under macOS code-signing rules. FFmpeg authors provide
+no warranty; see the accompanying license text.

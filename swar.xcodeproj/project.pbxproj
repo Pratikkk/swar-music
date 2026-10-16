@@ -8,6 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		A10000000000000000000001 /* SwarUI in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000002 /* SwarUI */; };
+		B30000000000000000000001 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavformat.63.dylib in Embed Codecs */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavformat.63.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		B30000000000000000000002 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavcodec.63.dylib in Embed Codecs */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavcodec.63.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		B30000000000000000000003 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavutil.61.dylib in Embed Codecs */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavutil.61.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		B30000000000000000000004 /* Packages/SwarKit/Vendor/FFmpeg/lib/libswresample.7.dylib in Embed Codecs */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* Packages/SwarKit/Vendor/FFmpeg/lib/libswresample.7.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,10 +31,31 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		B40000000000000000000001 /* Embed Codecs */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				B30000000000000000000001 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavformat.63.dylib in Embed Codecs */,
+				B30000000000000000000002 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavcodec.63.dylib in Embed Codecs */,
+				B30000000000000000000003 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavutil.61.dylib in Embed Codecs */,
+				B30000000000000000000004 /* Packages/SwarKit/Vendor/FFmpeg/lib/libswresample.7.dylib in Embed Codecs */,
+			);
+			name = "Embed Codecs";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		3036505A3080FCBD00F8356E /* swar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = swar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		303650693080FCBE00F8356E /* swarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = swarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		303650733080FCBE00F8356E /* swarUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = swarUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B20000000000000000000001 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavformat.63.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = Packages/SwarKit/Vendor/FFmpeg/lib/libavformat.63.dylib; sourceTree = SOURCE_ROOT; };
+		B20000000000000000000002 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavcodec.63.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = Packages/SwarKit/Vendor/FFmpeg/lib/libavcodec.63.dylib; sourceTree = SOURCE_ROOT; };
+		B20000000000000000000003 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavutil.61.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = Packages/SwarKit/Vendor/FFmpeg/lib/libavutil.61.dylib; sourceTree = SOURCE_ROOT; };
+		B20000000000000000000004 /* Packages/SwarKit/Vendor/FFmpeg/lib/libswresample.7.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = Packages/SwarKit/Vendor/FFmpeg/lib/libswresample.7.dylib; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -83,6 +108,10 @@
 				3036505C3080FCBD00F8356E /* swar */,
 				3036506C3080FCBE00F8356E /* swarTests */,
 				303650763080FCBE00F8356E /* swarUITests */,
+				B20000000000000000000001 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavformat.63.dylib */,
+				B20000000000000000000002 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavcodec.63.dylib */,
+				B20000000000000000000003 /* Packages/SwarKit/Vendor/FFmpeg/lib/libavutil.61.dylib */,
+				B20000000000000000000004 /* Packages/SwarKit/Vendor/FFmpeg/lib/libswresample.7.dylib */,
 				3036505B3080FCBD00F8356E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -107,6 +136,7 @@
 				303650563080FCBD00F8356E /* Sources */,
 				303650573080FCBD00F8356E /* Frameworks */,
 				303650583080FCBD00F8356E /* Resources */,
+				B40000000000000000000001 /* Embed Codecs */,
 			);
 			buildRules = (
 			);
@@ -202,7 +232,7 @@
 			mainGroup = 303650513080FCBD00F8356E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A10000000000000000000003 /* SwarKit */,
+				A10000000000000000000003 /* XCLocalSwiftPackageReference "Packages/SwarKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3036505B3080FCBD00F8356E /* Products */;
@@ -276,20 +306,6 @@
 			targetProxy = 303650743080FCBE00F8356E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
-
-/* Begin XCLocalSwiftPackageReference section */
-		A10000000000000000000003 /* SwarKit */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = Packages/SwarKit;
-		};
-/* End XCLocalSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		A10000000000000000000002 /* SwarUI */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = SwarUI;
-		};
-/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		3036507B3080FCBE00F8356E /* Debug */ = {
@@ -416,6 +432,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F227RG44R5;
+				CODE_SIGN_ENTITLEMENTS = swar/swar.entitlements;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -434,8 +451,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
@@ -448,6 +465,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F227RG44R5;
+				CODE_SIGN_ENTITLEMENTS = swar/swar.entitlements;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -466,8 +484,8 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
@@ -489,8 +507,8 @@
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/swar.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/swar";
 			};
@@ -513,8 +531,8 @@
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/swar.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/swar";
 			};
@@ -536,8 +554,8 @@
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = swar;
 			};
@@ -559,8 +577,8 @@
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
 				TEST_TARGET_NAME = swar;
 			};
@@ -606,6 +624,20 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A10000000000000000000003 /* XCLocalSwiftPackageReference "Packages/SwarKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/SwarKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10000000000000000000002 /* SwarUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SwarUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 303650523080FCBD00F8356E /* Project object */;
 }

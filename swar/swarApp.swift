@@ -11,10 +11,20 @@ import SwarUI
 @main
 struct swarApp: App {
     var body: some Scene {
-        WindowGroup("Swar") {
+        Window("Swar", id: "library") {
+            #if DEBUG
+            if CommandLine.arguments.contains("--format-chip-preview") {
+                FormatChipPreview()
+            } else {
+                LibraryView()
+                    .frame(minWidth: 760, minHeight: 500)
+            }
+            #else
             LibraryView()
                 .frame(minWidth: 760, minHeight: 500)
+            #endif
         }
         .defaultSize(width: 1100, height: 740)
+        .commands { SwarCommands() }
     }
 }

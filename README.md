@@ -2,10 +2,20 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
-## Current milestone: project foundation
+## Current milestone: persistent music library
 
-The app has a native library sidebar and section-specific empty states. Importing,
-decoding, playback, and format reporting are not implemented yet.
+The app has a native library sidebar and a single-file playback harness. Use
+**File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
+five seconds; the slider scrubs. Opening a file prepares it without autoplay.
+The format chip beside the track title reports the decoder's source quality and
+codec. Click it for source details, device format, and signal-path status. Hover
+for a compact summary. An orange dot marks a known conversion. Matching formats
+remain **Not verified** until the output path supplies sample-integrity evidence.
+Use **Add Folder…** to import a music folder. Swar saves read-only folder access,
+indexes metadata and artwork, and watches nested folders for changes. Browse Albums,
+Artists, Songs, Genres, or Recently Added, and search titles, artists, and albums.
+Use a track’s play button to start playback. Removing a folder from the library leaves its files intact.
+See [library implementation and verification notes](Docs/Library.md).
 
 Open `swar.xcodeproj` in Xcode and run the `swar` scheme on My Mac.
 The app supports macOS 14 or later. Signing uses the existing automatic signing
@@ -17,24 +27,128 @@ configuration; select your own team when building on another machine.
 
 - `Decoding`: source formats and codec implementations.
 - `AudioEngine` → `Decoding`: AUHAL, device control, PCM buffering.
+- `RealtimeAudio`: C11 atomic PCM ring and AUHAL callback, used by `AudioEngine`.
 - `FormatInfo` → `Decoding`: pure format and signal-path presentation logic.
-- `Library` → `Decoding`: scanning, tags, artwork, and persistence.
+- `Library` → `Decoding`, `GRDB`: scanning, tags, artwork, SQLite/FTS5, and folder watching.
 - `Player` → `AudioEngine`, `FormatInfo`, `Library`: observable playback state.
-- `SwarUI` → `Player`: native SwiftUI views.
+- `SwarUI` → `Player`, `FormatInfo`, `Decoding`, `Library`: native SwiftUI views and previews.
 
-The Xcode app owns window setup and dependency wiring. Only SwarUI contains
-implementation at this stage; other targets intentionally contain documentation
-stubs so their dependency boundaries can build before implementation.
+The Xcode app owns the single main window and menus. Decoding and device calls
+run on one background serial queue; the AUHAL callback executes C only, with no
+allocation, locks, logging, or calls into Swift. The main-actor observable player
+polls snapshots. FormatInfo is a pure source-quality and signal-path classifier;
+Library handles background scans and actor-isolated persistence. `DecoderFactory` probes
+with AudioToolbox first and falls back to bundled FFmpeg through a small C bridge.
+Neither routing nor source-quality classification uses filename extensions.
 
-The template's SwiftData model was removed. Persistence is deferred to the library
-milestone, where GRDB is planned. There are no external package dependencies yet.
+Source quality and output integrity are independent. Lossless sources above
+24-bit or 48 kHz get the hi-res label; these thresholds live in `FormatThresholds`.
+Lossy labels include decoder-reported bitrate when available. Known rate, bit-depth,
+sample-representation, channel, processing, and wireless-output changes are reported
+as Converted. Shared output and unmeasured system volume prevent a verified check.
+The engine reads device transport to identify Bluetooth and AirPlay, although those
+devices have not been manually tested. DSD labels are covered for future decoders;
+DSD playback is not implemented.
+
+Persistence uses GRDB 7.11.1, pinned through Swift Package Manager. FFmpeg is
+vendored as headers and dynamic libraries. Third-party licenses accompany the app.
 
 ## Sandbox and audio verification
 
 The existing app sandbox, read-only user-selected file access, and hardened runtime
-remain enabled. Persistent folder bookmarks and sandboxed DAC/hog-mode behavior
-still need implementation and validation before the distribution decision.
+remain enabled. A security-scoped lifetime token keeps an opened file accessible
+until the engine closes it. Imported folders use persistent read-only security-scoped
+bookmarks. Sandboxed DAC/hog-mode behavior still needs validation before the
+distribution decision.
 
-The planned playback path is AudioToolbox decoding into an AUHAL output unit.
-Do not display bit-perfect status until actual source and output behavior is
-verified. The next milestone is decoding and playing one native-format file.
+The implemented path is AudioToolbox (`ExtAudioFile`) → native-rate interleaved PCM
+→ one-second atomic ring → AUHAL. Integer lossless PCM stays integer in the decoder
+and ring. There is no software volume or sample-rate fallback. Mono/stereo sources
+are supported; unsupported rates and codecs produce a visible error. The engine
+attempts a matching physical bit depth when the driver advertises one, and shows
+the driver's actual format even when it differs. System mixing and hardware volume
+are still in the signal path. **Bit-perfect output has not been verified.**
+
+Playback uses the default output selected when a file opens. A disconnect or external
+sample-rate change during playback stops playback with an error; reopen the file
+after selecting a working output in macOS Sound settings. An in-app device picker,
+exclusive mode, gapless playback, and automatic recovery are later work. The previous
+device format is restored on file replacement, session cleanup, or app quit where
+the device still uses the rate Swar requested. Pause retains the current session.
+
+## Verification
+
+Build with Xcode, or from a terminal with Xcode's developer directory selected:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project swar.xcodeproj -scheme swar -destination 'platform=macOS' \
+  -derivedDataPath /tmp/swar-derived CODE_SIGNING_ALLOWED=NO build
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test \
+  --package-path Packages/SwarKit
+```
+
+The ordinary suite tests byte-exact packed 24-bit decoding and seeking, ALAC
+24-bit/96 kHz round-trip fidelity, content-based detection with a misleading
+extension, corrupt files, ring wraparound, concurrent sample order, end-of-file
+silence, and error-message persistence. Format tests cover quality boundaries,
+custom thresholds, lossy and DSD labels, conversions, unknown output, accessibility
+text, and the evidence required for a verified check. The ALAC test uses macOS's
+`afconvert`. At the format-chip milestone, the ordinary run passed 22 tests with
+hardware playback skipped; the current codec matrix is described below.
+
+The hardware test is opt-in: **it briefly plays a quiet generated tone and changes
+the default device rate**. Close other Swar instances before running it:
+
+```sh
+python3 Tools/make_audio_fixtures.py /tmp/swar-audio-fixtures
+SWAR_TEST_AUDIO_FILE=/tmp/swar-audio-fixtures/quiet-24bit-96k.m4a \
+SWAR_TEST_ALTERNATE_FILE=/tmp/swar-audio-fixtures/quiet-16bit-44k.m4a \
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test \
+  --package-path Packages/SwarKit --filter HardwarePlaybackTests
+```
+
+Verified during the playback milestone: nine tests passed including live 44.1 → 96 kHz switching,
+play/pause, seek while paused and playing, EOF, and original-rate restoration.
+The observed output was External Headphones, 32-bit float at 96 kHz. The sandboxed
+app also opened and played the generated ALAC through its file picker; Space,
+arrow-key seeking, and the accessible slider were checked.
+
+For chip visual checks, Debug builds provide a decode-only harness:
+
+```sh
+open /tmp/swar-derived/Build/Products/Debug/swar.app --args --format-chip-preview
+```
+
+Quit that copy before launching with the argument. The harness opens real files
+through the sandboxed file picker, decodes on a background task, and offers clearly
+labelled output simulations without opening an audio device. It is excluded from
+Release builds. Light/dark appearance, the stronger chip border, AAC and hi-res ALAC
+labels, conversion explanations, and accessibility labels were checked there.
+Full VoiceOver navigation and physical Bluetooth/AirPlay paths remain untested.
+
+Still unverified: physical DAC sample equality, a 24-bit integer-output DAC,
+hot-plug, sleep/wake, and long-running playback. Playlists, queue management,
+gapless playback, and exclusive output remain future work.
+
+## Codec support
+
+The native decoder covers ALAC, FLAC, integer/float WAV, AIFF/AIFC, CAF, AAC, and
+MP3. Native FLAC precision is recovered from STREAMINFO when AudioToolbox omits
+it. Bundled decoders add Vorbis, Opus, WavPack, Monkey's Audio, and WMA (including
+Lossless). Hybrid WavPack is labelled lossy; correction-file playback is not
+implemented. DSD is still a future feature.
+
+FFmpeg libraries are included in the project and embedded in Contents/Frameworks;
+the app does not require Homebrew or a command-line decoder. Headers and universal
+arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only build
+recipe, exact upstream source archive, notices, and license accompany the app.
+See [codec implementation and verification notes](Docs/Codecs.md).
+
+The library milestone adds seven regression tests, including a 50,001-row search
+and paging test. The full suite has 39 tests, including generated format matrices and optional
+complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
+references and seek positions against original samples. Integer lossless fixtures
+cover 44.1/16, 96/24, and 192/24; float PCM and WavPack are also tested. A signed,
+sandboxed app successfully opened Opus using its embedded libraries. Physical
+playback on every codec/device combination has not been checked.
