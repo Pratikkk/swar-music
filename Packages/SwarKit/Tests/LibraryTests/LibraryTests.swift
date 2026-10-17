@@ -46,7 +46,11 @@ struct LibraryTests {
         let scan = Task { @MainActor in try await scanner.scan(folder: folder, root: music) }
         // Await a worker without blocking the test's main actor. If inspection
         // runs on that actor, its bounded gate times out before we can resume.
-        let entered = await Task.detached { inspector.waitForEntry() }.value
+        let entered = await withCheckedContinuation { continuation in
+            // Do not block a cooperative executor thread waiting for inspectors
+            // that themselves need that executor on low-core CI runners.
+            Thread.detachNewThread { continuation.resume(returning: inspector.waitForEntry()) }
+        }
         #expect(entered)
         for _ in 0..<12 { inspector.permit.signal() }
         let summary = try await scan.value

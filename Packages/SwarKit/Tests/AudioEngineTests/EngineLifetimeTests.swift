@@ -13,7 +13,10 @@ struct EngineLifetimeTests {
         let released = DispatchSemaphore(value: 0)
         queue.async { entered.signal(); unblock.wait() }
         #expect(entered.wait(timeout: .now() + 2) == .success)
-        DispatchQueue.global().async {
+        // A global dispatch worker can be starved by the deliberately blocked
+        // queues in other tests on small CI runners. Give the releasing owner
+        // its own thread so that we test teardown, not helper scheduling.
+        Thread.detachNewThread {
             releasing.signal()
             owner.withLock { $0 = nil }
             released.signal()
