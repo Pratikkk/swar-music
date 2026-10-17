@@ -87,6 +87,7 @@ for **Play Next** or **Add to Queue**. The player has previous/next controls
 Previous restarts the current track after three seconds; otherwise it goes back.
 Shuffle mixes upcoming tracks while keeping the current track in place. The Repeat
 button cycles Off → All → One; manual Next still advances in Repeat One.
+The timer icon pauses playback after 15–120 minutes without changing volume or clearing the queue. The timer can be replaced or cancelled and is cleared when Swar quits.
 Queue entries that cannot open keep an error row while the player tries the next.
 See [queue behavior and verification](Docs/Queue.md).
 

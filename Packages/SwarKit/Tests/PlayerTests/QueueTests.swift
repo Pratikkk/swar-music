@@ -8,6 +8,118 @@ import Testing
 
 @MainActor
 struct QueueTests {
+    @Test func sleepTimerPausesWithoutClearingQueueOrSeeking() async throws {
+        let clock = TimerWaitGate()
+        let timer = SleepTimer(wait: { _ in await clock.wait() })
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine, sleepTimer: timer)
+        await player.play([entry("one"), entry("two")])
+        await player.seek(to: 4)
+        let queue = player.queue
+        timer.start(minutes: 15)
+        await clock.waitUntilScheduled(1)
+        #expect(timer.deadline != nil)
+        await clock.release(0)
+        try await waitForTimer { timer.deadline == nil }
+        #expect(!player.isPlaying && player.position == 4)
+        #expect(player.queue == queue && player.currentEntryID == queue.first?.id)
+        #expect(engine.sought == [4])
+        player.shutdown()
+    }
+
+    @Test func sleepTimerAtEndOfTrackDoesNotResumeOrRepeat() async throws {
+        let clock = TimerWaitGate()
+        let timer = SleepTimer(wait: { _ in await clock.wait() })
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine, sleepTimer: timer)
+        let entries = [entry("one"), entry("two")]
+        await player.play(entries)
+        player.setRepeatMode(.all)
+        timer.start(minutes: 15)
+        await clock.waitUntilScheduled(1)
+        engine.finish() // The displayed snapshot still says Playing.
+        await clock.release(0)
+        try await waitForTimer { timer.deadline == nil }
+        await player.refresh()
+        #expect(!player.isPlaying && player.currentEntryID == entries[0].id)
+        #expect(engine.opened.count == 1)
+        #expect(player.queue == entries)
+        player.shutdown()
+    }
+
+    @Test func cancelledAndReplacedSleepTimersCannotPausePlayback() async throws {
+        let clock = TimerWaitGate()
+        let timer = SleepTimer(wait: { _ in await clock.wait() })
+        let player = Player(engine: QueueTestEngine(), sleepTimer: timer)
+        await player.play([entry("one")])
+        timer.start(minutes: 15)
+        await clock.waitUntilScheduled(1)
+        timer.start(minutes: 30)
+        await clock.waitUntilScheduled(2)
+        let replacement = timer.deadline
+        await clock.release(0)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(player.isPlaying && timer.deadline == replacement)
+        timer.cancel()
+        await clock.release(1)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(player.isPlaying && timer.deadline == nil)
+        player.shutdown()
+    }
+
+    @Test func sleepTimerWaitsForOpeningAndCanBeCancelledDuringThatWait() async throws {
+        for cancel in [false, true] {
+            let clock = TimerWaitGate()
+            let openingGate = OpenGate()
+            let timer = SleepTimer(wait: { _ in await clock.wait() })
+            let player = Player(engine: QueueTestEngine(gate: openingGate), sleepTimer: timer)
+            let opening = Task { await player.play([entry("one")]) }
+            await openingGate.waitUntilBlocked()
+            timer.start(minutes: 15)
+            await clock.waitUntilScheduled(1)
+            await clock.release(0)
+            for _ in 0..<10 { await Task.yield() }
+            if cancel { timer.cancel() }
+            await openingGate.release()
+            await opening.value
+            if !cancel { try await waitForTimer { timer.deadline == nil } }
+            else { try await Task.sleep(for: .milliseconds(40)) }
+            #expect(player.isPlaying == cancel)
+            #expect(timer.deadline == nil)
+            player.shutdown()
+        }
+    }
+
+    @Test func sleepTimerNeverResumesPausedPlaybackAndShutdownCancelsIt() async throws {
+        let clock = TimerWaitGate()
+        let timer = SleepTimer(wait: { _ in await clock.wait() })
+        let player = Player(engine: QueueTestEngine(), sleepTimer: timer)
+        await player.play([entry("one")])
+        await player.togglePlayback()
+        timer.start(minutes: 15)
+        await clock.waitUntilScheduled(1)
+        await clock.release(0)
+        try await waitForTimer { timer.deadline == nil }
+        #expect(!player.isPlaying)
+        timer.start(minutes: 30)
+        await clock.waitUntilScheduled(2)
+        let deadline = timer.deadline
+        for minutes in [0, -1, 721, Int.max] { timer.start(minutes: minutes) }
+        #expect(timer.deadline == deadline)
+        player.shutdown()
+        await clock.release(1)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(timer.deadline == nil && !player.isPlaying && player.currentURL == nil)
+    }
+
+    private func waitForTimer(_ condition: @MainActor () -> Bool) async throws {
+        for _ in 0..<100 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(condition(), "Timer did not complete")
+    }
+
     @Test func systemArtworkCanBeRequestedFromABackgroundQueue() async throws {
         let context = try #require(CGContext(data: nil, width: 16, height: 16,
             bitsPerComponent: 8, bytesPerRow: 64, space: CGColorSpaceCreateDeviceRGB(),
@@ -628,4 +740,22 @@ private actor OpenGate {
     func start(handler: @escaping @MainActor (MediaCommand) async -> Bool) { starts += 1 }
     func update(_ state: MediaState, forceTimeline: Bool) { updates += 1; last = state }
     func stop() { stops += 1 }
+}
+
+/// The wait deliberately ignores cancellation: stale wakeups must still be safe.
+private actor TimerWaitGate {
+    private var waits: [CheckedContinuation<Void, Never>?] = []
+    private var observers: [(Int, CheckedContinuation<Void, Never>)] = []
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            waits.append(continuation)
+            for (_, observer) in observers.filter({ $0.0 <= waits.count }) { observer.resume() }
+            observers.removeAll { $0.0 <= waits.count }
+        }
+    }
+    func waitUntilScheduled(_ count: Int) async {
+        if waits.count >= count { return }
+        await withCheckedContinuation { observers.append((count, $0)) }
+    }
+    func release(_ index: Int) { waits[index]?.resume(); waits[index] = nil }
 }

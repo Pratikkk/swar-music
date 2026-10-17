@@ -62,6 +62,7 @@ public final class Player {
         return Array(queue.dropFirst(index + 1))
     }
 
+    public let sleepTimer: SleepTimer
     private let engine: any PlaybackDriving
     private let volumeController: any OutputVolumeControlling
     private let sessionStore: PlaybackSessionStore?
@@ -72,10 +73,28 @@ public final class Player {
     private var scopedAccess: ScopedFileAccess?
     private var generation = 0
 
-    public init(engine: any PlaybackDriving = AudioPlaybackEngine(), sessionStore: PlaybackSessionStore? = nil, volumeController: any OutputVolumeControlling = HardwareVolumeController()) {
+    public init(engine: any PlaybackDriving = AudioPlaybackEngine(), sessionStore: PlaybackSessionStore? = nil, volumeController: any OutputVolumeControlling = HardwareVolumeController(), sleepTimer: SleepTimer? = nil) {
         self.engine = engine
         self.sessionStore = sessionStore
         self.volumeController = volumeController
+        self.sleepTimer = sleepTimer ?? SleepTimer()
+        self.sleepTimer.onExpire = { [weak self] in await self?.pauseForSleepTimer() }
+    }
+
+    private func pauseForSleepTimer() async {
+        // A deadline may arrive during an open or seek. Wait for that operation,
+        // allowing cancellation/replacement to withdraw the pending pause.
+        while isBusy && !isShutDown {
+            do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+        }
+        guard !Task.isCancelled, !isShutDown, isPlaying else { return }
+        await control {
+            let snapshot = await self.engine.snapshot()
+            guard !Task.isCancelled, snapshot.isPlaying else { return snapshot }
+            return try await self.engine.togglePlayback()
+        }
+        // A finish snapshot racing this deadline must not trigger Repeat/Next.
+        if !Task.isCancelled { completionHandled = true }
     }
 
     public func refreshVolume() async {
@@ -445,6 +464,7 @@ public final class Player {
         guard !isShutDown else { return }
         mediaControls?.stop()
         mediaControls = nil
+        sleepTimer.cancel()
         isShutDown = true
         pendingVolume = nil
         pendingSeek = nil

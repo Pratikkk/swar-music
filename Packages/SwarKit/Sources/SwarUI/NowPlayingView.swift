@@ -17,6 +17,7 @@ struct NowPlayingView: View {
                     .help("Return to Library (Escape)")
                 Text("Now Playing").font(.headline)
                 Spacer()
+                SleepTimerMenu(timer: player.sleepTimer)
                 Toggle(isOn: $showQueue) {
                     Label("Up Next · \(player.upcomingEntries.count)", systemImage: "list.bullet")
                 }

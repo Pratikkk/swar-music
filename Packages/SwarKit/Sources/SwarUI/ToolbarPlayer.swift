@@ -87,6 +87,7 @@ struct ToolbarPlayer: View {
                 .accessibilityHint("Switch to Repeat " + nextRepeatMode.rawValue)
                 .help("Repeat: " + player.repeatMode.rawValue + " · Click for " + nextRepeatMode.rawValue)
                 .disabled(!player.canTogglePlayback || player.isBusy)
+                SleepTimerMenu(timer: player.sleepTimer)
             }
             .buttonStyle(PlaybackButtonStyle())
             .fixedSize(horizontal: true, vertical: false)
