@@ -10,12 +10,14 @@ public struct LibraryAlbumSummary: Identifiable, Sendable, Equatable {
     public let year: String?
     public let addedAt: Date
     public let duration: Double
+    public let losslessTrackCount: Int
 
     public init(title: String, artist: String, artworkKey: String?, trackCount: Int,
-                playableCount: Int, year: String? = nil, addedAt: Date = .distantPast, duration: Double = 0) {
+                playableCount: Int, year: String? = nil, addedAt: Date = .distantPast, duration: Double = 0, losslessTrackCount: Int = 0) {
         self.title = title; self.artist = artist; self.artworkKey = artworkKey
         self.trackCount = trackCount; self.playableCount = playableCount
         self.year = year; self.addedAt = addedAt; self.duration = duration
+        self.losslessTrackCount = losslessTrackCount
     }
 }
 

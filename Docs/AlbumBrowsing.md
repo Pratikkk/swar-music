@@ -10,6 +10,11 @@ playback and queue actions. Album identity includes album artist and title.
 
 The browser provides:
 
+- Inline Sort controls and saved All Albums / Lossless / Missing Artwork filters.
+  Lossless includes albums whose visible tracks all report a lossless source;
+  mixed-format albums remain intact in All Albums. Missing Artwork uses the
+  indexed artwork key. Counts reflect complete albums after filtering.
+
 - Artwork-size slider, saved between launches, with responsive grid columns.
 - Two-line titles, artist, release year, and song counts.
 - Title, artist, release-year (newest first), and recently-added sorting, plus
@@ -25,6 +30,28 @@ Only summaries are held for the collection. Tracks for a selected album or actio
 are fetched on demand. Search queries debounce and discard cancelled results.
 Playback position updates do not trigger album metadata queries. The browser does
 not introduce polling timers or load every song into view state.
+
+Sorting, filtering, counts, and calendar-month grouping are arranged on a dedicated
+serial actor, rather than on the UI actor. Results are retained until replacement
+and cancelled results are ignored. Group lookup uses month keys instead of repeated
+section searches. Unchanged summaries do not trigger another arrangement. Direct
+Home/context-menu navigation reuses the active metadata load instead of starting
+a second query, resets the album filter, and opens the complete album.
+
+Compact artwork uses smaller 256-pixel thumbnails; default and large grids use
+384 and 512 respectively, sharing the bounded cover cache. Sort/filter changes
+return to the top, while opening an album and Back retain the grid position.
+Database queries queued after cancellation skip their work. Scanning's blocking
+inspection uses a separate operation queue with four workers so slow file reads
+do not occupy Swift's cooperative executor; folder access stays retained until
+in-flight work finishes, including cancellation. No GitHub DMG build is triggered
+by these changes.
+
+The updated package suite passes 140 tests in 19 suites, including natural sorting,
+years/reverse, calendar boundaries, whole-album quality filtering, missing artwork,
+10,000-album arrangements, cancellation, and the existing complete-album search
+and background-scan responsiveness checks. These checks do not establish a measured
+scrolling FPS or CPU/battery improvement.
 
 ## Validation
 

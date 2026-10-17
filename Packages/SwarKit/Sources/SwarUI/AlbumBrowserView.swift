@@ -2,14 +2,6 @@ import SwiftUI
 import Library
 import Player
 
-enum AlbumSortOrder: String, CaseIterable, Identifiable {
-    case title = "Album Title"
-    case artist = "Artist"
-    case year = "Release Year"
-    case recentlyAdded = "Recently Added"
-    var id: Self { self }
-}
-
 @MainActor
 struct AlbumBrowserView: View {
     @Environment(\.swarDensity) private var density
@@ -18,8 +10,8 @@ struct AlbumBrowserView: View {
     let recent: Bool
     @Binding var selectedAlbum: String?
     @Binding var requestedAlbum: String?
-    let sortOrder: AlbumSortOrder
-    let reversed: Bool
+    @Binding var sortOrder: AlbumSortOrder
+    @Binding var reversed: Bool
     @Environment(\.floatingPlayerClearance) private var clearance
     @AppStorage("albumCoverSize") private var coverSize = 160.0
     @State private var albums: [LibraryAlbumSummary] = []
@@ -27,38 +19,28 @@ struct AlbumBrowserView: View {
     @State private var ready = false
     @State private var loadError: String?
     @State private var detailID: String?
-    @State private var albumSections: [(title: String, albums: [LibraryAlbumSummary])] = []
+    @AppStorage("albumBrowseFilter") private var filter: AlbumBrowseFilter = .all
+    @State private var arranger = AlbumBrowseArranger()
+    @State private var presentation: AlbumBrowseSnapshot?
+    @State private var albumRevision = 0
+    @State private var arranging = false
+    @State private var loadedKey: String?
+    @State private var loadGeneration = UUID()
+    private struct ArrangementKey: Hashable {
+        let revision: Int
+        let sort: AlbumSortOrder
+        let reversed: Bool
+        let recent: Bool
+        let filter: AlbumBrowseFilter
+    }
+    private var arrangementKey: ArrangementKey {
+        ArrangementKey(revision: albumRevision, sort: sortOrder, reversed: reversed, recent: recent, filter: filter)
+    }
     @State private var actionInProgress = false
 
     private var refreshKey: String {
         "\(library.isReady)-\(library.overviewRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)-\(library.searchScope)-\(library.search)"
     }
-    private var collectionSummary: String {
-        let songs = albums.reduce(0) { $0 + $1.trackCount }
-        return "\(albums.count) \(albums.count == 1 ? "album" : "albums") · \(songs) \(songs == 1 ? "song" : "songs")"
-    }
-    private var sortedAlbums: [LibraryAlbumSummary] {
-        let sorted = albums.sorted { a, b in
-            let order = recent ? .recentlyAdded : sortOrder
-            if order == .recentlyAdded, a.addedAt != b.addedAt { return a.addedAt > b.addedAt }
-            if order == .year {
-                let first = Int(a.year?.prefix(4) ?? "") ?? 0
-                let second = Int(b.year?.prefix(4) ?? "") ?? 0
-                if first != second { return first > second }
-            }
-            if order == .title {
-                let comparison = a.title.localizedStandardCompare(b.title)
-                if comparison != .orderedSame { return comparison == .orderedAscending }
-            }
-            let artist = a.artist.localizedStandardCompare(b.artist)
-            if artist != .orderedSame { return artist == .orderedAscending }
-            let title = a.title.localizedStandardCompare(b.title)
-            if title != .orderedSame { return title == .orderedAscending }
-            return a.id < b.id
-        }
-        return !recent && reversed ? sorted.reversed() : sorted
-    }
-
     var body: some View {
         ZStack {
             // Keep the grid mounted to preserve its scroll position when returning from details.
@@ -70,20 +52,12 @@ struct AlbumBrowserView: View {
                 } else { ProgressView("Opening album…") }
             }
         }
-        .task(id: requestedAlbum) {
-            guard let id = requestedAlbum else { return }
-            await reload()
-            guard !Task.isCancelled, requestedAlbum == id else { return }
-            if albums.contains(where: { $0.id == id }) { selectedAlbum = id }
-            requestedAlbum = nil
-        }
         .task(id: refreshKey) { await reload() }
+        .task(id: arrangementKey) { await arrange() }
         .task(id: "\(selectedAlbum ?? "")-\(refreshKey)-\(ready)") { await loadDetail() }
         .onChange(of: library.search) { selectedAlbum = nil }
         .onChange(of: library.searchScope) { selectedAlbum = nil }
-        .onChange(of: recent) { rebuildSections() }
-        .onChange(of: sortOrder) { rebuildSections() }
-        .onChange(of: reversed) { rebuildSections() }
+        .onChange(of: requestedAlbum) { openRequestedAlbum() }
     }
 
     private var grid: some View {
@@ -92,10 +66,22 @@ struct AlbumBrowserView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(recent ? "Recent arrivals" : "Albums")
                         .font(.system(size: 26, weight: .semibold, design: .serif))
-                    Text(collectionSummary)
+                    Text(presentation?.summary ?? "")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 12)
+                ZStack {
+                    if arranging { ProgressView().controlSize(.small).accessibilityLabel("Updating albums") }
+                }.frame(width: 14, height: 14)
+                if !recent {
+                    Menu {
+                        Picker("Sort by", selection: $sortOrder) {
+                            ForEach(AlbumSortOrder.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        Toggle("Reverse Order", isOn: $reversed)
+                    } label: { Label("Sort", systemImage: "arrow.up.arrow.down") }
+                    .fixedSize().accessibilityLabel("Sort albums")
+                }
                 HStack(spacing: 8) {
                     Image(systemName: "square.grid.3x3").foregroundStyle(.secondary)
                     Slider(value: $coverSize, in: 120...220, step: 20).frame(width: 90)
@@ -103,6 +89,11 @@ struct AlbumBrowserView: View {
                     Image(systemName: "square.grid.2x2").foregroundStyle(.secondary)
                 }
             }.padding(.horizontal, 28).padding(.vertical, 16)
+            Picker("Filter albums", selection: $filter) {
+                ForEach(AlbumBrowseFilter.allCases) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented).labelsHidden()
+                .frame(maxWidth: 380).frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 28).padding(.bottom, 12)
             if let error = library.errorMessage {
                 HStack {
                     Label(error, systemImage: "exclamationmark.triangle").lineLimit(2)
@@ -124,27 +115,29 @@ struct AlbumBrowserView: View {
                 } description: { Text(loadError) } actions: {
                     Button("Try Again") { Task { await reload() } }
                 }
-            } else if !ready {
+            } else if !ready || presentation == nil {
                 ProgressView("Loading albums…").frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if albums.isEmpty {
+            } else if presentation?.albumCount == 0 {
                 ContentUnavailableView {
-                    Label(TrackSearchQuery(library.search).isEmpty ? "No Albums Yet" : "No Matching Albums", systemImage: "square.stack")
+                    Label(filter != .all ? "No Matching Albums" : TrackSearchQuery(library.search).isEmpty ? "No Albums Yet" : "No Matching Albums", systemImage: "square.stack")
                 } description: {
-                    Text(TrackSearchQuery(library.search).isEmpty ? "Add a music folder to start your collection." : "Try a different album, artist, or song.")
+                    Text(filter != .all ? "Try another filter or search." : TrackSearchQuery(library.search).isEmpty ? "Add a music folder to start your collection." : "Try a different album, artist, or song.")
                 } actions: {
-                    if !TrackSearchQuery(library.search).isEmpty { Button("Clear Search") { library.search = "" } }
+                    if filter != .all { Button("Show All Albums") { filter = .all } }
+                    else if !TrackSearchQuery(library.search).isEmpty { Button("Clear Search") { library.search = "" } }
                     else { SettingsLink { Text("Music Folder Settings…") } }
                 }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 20) {
-                            ForEach(albumSections, id: \.title) { section in
+                            ForEach(presentation?.sections ?? []) { section in
                                 if recent { Text(section.title).font(.system(size: 17, weight: .semibold)).padding(.top, 8) }
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: max(120, min(220, coverSize))), spacing: density.gridGap, alignment: .top)], alignment: .leading, spacing: density.gridGap + 4) {
                                     ForEach(section.albums) { album in
                                         AlbumBrowserCard(album: album, artworkURL: library.artworkURL(album.artworkKey),
                                             busy: player.isBusy || actionInProgress,
+                                            maximumPixels: coverSize <= 140 ? 256 : coverSize >= 200 ? 512 : 384,
                                             open: { selectedAlbum = album.id },
                                             play: { perform(album) })
                                             .albumActions(library: library, player: player, album: album).id(album.id)
@@ -159,35 +152,50 @@ struct AlbumBrowserView: View {
                     .onChange(of: recent) { proxy.scrollTo("album-grid-top", anchor: .top) }
                     .onChange(of: sortOrder) { proxy.scrollTo("album-grid-top", anchor: .top) }
                     .onChange(of: reversed) { proxy.scrollTo("album-grid-top", anchor: .top) }
+                    .onChange(of: filter) { proxy.scrollTo("album-grid-top", anchor: .top) }
                 }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func rebuildSections() {
-        guard recent else { albumSections = [("Albums", sortedAlbums)]; return }
-        var result: [(title: String, albums: [LibraryAlbumSummary])] = []
-        for album in sortedAlbums {
-            let title = Calendar.current.isDate(album.addedAt, equalTo: Date(), toGranularity: .month)
-                ? "This Month" : album.addedAt.formatted(.dateTime.month(.wide).year())
-            if let index = result.firstIndex(where: { $0.title == title }) { result[index].albums.append(album) }
-            else { result.append((title, [album])) }
+    private func arrange() async {
+        guard ready else { return }
+        let key = arrangementKey
+        arranging = true
+        do {
+            let result = try await arranger.arrange(albums, sort: key.sort, reversed: key.reversed,
+                                                   recent: key.recent, filter: key.filter)
+            guard !Task.isCancelled, key == arrangementKey else { return }
+            presentation = result; arranging = false
+        } catch is CancellationError { }
+        catch { guard !Task.isCancelled else { return }; arranging = false; loadError = error.localizedDescription }
+    }
+
+    private func openRequestedAlbum() {
+        guard ready, loadedKey == refreshKey, let id = requestedAlbum else { return }
+        if albums.contains(where: { $0.id == id }) {
+            filter = .all
+            selectedAlbum = id
         }
-        albumSections = result
+        requestedAlbum = nil
     }
 
     private func reload() async {
         guard library.isReady else { return }
+        let key = refreshKey, generation = UUID()
+        loadGeneration = generation
         do {
             let query = library.search, scope = library.searchScope
             // The existing root debounces song queries; this browser owns its independent metadata query.
             if ready { try await Task.sleep(for: .milliseconds(200)) }
             let result = try await library.albums(search: query, scope: scope)
-            guard !Task.isCancelled else { return }
-            albums = result; rebuildSections(); ready = true; loadError = nil
+            guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }
+            if !ready || albums != result { albums = result; albumRevision += 1 }
+            ready = true; loadError = nil; loadedKey = key
             if let selectedAlbum, !result.contains(where: { $0.id == selectedAlbum }) { self.selectedAlbum = nil }
+            openRequestedAlbum()
         } catch is CancellationError { }
-        catch { guard !Task.isCancelled else { return }; loadError = error.localizedDescription; ready = true; selectedAlbum = nil }
+        catch { guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }; loadError = error.localizedDescription; ready = true; selectedAlbum = nil }
     }
 
     private func loadDetail() async {
@@ -202,7 +210,7 @@ struct AlbumBrowserView: View {
     private func detail(_ album: LibraryAlbumSummary) -> some View {
         AlbumDetailView(title: album.title, artist: album.artist, tracks: detailTracks,
             artworkURL: library.artworkURL(album.artworkKey), player: player, library: library,
-            playlists: library.playlists, isCurrent: isCurrent,
+            playlists: library.manualPlaylists, isCurrent: isCurrent,
             playAlbum: { shuffle in Task { await play(detailTracks, shuffle: shuffle) } },
             playTrack: { track in
                 Task {
@@ -252,6 +260,7 @@ private struct AlbumBrowserCard: View {
     let album: LibraryAlbumSummary
     let artworkURL: URL?
     let busy: Bool
+    let maximumPixels: Int
     let open: () -> Void
     let play: () -> Void
     @State private var hovered = false
@@ -261,7 +270,7 @@ private struct AlbumBrowserCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
-                Button(action: open) { CoverArt(url: artworkURL, title: album.title, cornerRadius: 10) }
+                Button(action: open) { CoverArt(url: artworkURL, title: album.title, cornerRadius: 10, maximumPixelSize: maximumPixels) }
                     .buttonStyle(.plain).focused($focus, equals: .cover).accessibilityLabel("Open \(album.title), \(album.artist)")
                 Button(action: play) {
                     Image(systemName: "play.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)

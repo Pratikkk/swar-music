@@ -16,6 +16,15 @@ public struct ScanSummary: Sendable {
 }
 
 public struct LibraryScanner: Sendable {
+    // File decoding and network-volume I/O may block. Do not occupy Swift's
+    // cooperative executor threads while waiting on them, especially on small Macs.
+    private static let inspectionQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "catto.swar.library-inspection"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 4
+        return queue
+    }()
     private let repository: LibraryRepository
     private let inspector: any MediaInspecting
     public init(repository: LibraryRepository, artworkDirectory: URL, codecDirectory: URL? = nil) {
@@ -64,9 +73,19 @@ public struct LibraryScanner: Sendable {
             func enqueue(_ file: ScanFile) {
                 group.addTask { [inspector] in
                     try Task.checkCancellation()
-                    return autoreleasepool {
-                        inspector.inspect(file: file, folder: folder, prior: prior[file.relativePath])
+                    let fingerprint = prior[file.relativePath]
+                    let track = await withCheckedContinuation { continuation in
+                        Self.inspectionQueue.addOperation {
+                            let track = autoreleasepool {
+                                inspector.inspect(file: file, folder: folder, prior: fingerprint)
+                            }
+                            continuation.resume(returning: track)
+                        }
                     }
+                    // Keep structured lifetime/file access until an in-flight
+                    // blocking operation completes, then propagate cancellation.
+                    try Task.checkCancellation()
+                    return track
                 }
             }
             while index < min(4, pending.count) { enqueue(pending[index]); index += 1 }

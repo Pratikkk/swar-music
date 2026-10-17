@@ -303,7 +303,7 @@ public struct LibraryView: View {
             } else if selection == .section(.albums) || selection == .section(.recentlyAdded) {
                 AlbumBrowserView(library: library, player: player,
                     recent: selection == .section(.recentlyAdded), selectedAlbum: $selectedAlbum, requestedAlbum: $requestedAlbum,
-                    sortOrder: albumSortOrder, reversed: reverseAlbumSort)
+                    sortOrder: $albumSortOrder, reversed: $reverseAlbumSort)
             } else {
                 let sectionName: String = {
                     if case .section(let s) = selection {

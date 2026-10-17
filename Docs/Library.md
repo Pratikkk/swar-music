@@ -28,7 +28,10 @@ The scan entry point is explicitly nonisolated, with `@concurrent` on Swift 6.2+
 to move the complete scan off the caller's actor even when caller-isolated async
 defaults are enabled. Earlier Swift compilers use their existing nonisolated
 async executor behavior. Enumeration retains its detached utility task and explicit
-cancellation forwarding. Four structured inspection workers remain bounded, and
+cancellation forwarding. Four structured inspection workers await a shared,
+four-operation utility queue for blocking decode, metadata, and artwork work.
+This prevents slow I/O from occupying cooperative executor threads. In-flight
+operations finish before cancellation propagates and folder access is released;
 only progress/model publication hops back to MainActor.
 
 A main-actor regression test scans twelve real files through gated inspectors.

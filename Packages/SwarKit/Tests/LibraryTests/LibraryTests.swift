@@ -474,6 +474,7 @@ extension LibraryTests {
         var second = first
         second.id = "second"; second.title = "Other"; second.trackNumber = 2; second.duration = 60
         second.error = "Unavailable"; second.artworkKey = "cover"; second.addedAt = Date(timeIntervalSince1970: 20)
+        second.isLossless = false
         var third = first
         third.id = "third"; third.albumArtist = "Artist B"; third.year = nil
         try await repository.saveTracks([first, second, third])
@@ -481,6 +482,9 @@ extension LibraryTests {
         #expect(albums.count == 2)
         let album = try #require(albums.first { $0.artist == "Artist A" })
         #expect(album.trackCount == 2 && album.playableCount == 1)
+        #expect(album.losslessTrackCount == 1)
+        let lossless = try await AlbumBrowseArranger().arrange(albums, sort: .artist, reversed: false, recent: false, filter: .lossless)
+        #expect(lossless.sections[0].albums.map(\.artist) == ["Artist B"])
         #expect(album.duration == 90 && album.year == "2020" && album.artworkKey == "cover")
         #expect(album.addedAt == Date(timeIntervalSince1970: 20))
         #expect(try await repository.albumTracks(artist: album.artist, title: album.title).count == 2)

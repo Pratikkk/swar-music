@@ -122,6 +122,7 @@ public final class LibraryModel {
             for folder in folders {
                 guard !isShutDown, !Task.isCancelled else { return }
                 guard let scope = scopes[folder.id] else { continue }
+                defer { withExtendedLifetime(scope) {} }
                 do {
                     let scanner = LibraryScanner(repository: repository, artworkDirectory: artworkDirectory, codecDirectory: codecDirectory)
                     _ = try await scanner.scan(folder: folder, root: scope.url) { [weak self] update in
