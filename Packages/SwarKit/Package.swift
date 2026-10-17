@@ -22,6 +22,7 @@ let package = Package(
         .target(name: "Library", dependencies: ["Decoding", .product(name: "GRDB", package: "GRDB.swift")]),
         .target(name: "Player", dependencies: ["AudioEngine", "FormatInfo", "Library"]),
         .target(name: "SwarUI", dependencies: ["Player", "FormatInfo", "Decoding", "Library"]),
+        .testTarget(name: "SwarUITests", dependencies: ["SwarUI"]),
         .testTarget(name: "LibraryTests", dependencies: ["Library", "Decoding"], resources: [.copy("Fixtures")]),
         .testTarget(name: "FormatInfoTests", dependencies: ["FormatInfo", "Decoding"]),
         .testTarget(name: "DecodingTests", dependencies: ["Decoding"], resources: [.copy("Fixtures")]),

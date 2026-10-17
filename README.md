@@ -48,7 +48,7 @@ Up Next. The player shows title and artist/album, with transport controls and a 
 Missing artwork uses a consistent tinted music-note placeholder. Local thumbnails
 load off the main actor and share a bounded memory cache. Files opened directly also
 read their tags and embedded/folder covers without importing them into the library.
-See [artwork UI notes](Docs/Artwork.md).
+See [artwork UI notes](Docs/Artwork.md) and [scrolling performance](Docs/ScrollingPerformance.md).
 
 Click the player’s cover, or press **⇧⌘N**, to open Now Playing with larger artwork,
 song details, format information, and playback controls. **Up Next** opens beside

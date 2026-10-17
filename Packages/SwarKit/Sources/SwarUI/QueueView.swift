@@ -76,7 +76,7 @@ struct QueueView: View {
 
     private func row(_ entry: QueueEntry) -> some View {
         HStack(spacing: 10) {
-            CoverArt(url: entry.artworkURL, title: entry.subtitle.isEmpty ? entry.title : entry.subtitle)
+            CoverArt(url: entry.artworkURL, title: entry.subtitle.isEmpty ? entry.title : entry.subtitle, maximumPixelSize: 128)
                 .frame(width: 40, height: 40)
             VStack(alignment: .leading, spacing: 3) {
             Text(entry.title).fontWeight(.medium).lineLimit(1)

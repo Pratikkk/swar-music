@@ -8,8 +8,6 @@ struct ToolbarPlayer: View {
     let openNowPlaying: () -> Void
     @State private var showQueue = false
     @State private var showActivity = false
-    @State private var scrubbing = false
-    @State private var seekPosition: Double = 0
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -77,7 +75,7 @@ struct ToolbarPlayer: View {
             .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button(action: openNowPlaying) {
-                    CoverArt(url: player.artworkURL, title: player.subtitle, cornerRadius: 3)
+                    CoverArt(url: player.artworkURL, title: player.subtitle, cornerRadius: 3, maximumPixelSize: 128)
                         .frame(width: 42, height: 42)
                         .overlay(alignment: .bottomTrailing) {
                             ProgressView().controlSize(.mini)
@@ -100,18 +98,7 @@ struct ToolbarPlayer: View {
                         }.lineLimit(1).truncationMode(.tail)
                             .frame(minWidth: 0, maxWidth: .infinity)
                     }.buttonStyle(.plain).accessibilityLabel("Open Now Playing")
-                    Slider(value: Binding(get: { scrubbing ? seekPosition : player.position }, set: { seekPosition = $0 }),
-                           in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
-                        if editing { seekPosition = player.position }
-                        scrubbing = editing
-                        if !editing { Task { await player.seek(to: seekPosition) } }
-                    })
-                    .controlSize(.mini).accessibilityLabel("Playback position")
-                    .accessibilityValue("\(Int(player.position)) of \(Int(player.duration)) seconds")
-                    // Ignore conflicting input without fading the whole seek bar
-                    // each time the decoder opens a different song.
-                    .disabled(player.duration == 0)
-                    .allowsHitTesting(!player.isBusy || player.isSeeking)
+                    FloatingPlayerSeekBar(player: player)
                 }
                 .frame(minWidth: 0, maxWidth: .infinity)
             }
@@ -123,5 +110,37 @@ struct ToolbarPlayer: View {
                 .popover(isPresented: $showQueue) { QueueView(player: player) }
         }
         .buttonStyle(.borderless).padding(.horizontal, 16).frame(height: 56)
+    }
+}
+
+/// Playback clock updates only invalidate this small control, leaving the glass
+/// bar, artwork, transport buttons and the scrolling library out of that update.
+@MainActor
+private struct FloatingPlayerSeekBar: View {
+    let player: Player
+    @State private var scrubbing = false
+    @State private var seekPosition = 0.0
+    @State private var seekURL: URL?
+
+    var body: some View {
+        Slider(value: Binding(get: { scrubbing ? seekPosition : player.position }, set: { seekPosition = $0 }),
+               in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
+            if editing {
+                seekURL = player.currentURL
+                scrubbing = true
+            } else {
+                let target = seekPosition
+                scrubbing = false
+                guard let seekURL, seekURL == player.currentURL, player.duration > 0, !player.isBusy else { return }
+                Task { await player.seek(to: target) }
+            }
+        })
+        .controlSize(.mini).accessibilityLabel("Playback position")
+        .accessibilityValue("\(Int(player.position)) of \(Int(player.duration)) seconds")
+        .disabled(player.duration == 0)
+        .allowsHitTesting(!player.isBusy || player.isSeeking)
+        .onAppear { seekPosition = player.position }
+        .onChange(of: player.position) { _, position in if !scrubbing { seekPosition = position } }
+        .onChange(of: player.currentURL) { scrubbing = false; seekURL = nil; seekPosition = player.position }
     }
 }

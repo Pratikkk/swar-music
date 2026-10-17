@@ -1,5 +1,4 @@
 import SwiftUI
-import ImageIO
 
 /// Shared local thumbnail view; decoding and the bounded memory cache live off the UI actor.
 struct CoverArt: View {
@@ -8,9 +7,10 @@ struct CoverArt: View {
     var title = ""
     var cornerRadius: CGFloat = 6
     var crossfade = false
+    var maximumPixelSize = 384
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cover: CoverBitmap?
-    @State private var loadedURL: URL?
+    @State private var loadedRequest: CoverRequest?
 
     private var tint: Color {
         let colors: [Color] = [.indigo, .teal, .purple, .blue, .orange, palette.accent]
@@ -19,59 +19,40 @@ struct CoverArt: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let request = url.map { CoverRequest(url: $0, pixels: maximumPixelSize) }
+            let cached = request.flatMap { CoverCache.shared.cached($0) }
+            let bitmap = cached ?? (loadedRequest == request || crossfade ? cover : nil)
             ZStack {
-                LinearGradient(colors: [tint.opacity(0.2), tint.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                if let cover, crossfade || loadedURL == url {
-                    Image(decorative: cover.image, scale: 1).resizable().scaledToFill()
-                        .id(loadedURL).transition(.opacity)
+                if let bitmap {
+                    if crossfade {
+                        Image(decorative: bitmap.image, scale: 1).resizable().scaledToFill()
+                            .id(ObjectIdentifier(bitmap)).transition(.opacity)
+                    } else {
+                        Image(decorative: bitmap.image, scale: 1).resizable().scaledToFill()
+                    }
                 } else {
+                    LinearGradient(colors: [tint.opacity(0.2), tint.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
                     Image(systemName: "music.note")
                         .font(.system(size: min(geometry.size.width, geometry.size.height) * 0.36, weight: .medium))
                         .foregroundStyle(tint.opacity(0.7))
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay { RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5) }
+            .animation(crossfade && !reduceMotion ? .easeInOut(duration: 0.18) : nil, value: loadedRequest)
+            .task(id: request) {
+                guard let request else { cover = nil; loadedRequest = nil; return }
+                guard loadedRequest != request else { return }
+                // The view already displays a synchronous cache hit; retain it for
+                // crossfades without waiting for the background decoder actor.
+                if let cached { cover = cached; loadedRequest = request; return }
+                let result = await CoverCache.shared.image(for: request)
+                guard !Task.isCancelled else { return }
+                cover = result; loadedRequest = request
+            }
         }
-        .animation(crossfade && !reduceMotion ? .easeInOut(duration: 0.18) : nil, value: loadedURL)
         .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)
-        .task(id: url) {
-            guard let url else {
-                cover = nil; loadedURL = nil
-                return
-            }
-            guard loadedURL != url else { return }
-            let result = await CoverCache.shared.image(for: url)
-            guard !Task.isCancelled else { return }
-            cover = result; loadedURL = url
-        }
-    }
-}
-
-private final class CoverBitmap: NSObject, @unchecked Sendable {
-    let image: CGImage
-    init(_ image: CGImage) { self.image = image }
-}
-
-private actor CoverCache {
-    static let shared = CoverCache()
-    private let images = NSCache<NSURL, CoverBitmap>()
-    init() { images.countLimit = 256; images.totalCostLimit = 32 * 1024 * 1024 }
-
-    func image(for url: URL) -> CoverBitmap? {
-        if let cached = images.object(forKey: url as NSURL) { return cached }
-        guard url.isFileURL, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceThumbnailMaxPixelSize: 384,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceShouldCacheImmediately: true
-              ] as CFDictionary) else { return nil }
-        let cover = CoverBitmap(image)
-        images.setObject(cover, forKey: url as NSURL, cost: image.bytesPerRow * image.height)
-        return cover
     }
 }

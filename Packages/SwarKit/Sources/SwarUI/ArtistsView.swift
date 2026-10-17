@@ -11,7 +11,8 @@ private struct ArtistCollection: Identifiable {
     var id: String { name }
     let name: String
     let albums: [ArtistAlbum]
-    var tracks: [LibraryTrack] { albums.flatMap(\.tracks) }
+    let tracks: [LibraryTrack]
+    let artworkKey: String?
 }
 
 private struct ArtistAlbum: Identifiable {
@@ -33,8 +34,10 @@ struct ArtistsView: View {
     @State private var selection: ArtistSelection? = .all
     @FocusState private var artistListFocused: Bool
 
-    private var artists: [ArtistCollection] {
-        Dictionary(grouping: library.tracks, by: { $0.albumArtist.isEmpty ? $0.artist : $0.albumArtist })
+    @State private var artists: [ArtistCollection] = []
+
+    private func rebuildArtists(_ tracks: [LibraryTrack]) {
+        artists = Dictionary(grouping: tracks, by: { $0.albumArtist.isEmpty ? $0.artist : $0.albumArtist })
             .map { name, tracks in
                 let albums = Dictionary(grouping: tracks, by: \.album).map { title, tracks in
                     ArtistAlbum(title: title, tracks: tracks.sorted {
@@ -43,9 +46,12 @@ struct ArtistsView: View {
                         return $0.title.localizedStandardCompare($1.title) == .orderedAscending
                     })
                 }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-                return ArtistCollection(name: name, albums: albums)
+                let ordered = albums.flatMap(\.tracks)
+                return ArtistCollection(name: name, albums: albums, tracks: ordered,
+                    artworkKey: ordered.first(where: { $0.artworkKey != nil })?.artworkKey)
             }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if case .artist(let name) = selection, !artists.contains(where: { $0.name == name }) { selection = .all }
     }
 
     private var visibleArtists: [ArtistCollection] {
@@ -74,9 +80,7 @@ struct ArtistsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onChange(of: artists.map(\.id)) { _, ids in
-            if case .artist(let name) = selection, !ids.contains(name) { selection = .all }
-        }
+        .onChange(of: library.tracks, initial: true) { _, tracks in rebuildArtists(tracks) }
     }
 
     private var artistList: some View {
@@ -93,7 +97,7 @@ struct ArtistsView: View {
                     ForEach(artists) { artist in
                         selectionRow(.artist(artist.name)) {
                             HStack(spacing: 9) {
-                                CoverArt(url: library.artworkURL(artist.tracks.compactMap(\.artworkKey).first), title: artist.name)
+                                CoverArt(url: library.artworkURL(artist.artworkKey), title: artist.name, maximumPixelSize: 128)
                                     .frame(width: 36, height: 36).clipShape(Circle())
                                 Text(artist.name).font(.system(size: 12)).lineLimit(1)
                             }
@@ -141,7 +145,7 @@ struct ArtistsView: View {
     }
 
     private func artistSection(_ artist: ArtistCollection, compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 24) {
+        LazyVStack(alignment: .leading, spacing: 24) {
             HStack(spacing: 10) {
                 Text(artist.name).font(.system(size: compact ? 21 : 24, weight: .bold))
                     .lineLimit(1).help(artist.name).frame(maxWidth: .infinity, alignment: .leading)
@@ -218,7 +222,7 @@ struct ArtistsView: View {
     }
 
     private func songs(_ album: ArtistAlbum) -> some View {
-        VStack(spacing: 0) {
+        LazyVStack(spacing: 0) {
             Divider()
             ForEach(Array(album.tracks.enumerated()), id: \.element.id) { index, track in
                 if index > 0, track.discNumber != album.tracks[index - 1].discNumber {

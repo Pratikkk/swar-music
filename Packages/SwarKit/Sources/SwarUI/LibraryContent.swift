@@ -185,7 +185,7 @@ private struct ArtworkPlaybackButton: View {
 
     var body: some View {
         Button(action: action) {
-            CoverArt(url: url, title: album)
+            CoverArt(url: url, title: album, maximumPixelSize: 128)
                 .frame(width: density.artworkSize, height: density.artworkSize)
                 .overlay {
                     RoundedRectangle(cornerRadius: 6).fill(.black.opacity(hovered ? 0.12 : 0))

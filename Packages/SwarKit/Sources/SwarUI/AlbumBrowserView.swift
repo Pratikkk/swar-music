@@ -26,7 +26,7 @@ struct AlbumBrowserView: View {
     @State private var ready = false
     @State private var loadError: String?
     @State private var detailID: String?
-    @State private var scrollPosition: String?
+    @State private var albumSections: [(title: String, albums: [LibraryAlbumSummary])] = []
     @State private var actionInProgress = false
 
     private var refreshKey: String {
@@ -71,9 +71,11 @@ struct AlbumBrowserView: View {
         }
         .task(id: refreshKey) { await reload() }
         .task(id: "\(selectedAlbum ?? "")-\(refreshKey)-\(ready)") { await loadDetail() }
-        .onChange(of: library.search) { selectedAlbum = nil; scrollPosition = nil }
-        .onChange(of: library.searchScope) { selectedAlbum = nil; scrollPosition = nil }
-        .onChange(of: recent) { scrollPosition = nil }
+        .onChange(of: library.search) { selectedAlbum = nil }
+        .onChange(of: library.searchScope) { selectedAlbum = nil }
+        .onChange(of: recent) { rebuildSections() }
+        .onChange(of: sortOrder) { rebuildSections() }
+        .onChange(of: reversed) { rebuildSections() }
     }
 
     private var grid: some View {
@@ -126,28 +128,36 @@ struct AlbumBrowserView: View {
                     else { SettingsLink { Text("Music Folder Settings…") } }
                 }
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 20) {
-                        ForEach(sections, id: \.title) { section in
-                            if recent { Text(section.title).font(.system(size: 17, weight: .semibold)).padding(.top, 8) }
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: max(120, min(220, coverSize))), spacing: density.gridGap, alignment: .top)], alignment: .leading, spacing: density.gridGap + 4) {
-                                ForEach(section.albums) { album in
-                                    AlbumBrowserCard(album: album, artworkURL: library.artworkURL(album.artworkKey),
-                                        busy: player.isBusy || actionInProgress,
-                                        open: { selectedAlbum = album.id },
-                                        play: { perform(album, action: .play(false)) })
-                                        .contextMenu { albumMenu(album) }.id(album.id)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 20) {
+                            ForEach(albumSections, id: \.title) { section in
+                                if recent { Text(section.title).font(.system(size: 17, weight: .semibold)).padding(.top, 8) }
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: max(120, min(220, coverSize))), spacing: density.gridGap, alignment: .top)], alignment: .leading, spacing: density.gridGap + 4) {
+                                    ForEach(section.albums) { album in
+                                        AlbumBrowserCard(album: album, artworkURL: library.artworkURL(album.artworkKey),
+                                            busy: player.isBusy || actionInProgress,
+                                            open: { selectedAlbum = album.id },
+                                            play: { perform(album, action: .play(false)) })
+                                            .contextMenu { albumMenu(album) }.id(album.id)
+                                    }
                                 }
-                            }.scrollTargetLayout()
-                        }
-                    }.padding(.horizontal, 28).padding(.top, 8).padding(.bottom, clearance + 24)
-                }.scrollPosition(id: $scrollPosition, anchor: .top)
+                            }
+                        }.padding(.horizontal, 28).padding(.top, 8).padding(.bottom, clearance + 24)
+                            .id("album-grid-top")
+                    }
+                    .onChange(of: library.search) { proxy.scrollTo("album-grid-top", anchor: .top) }
+                    .onChange(of: library.searchScope) { proxy.scrollTo("album-grid-top", anchor: .top) }
+                    .onChange(of: recent) { proxy.scrollTo("album-grid-top", anchor: .top) }
+                    .onChange(of: sortOrder) { proxy.scrollTo("album-grid-top", anchor: .top) }
+                    .onChange(of: reversed) { proxy.scrollTo("album-grid-top", anchor: .top) }
+                }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private var sections: [(title: String, albums: [LibraryAlbumSummary])] {
-        guard recent else { return [("Albums", sortedAlbums)] }
+    private func rebuildSections() {
+        guard recent else { albumSections = [("Albums", sortedAlbums)]; return }
         var result: [(title: String, albums: [LibraryAlbumSummary])] = []
         for album in sortedAlbums {
             let title = Calendar.current.isDate(album.addedAt, equalTo: Date(), toGranularity: .month)
@@ -155,7 +165,7 @@ struct AlbumBrowserView: View {
             if let index = result.firstIndex(where: { $0.title == title }) { result[index].albums.append(album) }
             else { result.append((title, [album])) }
         }
-        return result
+        albumSections = result
     }
 
     @ViewBuilder private func albumMenu(_ album: LibraryAlbumSummary) -> some View {
@@ -183,7 +193,7 @@ struct AlbumBrowserView: View {
             if ready { try await Task.sleep(for: .milliseconds(200)) }
             let result = try await library.albums(search: query, scope: scope)
             guard !Task.isCancelled else { return }
-            albums = result; ready = true; loadError = nil
+            albums = result; rebuildSections(); ready = true; loadError = nil
             if let selectedAlbum, !result.contains(where: { $0.id == selectedAlbum }) { self.selectedAlbum = nil }
         } catch is CancellationError { }
         catch { guard !Task.isCancelled else { return }; loadError = error.localizedDescription; ready = true; selectedAlbum = nil }

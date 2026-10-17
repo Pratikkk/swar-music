@@ -223,7 +223,7 @@ struct CollectionManagerView: View {
         Table(tracks, selection: $selected) {
             TableColumn("Song") { track in
                 HStack(spacing: 9) {
-                    CoverArt(url: library.artworkURL(track.artworkKey), title: track.album, cornerRadius: 5).frame(width: density == .compact ? 24 : 30, height: density == .compact ? 24 : 30)
+                    CoverArt(url: library.artworkURL(track.artworkKey), title: track.album, cornerRadius: 5, maximumPixelSize: 128).frame(width: density == .compact ? 24 : 30, height: density == .compact ? 24 : 30)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(track.title).fontWeight(.medium).lineLimit(1)
                         Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
