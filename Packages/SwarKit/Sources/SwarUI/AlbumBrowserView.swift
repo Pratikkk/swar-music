@@ -77,9 +77,9 @@ struct AlbumBrowserView: View {
                     Menu {
                         Picker("Sort by", selection: $sortOrder) {
                             ForEach(AlbumSortOrder.allCases) { Text($0.rawValue).tag($0) }
-                        }
+                        }.pickerStyle(.inline)
                         Toggle("Reverse Order", isOn: $reversed)
-                    } label: { Label("Sort", systemImage: "arrow.up.arrow.down") }
+                    } label: { Label(sortOrder.rawValue, systemImage: "arrow.up.arrow.down") }
                     .fixedSize().accessibilityLabel("Sort albums")
                 }
                 HStack(spacing: 8) {

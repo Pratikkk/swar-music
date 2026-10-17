@@ -53,6 +53,13 @@ years/reverse, calendar boundaries, whole-album quality filtering, missing artwo
 and background-scan responsiveness checks. These checks do not establish a measured
 scrolling FPS or CPU/battery improvement.
 
+Native dark-mode checks verified the Lossless filter's complete three-song
+Kalank album, Missing Artwork's empty state and reset, release-year ordering,
+searching “Nahi” and opening all 19 Balgandharva songs, Home navigation outside
+an active filter, Recently Added month grouping, and compact artwork resizing.
+Opening Paap at the bottom and returning preserved scroll position (1.0).
+Playback stayed paused at its saved position and device volume was preserved.
+
 ## Validation
 
 - 103 Swift package tests passed across 13 suites.
