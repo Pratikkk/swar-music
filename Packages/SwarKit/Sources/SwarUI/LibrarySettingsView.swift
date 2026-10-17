@@ -18,6 +18,8 @@ public struct LibrarySettingsView: View {
         TabView {
             AppearanceSettingsView()
                 .tabItem { Label("Appearance", systemImage: "paintpalette") }
+            NowPlayingSettingsView()
+                .tabItem { Label("Now Playing", systemImage: "play.rectangle") }
             files
                 .tabItem { Label("Files", systemImage: "folder") }
         }

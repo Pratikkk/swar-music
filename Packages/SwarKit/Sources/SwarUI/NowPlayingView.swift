@@ -9,9 +9,8 @@ struct NowPlayingView: View {
     let browseArtist: (String) -> Void
     let browseAlbum: (String) -> Void
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var showQueue = false
+    @State private var showAppearance = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,9 +20,19 @@ struct NowPlayingView: View {
                         .background(.regularMaterial, in: Circle())
                 }
                 .buttonStyle(.plain).accessibilityLabel("Close Now Playing")
-                .keyboardShortcut(.cancelAction).help("Return to Library (Escape)")
+                .help("Return to Library (Escape)")
                 Text("Now Playing").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
+                Button { showAppearance.toggle() } label: {
+                    Image(systemName: "paintpalette").frame(width: 28, height: 28)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.plain).accessibilityLabel("Now Playing appearance")
+                .help("Now Playing appearance")
+                .popover(isPresented: $showAppearance) {
+                    NowPlayingAppearanceControls().padding(20).frame(width: 320)
+                        .onExitCommand { showAppearance = false }
+                }
                 SleepTimerMenu(timer: player.sleepTimer)
                 Button { showQueue.toggle() } label: {
                     Label("Up Next · \(player.upcomingEntries.count)", systemImage: "list.bullet")
@@ -62,18 +71,13 @@ struct NowPlayingView: View {
             }
         }
         .frame(width: width, height: 650)
-        .background {
-            SwarTheme.canvas
-            if !reduceTransparency, player.artworkURL != nil {
-                CoverArt(url: player.artworkURL, crossfade: true)
-                    .frame(width: 480, height: 480).blur(radius: 70).scaleEffect(1.4)
-                    .opacity(colorScheme == .dark ? 0.26 : 0.13)
-                    .allowsHitTesting(false).accessibilityHidden(true)
-            }
-        }
+        .background { NowPlayingBackdrop(artworkURL: player.artworkURL) }
+        .interactiveDismissDisabled(showAppearance)
         .clipped().tint(palette.accent)
         .accentColor(palette.accent)
-        .onExitCommand { dismiss() }
+        .onExitCommand {
+            if showAppearance { showAppearance = false } else { dismiss() }
+        }
     }
 }
 
@@ -84,6 +88,7 @@ private struct NowPlayingArtwork: View {
     let browseArtist: (String) -> Void
     let browseAlbum: (String) -> Void
     @State private var showActivity = false
+    @AppStorage("nowPlayingTechnicalDetails") private var technicalDetails = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var title: String {
@@ -106,9 +111,11 @@ private struct NowPlayingArtwork: View {
                         .textSelection(.enabled).help(title)
                         .contentTransition(.opacity)
                     metadata.frame(height: 18)
-                    ZStack {
-                        if let info = player.formatInfo { FormatChip(info: info) }
-                    }.frame(height: 28)
+                    if technicalDetails {
+                        ZStack {
+                            if let info = player.formatInfo { FormatChip(info: info) }
+                        }.frame(height: 28)
+                    }
                     status.frame(height: 26)
                 }
                 .frame(maxWidth: 440)

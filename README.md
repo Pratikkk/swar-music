@@ -23,6 +23,10 @@ Play starts in disc/track order; Shuffle includes the whole album. Library actio
 are in the menu at the right of the section header. The sidebar uses native macOS
 blur; library surfaces adapt between warm light and dark appearances.
 
+Now Playing offers Artwork or Neutral backgrounds, adjustable blur and optional audio
+format details. Use its palette button to preview changes, or Settings → Now Playing;
+choices are saved. See [Now Playing](Docs/NowPlaying.md).
+
 The floating player and expanded player include an output-volume slider. It controls
 the selected playback device (or the default output before playback), follows system
 volume changes, and leaves Swar's PCM samples untouched. This is device-wide volume;
