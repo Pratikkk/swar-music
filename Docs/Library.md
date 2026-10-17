@@ -29,9 +29,12 @@ and through Rescan. Changes arriving during a scan schedule another pass.
 
 ## Metadata and artwork
 
-Technical metadata comes from the decoder. The bundled FFmpeg bridge reads stream
-and container tags across ID3, MP4, Vorbis comments, and APE tags, avoiding a second
-tagging dependency. Stored metadata includes title, artist, album artist, album,
+Each changed file uses one bundled FFmpeg decoder inspection for source format,
+duration, tags, and embedded artwork. Native files no longer open a native decoder
+and then a second decoder for metadata. Playback retains its independent
+native-first selection. The FFmpeg bridge reads stream and container tags across
+ID3, MP4, Vorbis comments, and APE tags, avoiding a second tagging dependency.
+Stored metadata includes title, artist, album artist, album,
 genre, track/disc number, year, and available composer, comment, lyrics, compilation,
 and ReplayGain tags. Tag availability depends on the source container and file.
 Scanning checks whether a decoder can open the file; it is not a full-file integrity
@@ -41,6 +44,12 @@ Embedded covers take priority over `cover.jpg`, `folder.jpg`, and `front.png` be
 the audio file. ImageIO downsamples artwork to a maximum dimension of 384 pixels.
 SHA-256 keys deduplicate PNG thumbnails under `Caches/Swar/Artwork` in the container.
 Artwork cache failures do not mark otherwise playable audio as unreadable.
+
+The single-probe inspection regression checks technical facts and duration against
+the native decoder for PCM WAV, FLAC, ALAC, AIFF, and floating-point CAF, including
+24-bit/192 kHz audio. Existing tagged-container and artwork tests cover both native
+and bundled-only formats. This removes redundant decoder setup; no scan speedup
+percentage has been measured. Unchanged files still skip inspection entirely.
 
 ## Playlists
 

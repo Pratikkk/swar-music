@@ -34,14 +34,14 @@ struct MediaInspector: Sendable {
             duration: 0, fileSize: file.size, modifiedAt: file.modified, addedAt: prior?.addedAt ?? Date(),
             artworkKey: nil, coverStamp: file.coverStamp, error: nil)
         do {
-            let decoder = try DecoderFactory.open(url: file.url, codecDirectory: codecDirectory)
-            let source = decoder.source
+            // Inspection always needs FFmpeg's tags and artwork. Reuse that
+            // probe for source facts instead of opening a native decoder first.
+            // Playback independently retains DecoderFactory's native-first path.
+            let metadata = try FFmpegDecoder(url: file.url, codecDirectory: codecDirectory)
+            let source = metadata.source
             track.codec = source.codec; track.bitDepth = source.bitDepth; track.sampleRate = source.sampleRate
             track.channels = source.channels; track.bitRate = source.bitRate; track.isLossless = source.isLossless; track.isFloat = source.isFloat
-            track.duration = Double(decoder.frameCount) / source.sampleRate
-            // One backend reads ID3, MP4, Vorbis, and APE tags consistently. Native
-            // decoding remains primary for source technical facts and playback.
-            let metadata = try (decoder as? FFmpegDecoder) ?? FFmpegDecoder(url: file.url, codecDirectory: codecDirectory)
+            track.duration = Double(metadata.frameCount) / source.sampleRate
             let tags = AudioTags(title: metadata.tag("title"), artist: metadata.tag("artist"),
                 albumArtist: metadata.tag("album_artist", "albumartist"), album: metadata.tag("album"),
                 genre: metadata.tag("genre"), composer: metadata.tag("composer"), comment: metadata.tag("comment", "description"),

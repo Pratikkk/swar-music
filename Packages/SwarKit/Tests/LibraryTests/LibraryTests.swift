@@ -1,4 +1,5 @@
 import Foundation
+import Decoding
 import GRDB
 import Observation
 import os
@@ -234,6 +235,30 @@ struct LibraryTests {
 }
 
 extension LibraryTests {
+    @Test(arguments: ["44100-16.wav", "96000-24.flac", "192000-24.m4a", "96000-24.aiff", "96000-float.caf"])
+    func singleProbeInspectionPreservesNativeSourceFacts(name: String) throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("DecodingTests/Fixtures").appendingPathComponent(name)
+        let url = music.appendingPathComponent(name)
+        try FileManager.default.copyItem(at: source, to: url)
+        let native = try NativeDecoder(url: url)
+        let folder = LibraryFolder(path: music.path)
+        let file = ScanFile(url: url, relativePath: name, size: Int64(try Data(contentsOf: url).count),
+            modified: Date(), coverURL: nil, coverStamp: "")
+        let track = MediaInspector(codecDirectory: codecs, artworkDirectory: artwork)
+            .inspect(file: file, folder: folder, prior: nil)
+        #expect(track.error == nil)
+        #expect(track.codec == native.source.codec)
+        #expect(track.bitDepth == native.source.bitDepth)
+        #expect(track.sampleRate == native.source.sampleRate)
+        #expect(track.channels == native.source.channels)
+        #expect(track.isLossless == native.source.isLossless)
+        #expect(track.isFloat == native.source.isFloat)
+        #expect(abs(track.duration - Double(native.frameCount) / native.source.sampleRate) < 0.000001)
+    }
+
     @Test func metadataAcrossContainersAndArtworkCaching() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
