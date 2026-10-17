@@ -37,18 +37,23 @@ private let engineLog = Logger(subsystem: "catto.swar", category: "AudioEngine")
 /// The @unchecked boundary is limited to state owned by a single serial queue.
 /// The C callback only sees a ring pointer with atomic counters, never this object.
 public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
-    private let queue = DispatchQueue(label: "catto.swar.audio", qos: .userInitiated)
+    private let queue: DispatchQueue
+    private let queueKey = DispatchSpecificKey<UInt8>()
     private let state = EngineState()
 
-    public init() {
+    public convenience init() {
+        self.init(queue: DispatchQueue(label: "catto.swar.audio", qos: .userInitiated))
+    }
+
+    // The supplied execution context must be serial, like the production queue.
+    init(queue: DispatchQueue) {
+        self.queue = queue
+        queue.setSpecific(key: queueKey, value: 1)
         let state = state
         queue.async { [queue] in state.startTimer(on: queue) }
     }
 
-    deinit {
-        let state = state
-        queue.async { state.close() }
-    }
+    deinit { closeSynchronously() }
 
     public func open(_ url: URL) async throws -> PlaybackSnapshot {
         try await perform { state in
@@ -103,7 +108,16 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     }
 
     /// For application termination: stop/dispose the unit before releasing file access.
-    public func shutdown() { queue.sync { state.close() } }
+    public func shutdown() { closeSynchronously() }
+
+    private func closeSynchronously() {
+        let state = state
+        // Drain pending work before releasing decoder/device resources. The last
+        // owner can also release the engine on its own queue; syncing there
+        // would deadlock. Neither branch queues deferred teardown or captures self.
+        if DispatchQueue.getSpecific(key: queueKey) != nil { state.close() }
+        else { queue.sync { state.close() } }
+    }
 
     private func perform<T: Sendable>(_ operation: @escaping @Sendable (EngineState) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { continuation in

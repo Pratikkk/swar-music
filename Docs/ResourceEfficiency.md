@@ -6,6 +6,16 @@ pause, end-of-track, failure, and shutdown. It is rearmed on resume. The library
 window's 200 ms playback polling task also exists only while playing. Hardware
 volume monitoring and periodic session persistence remain available while paused.
 
+Engine destruction and explicit shutdown close synchronously on the serial audio
+queue. Calls from outside the queue drain pending work first; calls already on it
+close inline to avoid a synchronous dispatch deadlock. Session close stops and
+disposes AUHAL before destroying the render ring and restoring the device.
+Repeated shutdown remains safe. The previous destructor retained state in an
+asynchronous close, so state was kept alive but cleanup could outlast the engine.
+Three device-free lifecycle tests check waiting for pending queue work, destruction
+and repeated shutdown on the queue, and repeated shutdown off the queue. The full
+suite passed 131 tests in 17 suites. These tests do not exercise physical callbacks.
+
 Player snapshots update observable values only when they change. Source/output
 format descriptions are rebuilt only when their inputs change, and unchanged
 hardware volume no longer invalidates its views. Library reloads retain the
