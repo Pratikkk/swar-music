@@ -246,9 +246,9 @@ public final class LibraryModel {
         catch { errorMessage = error.localizedDescription; return nil }
     }
 
-    public func albums(search: String, scope: TrackSearchScope) async throws -> [LibraryAlbumSummary] {
+    public func albums(search: String, scope: TrackSearchScope, sort: AlbumSortOrder = .artist, reversed: Bool = false) async throws -> [LibraryAlbumSummary] {
         guard let repository, !isShutDown else { return [] }
-        return try await repository.albums(search: search, searchScope: scope)
+        return try await repository.albums(search: search, searchScope: scope, sort: sort, reversed: reversed)
     }
 
     public func tracks(in album: LibraryAlbumSummary) async -> [LibraryTrack] {

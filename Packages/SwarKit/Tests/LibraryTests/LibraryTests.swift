@@ -460,6 +460,41 @@ extension LibraryTests {
         #expect(empty.recentAlbums.isEmpty && empty.favourites.isEmpty)
     }
 
+    @Test func albumSortingUsesSQLWithNaturalOrderAndStableReverse() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let template = try #require(try await repository.page().tracks.first)
+        let names = ["Album 10", "Album 2", "Album 1", "album 1", "Été", "स्वर"]
+        let tracks = names.enumerated().map { index, title in
+            var track = template
+            if index != 0 { track.id = "sort-\(index)"; track.relativePath = "sort-\(index).wav" }
+            track.title = "Needle"; track.album = title
+            track.albumArtist = index.isMultiple(of: 2) ? "Artist 10" : "Artist 2"
+            track.year = index == 0 ? "2024-01-01" : index == 1 ? "2020" : nil
+            track.addedAt = Date(timeIntervalSince1970: Double(index))
+            return track
+        }
+        try await repository.saveTracks(tracks)
+        let natural = try await repository.albums(sort: .title)
+        #expect(natural.prefix(4).map(\.title) == ["album 1", "Album 1", "Album 2", "Album 10"])
+        #expect(try await repository.albums(sort: .year).prefix(2).map(\.title) == ["Album 10", "Album 2"])
+        #expect(try await repository.albums(sort: .recentlyAdded).map(\.title) == names.reversed())
+        #expect(try await repository.albums(sort: .artist).prefix(3).allSatisfy { $0.artist == "Artist 2" })
+        for sort in AlbumSortOrder.allCases {
+            let forward = try await repository.albums(search: "Need", searchScope: .title, sort: sort)
+            let backward = try await repository.albums(search: "Need", searchScope: .title, sort: sort, reversed: true)
+            #expect(backward.map(\.id) == forward.reversed().map(\.id))
+        }
+        try await repository.removeTrackFromLibrary(trackID: tracks[0].id)
+        #expect(try await repository.albums(sort: .year).first?.title == "Album 2")
+        #expect(try await repository.albums(search: "***", sort: .recentlyAdded).isEmpty)
+    }
+
     @Test func albumSearchKeepsArtistsDistinctAndReturnsCompleteVisibleMetadata() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -483,7 +518,7 @@ extension LibraryTests {
         let album = try #require(albums.first { $0.artist == "Artist A" })
         #expect(album.trackCount == 2 && album.playableCount == 1)
         #expect(album.losslessTrackCount == 1)
-        let lossless = try await AlbumBrowseArranger().arrange(albums, sort: .artist, reversed: false, recent: false, filter: .lossless)
+        let lossless = try await AlbumBrowseArranger().arrange(albums, recent: false, filter: .lossless)
         #expect(lossless.sections[0].albums.map(\.artist) == ["Artist B"])
         #expect(album.duration == 90 && album.year == "2020" && album.artworkKey == "cover")
         #expect(album.addedAt == Date(timeIntervalSince1970: 20))

@@ -27,39 +27,20 @@ public struct AlbumBrowseSnapshot: Sendable {
     }
 }
 
-/// Serial arrangement keeps collation/grouping off the UI actor and bounds CPU
-/// work. Cancelled requests queued behind an older sort skip their work entirely.
+/// Preserves repository order while filtering and grouping off the UI actor.
 public actor AlbumBrowseArranger {
     public init() { }
-    public func arrange(_ source: [LibraryAlbumSummary], sort: AlbumSortOrder, reversed: Bool,
-                        recent: Bool, filter: AlbumBrowseFilter, now: Date = Date(),
+    public func arrange(_ source: [LibraryAlbumSummary], recent: Bool, filter: AlbumBrowseFilter, now: Date = Date(),
                         calendar: Calendar = .current) throws -> AlbumBrowseSnapshot {
         try Task.checkCancellation()
-        let order: AlbumSortOrder = recent ? .recentlyAdded : sort
-        var albums = source.filter { album in
+        let albums = source.filter { album in
             switch filter {
             case .all: true
             case .lossless: album.trackCount > 0 && album.losslessTrackCount == album.trackCount
             case .missingArtwork: album.artworkKey?.isEmpty != false
             }
         }
-        albums.sort { a, b in
-            if order == .recentlyAdded, a.addedAt != b.addedAt { return a.addedAt > b.addedAt }
-            if order == .year {
-                let first = Int(a.year?.prefix(4) ?? "") ?? 0, second = Int(b.year?.prefix(4) ?? "") ?? 0
-                if first != second { return first > second }
-            }
-            if order == .title {
-                let comparison = a.title.localizedStandardCompare(b.title)
-                if comparison != .orderedSame { return comparison == .orderedAscending }
-            }
-            let artist = a.artist.localizedStandardCompare(b.artist)
-            if artist != .orderedSame { return artist == .orderedAscending }
-            let title = a.title.localizedStandardCompare(b.title)
-            return title == .orderedSame ? a.id < b.id : title == .orderedAscending
-        }
         try Task.checkCancellation()
-        if !recent && reversed { albums.reverse() }
         var sections: [AlbumBrowseSection] = []
         if recent {
             var indices: [Date: Int] = [:]

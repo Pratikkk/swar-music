@@ -28,18 +28,16 @@ struct AlbumBrowserView: View {
     @State private var loadGeneration = UUID()
     private struct ArrangementKey: Hashable {
         let revision: Int
-        let sort: AlbumSortOrder
-        let reversed: Bool
         let recent: Bool
         let filter: AlbumBrowseFilter
     }
     private var arrangementKey: ArrangementKey {
-        ArrangementKey(revision: albumRevision, sort: sortOrder, reversed: reversed, recent: recent, filter: filter)
+        ArrangementKey(revision: albumRevision, recent: recent, filter: filter)
     }
     @State private var actionInProgress = false
 
     private var refreshKey: String {
-        "\(library.isReady)-\(library.overviewRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)-\(library.searchScope)-\(library.search)"
+        "\(library.isReady)-\(library.overviewRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)-\(library.searchScope)-\(library.search)-\(sortOrder)-\(reversed)-\(recent)"
     }
     var body: some View {
         ZStack {
@@ -163,8 +161,7 @@ struct AlbumBrowserView: View {
         let key = arrangementKey
         arranging = true
         do {
-            let result = try await arranger.arrange(albums, sort: key.sort, reversed: key.reversed,
-                                                   recent: key.recent, filter: key.filter)
+            let result = try await arranger.arrange(albums, recent: key.recent, filter: key.filter)
             guard !Task.isCancelled, key == arrangementKey else { return }
             presentation = result; arranging = false
         } catch is CancellationError { }
@@ -188,7 +185,8 @@ struct AlbumBrowserView: View {
             let query = library.search, scope = library.searchScope
             // The existing root debounces song queries; this browser owns its independent metadata query.
             if ready { try await Task.sleep(for: .milliseconds(200)) }
-            let result = try await library.albums(search: query, scope: scope)
+            let result = try await library.albums(search: query, scope: scope,
+                sort: recent ? .recentlyAdded : sortOrder, reversed: recent ? false : reversed)
             guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }
             if !ready || albums != result { albums = result; albumRevision += 1 }
             ready = true; loadError = nil; loadedKey = key

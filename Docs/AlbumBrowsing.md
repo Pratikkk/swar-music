@@ -31,8 +31,13 @@ are fetched on demand. Search queries debounce and discard cancelled results.
 Playback position updates do not trigger album metadata queries. The browser does
 not introduce polling timers or load every song into view state.
 
-Sorting, filtering, counts, and calendar-month grouping are arranged on a dedicated
-serial actor, rather than on the UI actor. Results are retained until replacement
+Sorting is performed by SQLite ORDER BY in the repository query, using GRDB’s
+localized natural collation for titles and artists, aggregate year/date expressions,
+and binary identity tie breakers. Reverse changes every ordering direction. Only
+enum-selected SQL expressions are interpolated; search values remain bound.
+Recently Added always requests newest-first order. Sort changes reload summaries;
+there is no second Swift sort or reverse pass. Filtering, counts, and calendar-month
+grouping remain on a dedicated serial actor. Results are retained until replacement
 and cancelled results are ignored. Group lookup uses month keys instead of repeated
 section searches. Unchanged summaries do not trigger another arrangement. Direct
 Home/context-menu navigation reuses the active metadata load instead of starting
@@ -47,8 +52,8 @@ do not occupy Swift's cooperative executor; folder access stays retained until
 in-flight work finishes, including cancellation. No GitHub DMG build is triggered
 by these changes.
 
-The updated package suite passes 140 tests in 19 suites, including natural sorting,
-years/reverse, calendar boundaries, whole-album quality filtering, missing artwork,
+The package suite covers SQL natural sorting and stable ties, all reverse orders,
+years/recent dates, search and hidden-song behavior, calendar boundaries, whole-album quality filtering, missing artwork,
 10,000-album arrangements, cancellation, and the existing complete-album search
 and background-scan responsiveness checks. These checks do not establish a measured
 scrolling FPS or CPU/battery improvement.
@@ -74,3 +79,7 @@ Playback stayed paused at its saved position and device volume was preserved.
   opened Kalank directly with all three tracks and no residual search query.
 - Saved playback position and device volume were preserved. No new audio-output
   hardware measurements or separate dark-appearance visual pass were performed.
+
+SQL sorting validation: 140 tests passed across 19 suites. Local universal build 66
+passed signature and bundled-codec checks. Native checks confirmed artist order,
+newest/oldest release-year order, and restoring the saved Artist preference.
