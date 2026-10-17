@@ -11,6 +11,7 @@ private struct SongActions<Extra: View>: ViewModifier {
     let enqueue: (Bool) -> Void
     let extra: Extra
     @State private var showInfo = false
+    @State private var showEditor = false
     @State private var showRemoval = false
     @State private var showNewPlaylist = false
     @State private var playlistName = ""
@@ -25,6 +26,7 @@ private struct SongActions<Extra: View>: ViewModifier {
                     .accessibilityLabel("Actions for \(track.title)").padding(.trailing, 10)
             }
             .contextMenu { menuItems }
+            .sheet(isPresented: $showEditor) { MetadataEditorView(track: track, library: library) }
             .sheet(isPresented: $showInfo) { SongInfoView(track: track, library: library) }
             .alert("New Playlist", isPresented: $showNewPlaylist) {
                 TextField("Playlist Name", text: $playlistName)
@@ -65,6 +67,7 @@ private struct SongActions<Extra: View>: ViewModifier {
             .disabled(busy || track.error != nil)
         Divider()
         Button("Get Info", systemImage: "info.circle") { showInfo = true }
+        Button("Edit Details…", systemImage: "pencil") { showEditor = true }
         Button(library.favoriteTrackIDs.contains(track.id) ? "Remove from Favourites" : "Favourite",
                systemImage: library.favoriteTrackIDs.contains(track.id) ? "heart.fill" : "heart") {
             Task { await library.toggleFavorite(track) }

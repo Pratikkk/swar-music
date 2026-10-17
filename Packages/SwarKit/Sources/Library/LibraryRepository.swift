@@ -94,6 +94,13 @@ public actor LibraryRepository {
                 INSERT INTO track_search(track_search) VALUES('rebuild');
                 """)
         }
+        migrator.registerMigration("library-metadata-v6") { db in
+            try db.create(table: "track_metadata") { t in
+                t.column("trackID", .text).primaryKey().references("tracks", onDelete: .cascade)
+                t.column("originalJSON", .blob).notNull()
+                t.column("editsJSON", .blob).notNull()
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -116,7 +123,15 @@ public actor LibraryRepository {
 
     public func saveTracks(_ tracks: [LibraryTrack]) throws {
         try database.write { db in
-            for track in tracks { try track.save(db) }
+            for var track in tracks {
+                if let data = try Data.fetchOne(db, sql: "SELECT editsJSON FROM track_metadata WHERE trackID = ?", arguments: [track.id]) {
+                    let edits = try JSONDecoder().decode(TrackMetadata.self, from: data)
+                    let original = try JSONEncoder().encode(TrackMetadata(track: track))
+                    try db.execute(sql: "UPDATE track_metadata SET originalJSON = ? WHERE trackID = ?", arguments: [original, track.id])
+                    edits.apply(to: &track)
+                }
+                try track.save(db)
+            }
         }
     }
 
@@ -189,6 +204,73 @@ public actor LibraryRepository {
             let favorites = try String.fetchAll(db, sql: "SELECT trackID FROM track_preferences WHERE isFavorite = 1 AND isHidden = 0")
             let hidden = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM track_preferences WHERE isHidden = 1") ?? 0
             return (Set(favorites), hidden)
+        }
+    }
+
+    public func collectionPage(filter: CollectionFilter = .all, search: String = "", scope: TrackSearchScope = .all, limit: Int = 200) throws -> CollectionPage {
+        let query = TrackSearchQuery(search)
+        let pattern = query.expression(scope: scope)
+        return try database.read { db in
+            let hidden = "EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
+            let visible = "NOT " + hidden
+            let incomplete = "error IS NULL AND (trim(title) = '' OR trim(artist) IN ('', 'Unknown Artist') OR trim(album) = '' OR (NOT EXISTS (SELECT 1 FROM track_metadata m WHERE m.trackID = tracks.id) AND CASE WHEN json_valid(tagsJSON) THEN (NULLIF(trim(json_extract(tagsJSON, '$.title')), '') IS NULL OR NULLIF(trim(json_extract(tagsJSON, '$.artist')), '') IS NULL OR NULLIF(trim(json_extract(tagsJSON, '$.album')), '') IS NULL) ELSE 1 END))"
+            let duplicate = "error IS NULL AND duration > 0 AND trim(artist) NOT IN ('', 'Unknown Artist') AND trim(title) != '' AND (lower(trim(title)), lower(trim(artist)), CAST(round(duration) AS INTEGER)) IN (SELECT lower(trim(title)), lower(trim(artist)), CAST(round(duration) AS INTEGER) FROM tracks WHERE " + visible + " AND error IS NULL AND duration > 0 AND trim(artist) NOT IN ('', 'Unknown Artist') AND trim(title) != '' GROUP BY lower(trim(title)), lower(trim(artist)), CAST(round(duration) AS INTEGER) HAVING COUNT(*) > 1)"
+            let conditions: [CollectionFilter: String] = [.all: "1", .incomplete: incomplete, .artwork: "artworkKey IS NULL OR artworkKey = ''", .duplicates: duplicate, .unreadable: "error IS NOT NULL", .removed: "1"]
+            func count(_ condition: String, removed: Bool = false) throws -> Int {
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE " + (removed ? hidden : visible) + " AND (" + condition + ")") ?? 0
+            }
+            let stats = try Row.fetchOne(db, sql: "SELECT COUNT(*) AS songs, COALESCE(SUM(fileSize), 0) AS bytes, COALESCE(SUM(CASE WHEN duration > 0 THEN duration ELSE 0 END), 0) AS duration FROM tracks WHERE " + visible)!
+            let albums = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM (SELECT albumArtist, album FROM tracks WHERE " + visible + " GROUP BY albumArtist, album)") ?? 0
+            let summary = try CollectionSummary(songs: stats["songs"], albums: albums, bytes: stats["bytes"], duration: stats["duration"], incomplete: count(incomplete), artwork: count("artworkKey IS NULL OR artworkKey = ''"), duplicates: count(duplicate), unreadable: count("error IS NOT NULL"), removed: count("1", removed: true))
+            let condition = " WHERE " + (filter == .removed ? hidden : visible) + " AND (" + (conditions[filter] ?? "1") + ")" + (query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
+            let arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
+            let total = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0
+            var pageArguments = arguments
+            pageArguments += [max(1, limit)]
+            let order = filter == .duplicates ? "title COLLATE NOCASE, artist COLLATE NOCASE, duration, relativePath, id" : "albumArtist COLLATE NOCASE, album COLLATE NOCASE, discNumber, trackNumber, title COLLATE NOCASE, id"
+            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: pageArguments)
+            return CollectionPage(summary: summary, tracks: tracks, count: total)
+        }
+    }
+
+    public func updateMetadata(trackID: String, metadata: TrackMetadata) throws {
+        let edits = try metadata.validated()
+        try database.write { db in
+            guard var track = try LibraryTrack.fetchOne(db, key: trackID) else { throw LibraryFailure("This song is no longer in the library.") }
+            let original = try JSONEncoder().encode(TrackMetadata(track: track))
+            let encoded = try JSONEncoder().encode(edits)
+            try db.execute(sql: "INSERT INTO track_metadata(trackID, originalJSON, editsJSON) VALUES (?, ?, ?) ON CONFLICT(trackID) DO UPDATE SET editsJSON = excluded.editsJSON", arguments: [trackID, original, encoded])
+            edits.apply(to: &track)
+            try track.update(db)
+        }
+    }
+
+    public func hasMetadataEdits(trackID: String) throws -> Bool {
+        try database.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM track_metadata WHERE trackID = ?", arguments: [trackID]) == 1 }
+    }
+
+    public func resetMetadata(trackID: String) throws {
+        try database.write { db in
+            guard var track = try LibraryTrack.fetchOne(db, key: trackID),
+                  let data = try Data.fetchOne(db, sql: "SELECT originalJSON FROM track_metadata WHERE trackID = ?", arguments: [trackID]) else { return }
+            try JSONDecoder().decode(TrackMetadata.self, from: data).apply(to: &track)
+            try track.update(db)
+            try db.execute(sql: "DELETE FROM track_metadata WHERE trackID = ?", arguments: [trackID])
+        }
+    }
+
+    public func restoreTracks(ids: Set<String>) throws {
+        try database.write { db in
+            for id in ids { try db.execute(sql: "UPDATE track_preferences SET isHidden = 0 WHERE trackID = ?", arguments: [id]) }
+        }
+    }
+
+    public func removeTracksFromLibrary(ids: Set<String>) throws {
+        try database.write { db in
+            for id in ids {
+                try db.execute(sql: "INSERT INTO track_preferences(trackID, isFavorite, isHidden) SELECT id, 0, 1 FROM tracks WHERE id = ? ON CONFLICT(trackID) DO UPDATE SET isFavorite = 0, isHidden = 1", arguments: [id])
+                try db.execute(sql: "DELETE FROM playlist_tracks WHERE trackID = ?", arguments: [id])
+            }
         }
     }
 

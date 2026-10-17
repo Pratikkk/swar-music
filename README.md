@@ -102,6 +102,13 @@ Open `swar.xcodeproj` in Xcode and run the `swar` scheme on My Mac.
 The app supports macOS 14 or later. Signing uses the existing automatic signing
 configuration; select your own team when building on another machine.
 
+**Manage Library** provides collection-wide review for incomplete details, missing
+artwork, possible duplicates, unreadable songs, and removed items. Select songs to
+create/add to playlists, remove them from the library, or restore a chosen subset.
+**Edit Details** saves corrections locally in Swar, survives rescans, and supports
+resetting to scanned file details. Original file tags stay untouched.
+See [collection management](Docs/CollectionManagement.md).
+
 ## Architecture
 
 `Packages/SwarKit` is a local Swift package with separate module targets:

@@ -71,8 +71,9 @@ The signed sandboxed Debug app was checked with a folder library, album artwork,
 track browsing, artist search, duplicate-root rejection, and playlist creation and playback.
 The standard suite skips hardware playback unless its explicit environment variables are set.
 
-Playback history, tag editing, advanced sorting, and
-large-library UI performance profiling remain future work.
+Library-only metadata editing and collection review are described in
+[collection management](CollectionManagement.md). Writing embedded file tags,
+playback history, and large-library UI performance profiling remain future work.
 
 ## Files settings
 

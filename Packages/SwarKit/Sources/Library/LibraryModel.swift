@@ -166,6 +166,37 @@ public final class LibraryModel {
         } catch { errorMessage = error.localizedDescription }
     }
 
+    public func collectionPage(filter: CollectionFilter, search: String, scope: TrackSearchScope, limit: Int) async throws -> CollectionPage {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        return try await repository.collectionPage(filter: filter, search: search, scope: scope, limit: limit)
+    }
+
+    public func updateMetadata(_ track: LibraryTrack, metadata: TrackMetadata) async throws {
+        guard let repository else { throw LibraryFailure("The library is not ready.") }
+        try await repository.updateMetadata(trackID: track.id, metadata: metadata)
+        trackActionsRevision += 1; overviewRevision += 1
+        await reload()
+    }
+
+    public func hasMetadataEdits(_ track: LibraryTrack) async -> Bool {
+        (try? await repository?.hasMetadataEdits(trackID: track.id)) ?? false
+    }
+
+    public func resetMetadata(_ track: LibraryTrack) async throws {
+        guard let repository else { throw LibraryFailure("The library is not ready.") }
+        try await repository.resetMetadata(trackID: track.id)
+        trackActionsRevision += 1; overviewRevision += 1
+        await reload()
+    }
+
+    public func manageTracks(ids: Set<String>, restore: Bool) async throws {
+        guard let repository, !isScanning else { throw LibraryFailure("Wait for the library scan to finish.") }
+        if restore { try await repository.restoreTracks(ids: ids) }
+        else { try await repository.removeTracksFromLibrary(ids: ids) }
+        trackActionsRevision += 1; overviewRevision += 1
+        await reload(); await reloadPlaylists()
+    }
+
     public func dismissError() { errorMessage = nil }
 
     public func overview() async -> LibraryOverview? {
@@ -353,7 +384,7 @@ public final class LibraryModel {
     }
 }
 
-private struct LibraryFailure: LocalizedError { let message: String; init(_ message: String) { self.message = message }; var errorDescription: String? { message } }
+struct LibraryFailure: LocalizedError { let message: String; init(_ message: String) { self.message = message }; var errorDescription: String? { message } }
 private final class FolderAccess: Sendable {
     let url: URL
     let acquired: Bool

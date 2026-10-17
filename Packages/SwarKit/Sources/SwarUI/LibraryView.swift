@@ -12,6 +12,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     case songs = "Songs"
     case favorites = "Favourites"
     case genres = "Genres"
+    case manage = "Manage Library"
 
     var id: Self { self }
 
@@ -24,6 +25,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .songs: "music.note"
         case .favorites: "star"
         case .genres: "guitars"
+        case .manage: "tray.full"
         }
     }
 }
@@ -266,6 +268,8 @@ public struct LibraryView: View {
                         selection = .section(.albums)
                         selectedAlbum = album.id
                     }, addFolder: openFolderPicker)
+            } else if selection == .section(.manage) {
+                CollectionManagerView(library: library, addFolder: openFolderPicker)
             } else if selection == .section(.albums) || selection == .section(.recentlyAdded) {
                 AlbumBrowserView(library: library, player: player,
                     recent: selection == .section(.recentlyAdded), selectedAlbum: $selectedAlbum,

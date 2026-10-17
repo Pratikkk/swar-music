@@ -248,6 +248,7 @@ extension LibraryTests {
         #expect(page.count == 50_001)
         #expect(page.tracks.count == 500)
         #expect(try await repository.page(limit: 50_500).tracks.count == 50_001)
+        #expect(try await repository.collectionPage(limit: 50).summary.songs == 50_001)
         #expect(try await repository.page(search: "Track 49999").count == 1)
     }
 
@@ -336,6 +337,113 @@ extension LibraryTests {
         #expect(visible.trackCount == 1 && visible.playableCount == 0 && visible.duration == 60)
         try await repository.removeFolder(folder.id)
         #expect(try await repository.albums().isEmpty)
+    }
+
+    @Test func collectionReviewUsesFullLibraryAndTreatsDuplicatesAsCandidates() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        var template = try #require(try await repository.page().tracks.first)
+        template.title = "Shared Song"; template.artist = "Singer"; template.albumArtist = "Singer"
+        template.album = "Album"; template.duration = 60.2; template.artworkKey = "art"
+        template.tagsJSON = "{\"title\":\"Shared Song\",\"artist\":\"Singer\",\"album\":\"Album\"}"
+        var tracks = (0..<600).map { index in
+            var track = template
+            track.id = "review-\(index)"; track.title = "Unique \(index)"; track.trackNumber = index + 1
+            return track
+        }
+        tracks[599].title = " shared song "; tracks[599].artist = " singer "; tracks[599].duration = 60.4
+        tracks[598].tagsJSON = "invalid JSON"; tracks[598].artworkKey = nil
+        tracks[597].error = "Corrupt file"; tracks[597].artworkKey = nil
+        try await repository.saveTracks([template] + tracks)
+        let all = try await repository.collectionPage(limit: 200)
+        #expect(all.summary.songs == 601 && all.tracks.count == 200 && all.count == 601)
+        #expect(all.summary.incomplete == 1 && all.summary.artwork == 2 && all.summary.unreadable == 1)
+        #expect(all.summary.duplicates == 2 && all.summary.removed == 0)
+        #expect(try await repository.collectionPage(filter: .duplicates).tracks.count == 2)
+        #expect(try await repository.collectionPage(filter: .incomplete).tracks.map(\.id) == [tracks[598].id])
+        let searched = try await repository.collectionPage(filter: .all, search: "Unique 598", scope: .title)
+        #expect(searched.count == 1 && searched.summary.songs == 601)
+        #expect(try await repository.collectionPage(search: "*** : ()").count == 0)
+        try await repository.removeTracksFromLibrary(ids: [tracks[599].id, tracks[598].id, "missing-id"])
+        let hidden = try await repository.collectionPage(filter: .removed)
+        #expect(hidden.count == 2 && hidden.summary.songs == 599 && hidden.summary.duplicates == 0)
+        #expect(hidden.summary.incomplete == 0 && hidden.summary.artwork == 1)
+        #expect(try await repository.collectionPage(filter: .removed, search: "Unique 598", scope: .title).count == 1)
+        try await repository.restoreTracks(ids: [tracks[598].id])
+        #expect(try await repository.collectionPage(filter: .removed).count == 1)
+        #expect(try await repository.collectionPage(filter: .incomplete).count == 1)
+    }
+
+    @Test func metadataCorrectionsSurviveRescansAndResetToLatestFileDetails() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = music.appendingPathComponent("song.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: source)
+        let before = try Data(contentsOf: source)
+        let path = temporary.appendingPathComponent("library.sqlite").path
+        let repository = try LibraryRepository(path: path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let original = try #require(try await repository.page().tracks.first)
+        var edits = TrackMetadata(track: original)
+        edits.title = "Corrected Title"; edits.artist = "Artist"; edits.albumArtist = "Album Artist"
+        edits.album = "Corrected Album"; edits.genre = "Jazz"; edits.year = "2026"; edits.discNumber = 2; edits.trackNumber = 4
+        try await repository.updateMetadata(trackID: original.id, metadata: edits)
+        #expect(try await repository.hasMetadataEdits(trackID: original.id))
+        #expect(try await repository.collectionPage(filter: .incomplete).count == 0)
+        #expect(try await repository.page(search: "Corrected Title", searchScope: .title).count == 1)
+        let albums = try await repository.albums(search: "Corrected Album", searchScope: .album)
+        #expect(albums.first?.artist == "Album Artist")
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(20)], ofItemAtPath: source.path)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        #expect(try await repository.page().tracks.first?.title == "Corrected Title")
+        var rescanned = original
+        rescanned.title = "New File Title"; rescanned.year = "2030"; rescanned.duration = 123
+        rescanned.tagsJSON = "{\"title\":\"New File Title\",\"artist\":\"Singer\",\"album\":\"Album\"}"
+        try await repository.saveTracks([rescanned])
+        let persisted = try #require(try await LibraryRepository(path: path).page().tracks.first)
+        #expect(persisted.title == "Corrected Title" && persisted.year == "2026" && persisted.duration == 123)
+        #expect(persisted.tagsJSON == rescanned.tagsJSON && persisted.relativePath == original.relativePath)
+        edits.year = "2025"
+        try await repository.updateMetadata(trackID: original.id, metadata: edits)
+        try await repository.resetMetadata(trackID: original.id)
+        let reset = try #require(try await repository.page().tracks.first)
+        #expect(reset.title == "New File Title" && reset.year == "2030" && reset.duration == 123)
+        #expect(try await repository.hasMetadataEdits(trackID: original.id) == false)
+        #expect(try await repository.page(search: "Corrected Title", searchScope: .title).count == 0)
+        #expect(try await repository.page(search: "New File", searchScope: .title).count == 1)
+        #expect(try Data(contentsOf: source) == before)
+        edits.title = "   "
+        await #expect(throws: (any Error).self) { try await repository.updateMetadata(trackID: original.id, metadata: edits) }
+        #expect(try await repository.page().tracks.first?.title == "New File Title")
+    }
+
+    @Test func bulkRemovalRestoresVisibilityWithoutRecreatingPlaylistMembership() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let track = try #require(try await repository.page().tracks.first)
+        let playlist = try await repository.createPlaylist(name: "Review")
+        try await repository.addTracksToPlaylist(playlistID: playlist.id, trackIDs: [track.id])
+        try await repository.setFavorite(trackID: track.id, favorite: true)
+        try await repository.removeTracksFromLibrary(ids: [track.id])
+        #expect(try await repository.page().count == 0)
+        #expect(try await repository.playlistTrackItems(playlistID: playlist.id).isEmpty)
+        #expect(try await repository.trackPreferences().favorites.isEmpty)
+        try await repository.restoreTracks(ids: [track.id])
+        #expect(try await repository.page().count == 1)
+        #expect(try await repository.playlistTrackItems(playlistID: playlist.id).isEmpty)
+        #expect(FileManager.default.fileExists(atPath: music.appendingPathComponent("song.wav").path))
     }
 
     @Test func expandedSearchMatchesScopesPunctuationAccentsAndIndianScripts() async throws {
