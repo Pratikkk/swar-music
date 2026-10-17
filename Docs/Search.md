@@ -1,0 +1,13 @@
+# Library and playlist search
+
+Click the magnifying glass in the search field to choose All Fields, Song Title, Artist, Album, Genre, Year, or File or Folder. Artist includes both the performer and album artist. All Fields searches all of these metadata fields. A selected field turns the icon pink and changes the placeholder. ⌘F focuses search; Escape or the clear button clears the query.
+
+Search matches word beginnings, ignores case and Latin accents, and treats punctuation as word boundaries. Multiple words must all match, but may match different fields in All Fields. For example, `Pritam 2019` combines album artist and year, and `Dream-Pop` matches the genre Dream Pop. It does not perform fuzzy spelling correction or arbitrary substrings inside words. Input is literal: FTS operators are not executed. Empty/whitespace queries show all songs; punctuation-only queries show no matches. Queries are bounded to 512 characters and 20 words.
+
+Migration library-expanded-search-v5 rebuilds the existing full-text index with albumArtist, genre, year, and relativePath while retaining track IDs, favourites, playlists, and source files. Insert/update/delete triggers maintain it. The Unicode tokenizer includes combining marks so Marathi/Hindi vowel signs stay with their words. The shared query normalizer folds Latin accents without stripping those signs.
+
+Library searches retain the 200 ms typing debounce and use FTS before filtering, sorting, counting, and pagination. Query scope is captured with each reload so an obsolete response cannot overwrite newer input. Field selection is session-local and starts at All Fields. Search remains within the selected section, including Favourites.
+
+Playlist search now filters its rows using the same literal word-prefix rules and field choice. Match counts and no-results guidance are shown. Play/Shuffle and playlist queue actions use the visible matches. Original row numbers and duplicate playlist entries are preserved. Move Up/Down is hidden while filtering to avoid ambiguous reorder operations; clearing search restores the full custom playlist order. Existing playback is not changed by searching.
+
+Validation: 96 tests in 13 suites passed, including expanded metadata, field restrictions, accents, punctuation, Devanagari prefixes, safe literal queries, index updates/deletions, a populated v4-to-v5 migration, preference preservation, and the existing 50,000-track search test. Debug build succeeded. Manual checks on the existing library verified year and album-artist results, title-only exclusions, direct field selection, query clearing, playlist matches/no-results and disabled playback for zero matches. The temporary verification playlist was removed and the original paused session was preserved.

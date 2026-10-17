@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Observation
 import os
 import Testing
@@ -248,6 +249,76 @@ extension LibraryTests {
         #expect(page.tracks.count == 500)
         #expect(try await repository.page(limit: 50_500).tracks.count == 50_001)
         #expect(try await repository.page(search: "Track 49999").count == 1)
+    }
+
+    @Test func expandedSearchMatchesScopesPunctuationAccentsAndIndianScripts() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        var track = try #require(try await repository.page().tracks.first)
+        track.title = "Crème—Night (Live)"; track.artist = "Björk"; track.albumArtist = "संगीत समूह"
+        track.album = "Ocean"; track.genre = "Dream Pop"; track.year = "2011"
+        track.relativePath = "Disc 1/02 - Evening.flac"
+        try await repository.saveTracks([track])
+        let cases: [(String, TrackSearchScope, Bool)] = [
+            ("creme LIVE", .all, true), ("bjork cre", .all, true),
+            ("Dream-Pop", .genre, true), ("संगीत", .artist, true), ("समू", .artist, true),
+            ("201", .year, true), ("Even flac", .file, true), ("disc 1", .file, true),
+            ("Ocean", .album, true), ("Ocean", .title, false), ("Dream", .artist, false),
+            ("  ", .genre, true), ("*** : ()", .all, false), ("Night OR missing", .all, false),
+            ("\"; DROP TABLE tracks;", .all, false), ("creme--night", .title, true)
+        ]
+        for (text, scope, expected) in cases {
+            #expect((try await repository.page(search: text, searchScope: scope).count == 1) == expected, "Indexed: \(text) / \(scope)")
+            #expect(TrackSearchQuery(text).matches(track, scope: scope) == expected, "Playlist: \(text) / \(scope)")
+        }
+        track.genre = "Jazz"
+        try await repository.saveTracks([track])
+        #expect(try await repository.page(search: "Dream", searchScope: .genre).count == 0)
+        #expect(try await repository.page(search: "Jazz", searchScope: .genre).count == 1)
+        try await repository.removeFolder(folder.id)
+        #expect(try await repository.page(search: "Jazz").count == 0)
+    }
+
+    @Test func expandedSearchMigrationReindexesExistingTracksWithoutLosingPreferences() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let path = temporary.appendingPathComponent("library.sqlite").path
+        let repository = try LibraryRepository(path: path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        var track = try #require(try await repository.page().tracks.first)
+        track.genre = "Migration Jazz"; track.albumArtist = "Migration Orchestra"
+        try await repository.saveTracks([track])
+        try await repository.setFavorite(trackID: track.id, favorite: true)
+        // Recreate the v4 search index to exercise an upgrade with existing music.
+        let legacy = try DatabaseQueue(path: path)
+        try await legacy.write { db in
+            try db.execute(sql: """
+                DROP TRIGGER tracks_ai; DROP TRIGGER tracks_ad; DROP TRIGGER tracks_au;
+                DROP TABLE track_search;
+                CREATE VIRTUAL TABLE track_search USING fts5(title,artist,album,content='tracks',content_rowid='rowid');
+                CREATE TRIGGER tracks_ai AFTER INSERT ON tracks BEGIN
+                  INSERT INTO track_search(rowid,title,artist,album) VALUES(new.rowid,new.title,new.artist,new.album); END;
+                CREATE TRIGGER tracks_ad AFTER DELETE ON tracks BEGIN
+                  INSERT INTO track_search(track_search,rowid,title,artist,album) VALUES('delete',old.rowid,old.title,old.artist,old.album); END;
+                CREATE TRIGGER tracks_au AFTER UPDATE ON tracks BEGIN
+                  INSERT INTO track_search(track_search,rowid,title,artist,album) VALUES('delete',old.rowid,old.title,old.artist,old.album);
+                  INSERT INTO track_search(rowid,title,artist,album) VALUES(new.rowid,new.title,new.artist,new.album); END;
+                INSERT INTO track_search(track_search) VALUES('rebuild');
+                DELETE FROM grdb_migrations WHERE identifier = 'library-expanded-search-v5';
+                """)
+        }
+        let upgraded = try LibraryRepository(path: path)
+        #expect(try await upgraded.page(search: "Migration Jazz", searchScope: .genre).tracks.first?.id == track.id)
+        #expect(try await upgraded.page(search: "Orchestra", searchScope: .artist).count == 1)
+        #expect(try await upgraded.trackPreferences().favorites == [track.id])
     }
 
     @Test func trackSortingAppliesBeforePagingWithStableTies() async throws {

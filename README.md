@@ -64,6 +64,7 @@ restores visibility. Playlist references are removed when a song is removed from
 Songs and Favourites support saved sorting by title, artist, album, duration, or
 recently added, with Reverse Order in the view-options menu. Sorting applies
 across the database before paging.
+Search covers titles, performers, album artists, albums, genres, years, and file/folder names. Click the search icon to select a field. It matches word prefixes across multiple fields, handles punctuation and Latin accents, and also filters playlist rows.
 
 Artists uses a two-pane browser with All Artists and a selectable artist list.
 Album artists keep compilations together, with album covers, numbered songs, and

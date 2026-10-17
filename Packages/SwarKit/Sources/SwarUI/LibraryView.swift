@@ -107,7 +107,12 @@ public struct LibraryView: View {
             library.reverseSort = reverseSongSort
             await library.reload(resetLimit: true)
         }
+        .task(id: library.searchScope) {
+            guard case .section = selection else { return }
+            await library.reload(resetLimit: true)
+        }
         .task(id: library.search) {
+            guard case .section = selection else { return }
             do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
             await library.reload(resetLimit: true)
         }
@@ -310,10 +315,22 @@ public struct LibraryView: View {
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundStyle(.secondary)
             .help("View and library options").accessibilityLabel("View and library options")
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-                TextField("Find in \(sectionTitle)", text: $library.search)
+                Menu {
+                    Picker("Search In", selection: $library.searchScope) {
+                        ForEach(TrackSearchScope.allCases) { scope in Text(scope.rawValue).tag(scope) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(library.searchScope == .all ? Color.secondary : .pink)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .accessibilityLabel("Search field: " + library.searchScope.rawValue)
+                .help("Search in " + library.searchScope.rawValue + ". Click to change fields.")
+                TextField(library.searchScope == .all ? "Find in \(sectionTitle)" : "Search \(library.searchScope.rawValue)", text: $library.search)
                     .textFieldStyle(.plain).focused($searchFocused)
-                    .accessibilityLabel("Search title, artist, album")
+                    .accessibilityLabel("Search " + library.searchScope.rawValue)
+                    .help("Match the beginning of words in " + library.searchScope.rawValue.lowercased())
                     .onKeyPress(.escape) { library.search = ""; searchFocused = false; return .handled }
                 if !library.search.isEmpty {
                     Button { library.search = "" } label: { Image(systemName: "xmark.circle.fill") }

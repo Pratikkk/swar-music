@@ -77,6 +77,23 @@ public actor LibraryRepository {
                 t.column("isHidden", .boolean).notNull().defaults(to: false)
             }
         }
+        migrator.registerMigration("library-expanded-search-v5") { db in
+            try db.execute(sql: """
+                DROP TRIGGER tracks_ai;
+                DROP TRIGGER tracks_ad;
+                DROP TRIGGER tracks_au;
+                DROP TABLE track_search;
+                CREATE VIRTUAL TABLE track_search USING fts5(title,artist,album,albumArtist,genre,year,relativePath, content='tracks', content_rowid='rowid', tokenize="unicode61 remove_diacritics 2 categories 'L* N* Co M*'");
+                CREATE TRIGGER tracks_ai AFTER INSERT ON tracks BEGIN
+                  INSERT INTO track_search(rowid,title,artist,album,albumArtist,genre,year,relativePath) VALUES(new.rowid,new.title,new.artist,new.album,new.albumArtist,new.genre,new.year,new.relativePath); END;
+                CREATE TRIGGER tracks_ad AFTER DELETE ON tracks BEGIN
+                  INSERT INTO track_search(track_search,rowid,title,artist,album,albumArtist,genre,year,relativePath) VALUES('delete',old.rowid,old.title,old.artist,old.album,old.albumArtist,old.genre,old.year,old.relativePath); END;
+                CREATE TRIGGER tracks_au AFTER UPDATE ON tracks BEGIN
+                  INSERT INTO track_search(track_search,rowid,title,artist,album,albumArtist,genre,year,relativePath) VALUES('delete',old.rowid,old.title,old.artist,old.album,old.albumArtist,old.genre,old.year,old.relativePath);
+                  INSERT INTO track_search(rowid,title,artist,album,albumArtist,genre,year,relativePath) VALUES(new.rowid,new.title,new.artist,new.album,new.albumArtist,new.genre,new.year,new.relativePath); END;
+                INSERT INTO track_search(track_search) VALUES('rebuild');
+                """)
+        }
         try migrator.migrate(database)
     }
 
@@ -113,14 +130,14 @@ public actor LibraryRepository {
         }
     }
 
-    public func page(search: String = "", limit: Int = 500, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false) throws -> LibraryPage {
-        let tokens = search.split(whereSeparator: \.isWhitespace).prefix(20)
-        let pattern = tokens.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"*" }.joined(separator: " AND ")
+    public func page(search: String = "", limit: Int = 500, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all) throws -> LibraryPage {
+        let query = TrackSearchQuery(search)
+        let pattern = query.expression(scope: searchScope)
         return try database.read { db in
             let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
                 + (favoritesOnly ? " AND EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isFavorite = 1)" : "")
-            let condition = " WHERE " + visible + (pattern.isEmpty ? "" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
-            var arguments: StatementArguments = pattern.isEmpty ? [] : [pattern]
+            let condition = " WHERE " + visible + (query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
+            var arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0
             arguments += [max(1, limit)]
             let order = (recentFirst ? TrackSortOrder.recentlyAdded : sortOrder).sqlOrder(reversed: recentFirst ? false : reversed)

@@ -18,6 +18,7 @@ public final class LibraryModel {
     public private(set) var progress: LibraryProgress?
     public private(set) var errorMessage: String?
     public var search = ""
+    public var searchScope: TrackSearchScope = .all
     public var recentFirst = false
     public var favoritesOnly = false
     public var sortOrder: TrackSortOrder = .album
@@ -145,14 +146,15 @@ public final class LibraryModel {
         refreshRevision += 1
         let revision = refreshRevision
         let query = search
+        let scope = searchScope
         let onlyFavorites = favoritesOnly
         let recent = recentFirst
         let order = sortOrder
         let reversed = reverseSort
         do {
-            let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed)
+            let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed, searchScope: scope)
             let preferences = try await repository.trackPreferences()
-            guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, onlyFavorites == favoritesOnly, recent == recentFirst, order == sortOrder, reversed == reverseSort else { return }
+            guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, scope == searchScope, onlyFavorites == favoritesOnly, recent == recentFirst, order == sortOrder, reversed == reverseSort else { return }
             if tracks != page.tracks { tracks = page.tracks }
             if totalCount != page.count { totalCount = page.count }
             if unreadableCount != page.unreadableCount { unreadableCount = page.unreadableCount }

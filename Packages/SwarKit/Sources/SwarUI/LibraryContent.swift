@@ -61,7 +61,7 @@ struct LibraryContent: View {
             }
             if library.totalCount > 0 {
                 HStack {
-                    Text("\(library.tracks.count) of \(library.totalCount) \(library.totalCount == 1 ? "track" : "tracks")")
+                    Text("\(library.tracks.count) of \(library.totalCount) \(TrackSearchQuery(library.search).isEmpty ? (library.totalCount == 1 ? "track" : "tracks") : "matches")")
                         .foregroundStyle(.secondary)
                     if library.unreadableCount > 0 {
                         Text("\(library.unreadableCount) unreadable in \(section == "Favourites" ? "favourites" : "library")").foregroundStyle(.orange)
@@ -83,7 +83,7 @@ struct LibraryContent: View {
                 } description: {
                     Text(library.search.isEmpty
                          ? (section == "Favourites" ? "Choose Favourite from any song’s options menu to keep it here." : "Add a folder to browse your local music. Files stay where they are.")
-                         : "Try a title, artist, or album name.")
+                         : "Try different words or choose All Fields from the search icon.")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if section == "Albums" || section == "Recently Added" {

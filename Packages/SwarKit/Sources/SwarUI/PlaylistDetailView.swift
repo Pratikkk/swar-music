@@ -16,7 +16,12 @@ public struct PlaylistDetailView: View {
     @State private var loadedPlaylistID: String?
     @State private var loadGeneration = UUID()
 
-    private var playableTracks: [LibraryTrack] { items.map(\.track).filter { $0.error == nil } }
+    private var visibleItems: [PlaylistTrackItem] {
+        let query = TrackSearchQuery(library.search)
+        return items.filter { query.matches($0.track, scope: library.searchScope) }
+    }
+    private var isFiltering: Bool { !TrackSearchQuery(library.search).isEmpty }
+    private var playableTracks: [LibraryTrack] { visibleItems.map(\.track).filter { $0.error == nil } }
     private var canPlay: Bool { !isLoading && loadedPlaylistID == playlist.id && !playableTracks.isEmpty }
 
     private var durationDescription: String {
@@ -113,18 +118,25 @@ public struct PlaylistDetailView: View {
                             Text("Add songs from your library by right-clicking any track and choosing Add to Playlist.")
                         }
                         .padding(.top, 40)
+                    } else if visibleItems.isEmpty {
+                        ContentUnavailableView("No Matching Songs", systemImage: "magnifyingglass",
+                            description: Text("Try different words or choose All Fields from the search icon."))
                     } else {
+                        if isFiltering {
+                            Text("\(visibleItems.count) of \(items.count) \(items.count == 1 ? "song matches" : "songs match")")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
                                 PlaylistSongRow(
                                     item: item,
-                                    index: index + 1,
+                                    index: (items.firstIndex(where: { $0.id == item.id }) ?? index) + 1,
                                     current: isCurrent(item.track),
                                     playing: isCurrent(item.track) && player.isPlaying,
                                     compact: compact,
                                     alternate: index.isMultiple(of: 2),
-                                    isFirst: index == 0,
-                                    isLast: index == items.count - 1,
+                                    isFirst: isFiltering || index == 0,
+                                    isLast: isFiltering || index == items.count - 1,
                                     busy: player.isBusy,
                                     library: library,
                                     play: { playItem(item) },
@@ -215,7 +227,7 @@ public struct PlaylistDetailView: View {
                 await player.togglePlayback()
                 return
             }
-            let playable = items.filter { $0.track.error == nil }
+            let playable = visibleItems.filter { $0.track.error == nil }
             guard let index = playable.firstIndex(where: { $0.id == item.id }) else { return }
             do {
                 let entries = try playable.map { try entry($0.track) }
@@ -228,7 +240,7 @@ public struct PlaylistDetailView: View {
 
     private func playPlaylist(shuffle: Bool) {
         Task {
-            let playable = items.filter { $0.track.error == nil }
+            let playable = visibleItems.filter { $0.track.error == nil }
             guard !playable.isEmpty else { return }
             do {
                 let entries = try playable.map { try entry($0.track) }
@@ -241,7 +253,7 @@ public struct PlaylistDetailView: View {
 
     private func enqueuePlaylist(next: Bool) {
         do {
-            let entries = try items.filter { $0.track.error == nil }.map { try entry($0.track) }
+            let entries = try visibleItems.filter { $0.track.error == nil }.map { try entry($0.track) }
             for entry in next ? Array(entries.reversed()) : entries {
                 player.enqueue(entry, playNext: next)
             }
