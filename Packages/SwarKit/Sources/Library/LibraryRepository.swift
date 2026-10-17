@@ -2,11 +2,17 @@ import Foundation
 import GRDB
 
 public actor LibraryRepository {
-    private let database: DatabaseQueue
+    let database: DatabaseQueue
 
     public init(path: String) throws {
         var config = Configuration()
         config.foreignKeysEnabled = true
+        config.prepareDatabase { db in
+            db.add(function: DatabaseFunction("swar_fold", argumentCount: 1, pure: true) { values in
+                guard let text = String.fromDatabaseValue(values[0]) else { return nil }
+                return SmartPlaylistDefinition.folded(text)
+            })
+        }
         database = try DatabaseQueue(path: path, configuration: config)
         var migrator = DatabaseMigrator()
         migrator.registerMigration("library-v1") { db in
@@ -107,6 +113,9 @@ public actor LibraryRepository {
                 t.column("originalKey", .text)
                 t.column("artworkKey", .text).notNull()
             }
+        }
+        migrator.registerMigration("library-smart-playlists-v8") { db in
+            try db.alter(table: "playlists") { $0.add(column: "smartRulesJSON", .text) }
         }
         try migrator.migrate(database)
     }
@@ -387,7 +396,8 @@ public actor LibraryRepository {
     public func addTracksToPlaylist(playlistID: String, trackIDs: [String]) throws {
         guard !trackIDs.isEmpty else { return }
         try database.write { db in
-            guard try LibraryPlaylist.exists(db, key: playlistID) else { return }
+            guard let playlist = try LibraryPlaylist.fetchOne(db, key: playlistID) else { return }
+            guard !playlist.isSmart else { throw LibraryFailure("Smart Playlists update from rules. Edit their rules instead of adding songs.") }
             let currentMax = try Int.fetchOne(db, sql: "SELECT MAX(position) FROM playlist_tracks WHERE playlistID = ?", arguments: [playlistID]) ?? -1
             var nextPosition = currentMax + 1
             let now = Date()
@@ -405,6 +415,7 @@ public actor LibraryRepository {
     public func removeTrackFromPlaylist(playlistTrackID: String) throws {
         try database.write { db in
             guard let item = try PlaylistTrack.fetchOne(db, key: playlistTrackID) else { return }
+            guard try LibraryPlaylist.fetchOne(db, key: item.playlistID)?.isSmart != true else { throw LibraryFailure("Edit this Smart Playlist’s rules instead of removing songs.") }
             _ = try PlaylistTrack.deleteOne(db, key: playlistTrackID)
             try db.execute(sql: "UPDATE playlist_tracks SET position = position - 1 WHERE playlistID = ? AND position > ?", arguments: [item.playlistID, item.position])
             try db.execute(sql: "UPDATE playlists SET updatedAt = ? WHERE id = ?", arguments: [Date().timeIntervalSince1970, item.playlistID])
@@ -414,6 +425,7 @@ public actor LibraryRepository {
     public func moveTrackInPlaylist(playlistID: String, from: Int, to: Int) throws {
         guard from != to else { return }
         try database.write { db in
+            guard try LibraryPlaylist.fetchOne(db, key: playlistID)?.isSmart != true else { throw LibraryFailure("Smart Playlist order is set by its rules.") }
             var items = try PlaylistTrack.fetchAll(db, sql: "SELECT * FROM playlist_tracks WHERE playlistID = ? ORDER BY position ASC", arguments: [playlistID])
             guard items.indices.contains(from), items.indices.contains(to) else { return }
             let moved = items.remove(at: from)
@@ -430,6 +442,11 @@ public actor LibraryRepository {
 
     public func playlistTrackItems(playlistID: String) throws -> [PlaylistTrackItem] {
         try database.read { db in
+            if let playlist = try LibraryPlaylist.fetchOne(db, key: playlistID), let json = playlist.smartRulesJSON {
+                return try Self.smartTracks(db, definition: .decode(json)).enumerated().map { index, track in
+                    PlaylistTrackItem(id: playlistID + ":" + track.id, playlistID: playlistID, position: index, track: track)
+                }
+            }
             let rows = try Row.fetchAll(db, sql: """
                 SELECT pt.id AS pt_id, pt.position AS pt_position, pt.playlistID AS pt_playlistID, t.*
                 FROM playlist_tracks pt

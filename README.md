@@ -2,6 +2,10 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
+Create a **Smart Playlist** from the sidebar’s playlist **+** menu. Combine rules,
+preview matches, choose sorting and an optional song limit. Membership follows
+library changes automatically; see [Smart Playlists](Docs/SmartPlaylists.md).
+
 Song and album context menus provide playlist creation, queue actions, album/artist
 navigation, editing and Finder access. See [context menus](Docs/ContextMenus.md).
 

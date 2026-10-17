@@ -202,7 +202,7 @@ struct CollectionManagerView: View {
                             playlistTracks = selectedTracks; playlistName = ""; showNewPlaylist = true
                         }
                         Divider()
-                        ForEach(library.playlists) { playlist in
+                        ForEach(library.manualPlaylists) { playlist in
                             Button(playlist.name) {
                                 let tracks = selectedTracks
                                 Task { await library.addTracks(tracks, to: playlist) }
@@ -260,7 +260,7 @@ struct CollectionManagerView: View {
                             playlistTracks = tracks.filter { ids.contains($0.id) }; playlistName = ""; showNewPlaylist = true
                         }
                         Divider()
-                        ForEach(library.playlists) { playlist in
+                        ForEach(library.manualPlaylists) { playlist in
                             Button(playlist.name) {
                                 let chosen = tracks.filter { ids.contains($0.id) }
                                 Task { await library.addTracks(chosen, to: playlist) }

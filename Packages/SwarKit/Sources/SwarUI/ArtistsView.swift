@@ -251,10 +251,10 @@ struct ArtistsView: View {
         Menu {
             Button("Play Next") { enqueue(tracks, true) }.disabled(player.isBusy)
             Button("Add to Queue") { enqueue(tracks, false) }.disabled(player.isBusy)
-            if !library.playlists.isEmpty {
+            if !library.manualPlaylists.isEmpty {
                 Divider()
                 Menu("Add to Playlist") {
-                    ForEach(library.playlists) { playlist in
+                    ForEach(library.manualPlaylists) { playlist in
                         Button(playlist.name) { Task { await library.addTracks(tracks.filter { $0.error == nil }, to: playlist) } }
                     }
                 }

@@ -6,6 +6,33 @@ import Testing
 @testable import Library
 
 struct LibraryTests {
+    @MainActor @Test func smartPlaylistModelTracksRescansFavouritesAndHiddenSongs() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("one.wav"))
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let definition = SmartPlaylistDefinition(rules: [SmartRule(field: .lossless), SmartRule(field: .favourite)])
+        let playlist = try await model.saveSmartPlaylist(name: "Favourite lossless", definition: definition)
+        #expect(model.playlists.first?.isSmart == true && model.manualPlaylists.isEmpty)
+        #expect(await model.playlistTracks(for: playlist.id).isEmpty)
+        let first = try #require(model.tracks.first)
+        await model.toggleFavorite(first)
+        #expect(try await model.smartPlaylistPreview(definition).selectedCount == 1)
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("two.wav"))
+        await model.rescan()
+        let second = try #require(model.tracks.first { $0.relativePath == "two.wav" })
+        await model.toggleFavorite(second)
+        #expect(await model.playlistTracks(for: playlist.id).count == 2)
+        await model.removeTrackFromLibrary(first)
+        #expect(await model.playlistTracks(for: playlist.id).map(\.track.id) == [second.id])
+        await model.removeFolder(try #require(model.folders.first))
+        #expect(await model.playlistTracks(for: playlist.id).isEmpty)
+        #expect(model.playlists.first?.id == playlist.id)
+    }
+
     @MainActor @Test func playingFileLookupIgnoresSearchAndExcludesHiddenOrOutsideFiles() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

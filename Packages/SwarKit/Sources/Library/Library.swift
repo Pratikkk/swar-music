@@ -94,9 +94,11 @@ public struct LibraryPlaylist: Codable, FetchableRecord, PersistableRecord, Send
     public var name: String
     public var createdAt: Date
     public var updatedAt: Date
+    public var smartRulesJSON: String?
+    public var isSmart: Bool { smartRulesJSON != nil }
 
-    public init(id: String = UUID().uuidString, name: String, createdAt: Date = Date(), updatedAt: Date = Date()) {
-        self.id = id; self.name = name; self.createdAt = createdAt; self.updatedAt = updatedAt
+    public init(id: String = UUID().uuidString, name: String, createdAt: Date = Date(), updatedAt: Date = Date(), smartRulesJSON: String? = nil) {
+        self.id = id; self.name = name; self.createdAt = createdAt; self.updatedAt = updatedAt; self.smartRulesJSON = smartRulesJSON
     }
 }
 

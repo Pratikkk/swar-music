@@ -70,9 +70,9 @@ private struct SongActions<Extra: View>: ViewModifier {
         }
         Menu("Add to Playlist", systemImage: "music.note.list") {
             Button("New Playlist…", systemImage: "plus") { playlistName = ""; showNewPlaylist = true }
-            if !library.playlists.isEmpty {
+            if !library.manualPlaylists.isEmpty {
                 Divider()
-                ForEach(library.playlists) { playlist in
+                ForEach(library.manualPlaylists) { playlist in
                     Button(playlist.name) { Task { await library.addTracks([track], to: playlist) } }
                 }
             }

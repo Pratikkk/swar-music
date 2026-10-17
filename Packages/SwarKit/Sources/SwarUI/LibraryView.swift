@@ -56,6 +56,8 @@ public struct LibraryView: View {
     @State private var importingFolder = false
     @State private var library: LibraryModel
 
+    @State private var showNewSmartPlaylist = false
+    @State private var smartPlaylistToEdit: LibraryPlaylist?
     @State private var showNewPlaylistAlert = false
     @State private var showRenameAlert = false
     @State private var showDeleteAlert = false
@@ -134,6 +136,14 @@ public struct LibraryView: View {
 
     private var playlistPresentation: some View {
         windowPresentation
+        .sheet(isPresented: $showNewSmartPlaylist) {
+            SmartPlaylistEditorView(library: library) { playlist in
+                library.search = ""; selection = .playlist(playlist.id)
+            }
+        }
+        .sheet(item: $smartPlaylistToEdit) { playlist in
+            SmartPlaylistEditorView(library: library, playlist: playlist) { _ in }
+        }
         .alert("New Playlist", isPresented: $showNewPlaylistAlert) {
             TextField("Playlist Name", text: $playlistNameInput)
             Button("Create") {
@@ -417,19 +427,21 @@ public struct LibraryView: View {
                     HStack {
                         sidebarHeading("Playlists")
                         Spacer()
-                        Button {
-                            playlistNameInput = ""; showNewPlaylistAlert = true
+                        Menu {
+                            Button("New Playlist…") { playlistNameInput = ""; showNewPlaylistAlert = true }
+                            Button("New Smart Playlist…", systemImage: "sparkles") { showNewSmartPlaylist = true }
                         } label: {
                             Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
                                 .frame(width: 24, height: 24).contentShape(Circle())
                         }
-                        .buttonStyle(.plain).foregroundStyle(palette.accent)
-                        .help("New Playlist").accessibilityLabel("Create New Playlist")
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundStyle(palette.accent)
+                        .help("New Playlist").accessibilityLabel("Create Playlist")
                     }.padding(.top, 16).padding(.trailing, 4)
                     ForEach(library.playlists) { playlist in
-                        navigationRow(.playlist(playlist.id), title: playlist.name, symbol: "music.note.list")
+                        navigationRow(.playlist(playlist.id), title: playlist.name, symbol: playlist.isSmart ? "sparkles" : "music.note.list")
                             .help(playlist.name)
                             .contextMenu {
+                                if playlist.isSmart { Button("Edit Rules…") { smartPlaylistToEdit = playlist } }
                                 Button("Rename…") {
                                     playlistToRename = playlist; playlistNameInput = playlist.name; showRenameAlert = true
                                 }

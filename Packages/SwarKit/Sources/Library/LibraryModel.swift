@@ -6,6 +6,7 @@ public final class LibraryModel {
     public private(set) var folders: [LibraryFolder] = []
     public private(set) var tracks: [LibraryTrack] = []
     public private(set) var playlists: [LibraryPlaylist] = []
+    public var manualPlaylists: [LibraryPlaylist] { playlists.filter { !$0.isSmart } }
     public private(set) var favoriteTrackIDs: Set<String> = []
     public private(set) var hiddenTrackCount = 0
     public private(set) var trackActionsRevision = 0
@@ -291,6 +292,24 @@ public final class LibraryModel {
             trackActionsRevision += 1
             await rescan()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func smartPlaylistPreview(_ definition: SmartPlaylistDefinition) async throws -> SmartPlaylistPreview {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        return try await repository.previewSmartPlaylist(definition)
+    }
+
+    public func saveSmartPlaylist(id: String? = nil, name: String, definition: SmartPlaylistDefinition) async throws -> LibraryPlaylist {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        let playlist = try await repository.saveSmartPlaylist(id: id, name: name, definition: definition)
+        await reloadPlaylists()
+        overviewRevision += 1
+        return playlist
+    }
+
+    public func playlistItems(for id: String) async throws -> [PlaylistTrackItem] {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        return try await repository.playlistTrackItems(playlistID: id)
     }
 
     public func reloadPlaylists() async {

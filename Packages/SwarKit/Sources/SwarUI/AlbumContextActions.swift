@@ -51,8 +51,8 @@ private struct AlbumContextActions: ViewModifier {
         }.disabled(working || player.isBusy || album.playableCount == 0)
         Menu("Add to Playlist", systemImage: "music.note.list") {
             Button("New Playlist…", systemImage: "plus") { name = ""; creatingPlaylist = true }
-            if !library.playlists.isEmpty { Divider() }
-            ForEach(library.playlists) { playlist in
+            if !library.manualPlaylists.isEmpty { Divider() }
+            ForEach(library.manualPlaylists) { playlist in
                 Button(playlist.name) { perform(.playlist(playlist)) }
             }
         }.disabled(working || !library.isReady)

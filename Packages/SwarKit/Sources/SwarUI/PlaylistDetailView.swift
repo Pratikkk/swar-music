@@ -12,6 +12,8 @@ public struct PlaylistDetailView: View {
     public let onRename: (LibraryPlaylist) -> Void
     public let onDelete: (LibraryPlaylist) -> Void
 
+    @State private var showRules = false
+    @State private var loadError: String?
     @State private var items: [PlaylistTrackItem] = []
     @State private var isLoading = true
     @State private var loadedPlaylistID: String?
@@ -56,7 +58,7 @@ public struct PlaylistDetailView: View {
                         playlistArtwork(size: coverSize)
                         VStack(alignment: .leading, spacing: 6) {
                             Spacer(minLength: 0)
-                            Text("Playlist")
+                            Text(playlist.isSmart ? "Smart Playlist" : "Playlist")
                                 .font(.caption.bold())
                                 .foregroundStyle(.secondary)
                                 .textCase(.uppercase)
@@ -68,6 +70,9 @@ public struct PlaylistDetailView: View {
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(.secondary)
 
+                            if playlist.isSmart {
+                                Button("Edit Rules…", systemImage: "slider.horizontal.3") { showRules = true }.controlSize(.small)
+                            }
                             Spacer(minLength: 16)
                             HStack(spacing: 10) {
                                 Button {
@@ -94,6 +99,7 @@ public struct PlaylistDetailView: View {
                                     Button("Add to Queue", systemImage: "text.badge.plus") { enqueuePlaylist(next: false) }
                                         .disabled(player.isBusy || !canPlay)
                                     Divider()
+                                    if playlist.isSmart { Button("Edit Rules…", systemImage: "slider.horizontal.3") { showRules = true } }
                                     Button("Rename Playlist…", systemImage: "pencil") { onRename(playlist) }
                                     Button("Delete Playlist", systemImage: "trash", role: .destructive) { onDelete(playlist) }
                                 } label: {
@@ -109,14 +115,17 @@ public struct PlaylistDetailView: View {
                         .frame(maxWidth: .infinity, minHeight: coverSize, alignment: .leading)
                     }
 
-                    if isLoading && items.isEmpty {
+                    if let loadError {
+                        ContentUnavailableView { Label("Couldn’t Load Playlist", systemImage: "exclamationmark.triangle") }
+                            description: { Text(loadError) } actions: { Button("Try Again") { Task { await reloadItems() } } }
+                    } else if isLoading && items.isEmpty {
                         ProgressView("Loading playlist…")
                             .frame(maxWidth: .infinity).padding(.top, 40)
                     } else if items.isEmpty {
                         ContentUnavailableView {
                             Label("Playlist is Empty", systemImage: "music.note.list")
                         } description: {
-                            Text("Add songs from your library by right-clicking any track and choosing Add to Playlist.")
+                            Text(playlist.isSmart ? "No songs match these rules. Edit the rules to change this playlist." : "Add songs from your library by right-clicking any track and choosing Add to Playlist.")
                         }
                         .padding(.top, 40)
                     } else if visibleItems.isEmpty {
@@ -137,6 +146,7 @@ public struct PlaylistDetailView: View {
                                     compact: compact,
                                     alternate: index.isMultiple(of: 2),
                                     isFirst: isFiltering || index == 0,
+                                    smart: playlist.isSmart,
                                     isLast: isFiltering || index == items.count - 1,
                                     busy: player.isBusy,
                                     library: library,
@@ -157,8 +167,18 @@ public struct PlaylistDetailView: View {
 
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: [playlist.id, String(library.trackActionsRevision)]) {
+        .sheet(isPresented: $showRules) {
+            SmartPlaylistEditorView(library: library, playlist: playlist) { _ in }
+        }
+        .task(id: [playlist.id, playlist.smartRulesJSON ?? "", String(library.trackActionsRevision), playlist.isSmart ? "\(library.overviewRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)" : ""]) {
             await reloadItems()
+        }
+        .task(id: playlist.isSmart) {
+            guard playlist.isSmart else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(60)); try Task.checkCancellation() } catch { return }
+                await reloadItems()
+            }
         }
     }
 
@@ -203,11 +223,14 @@ public struct PlaylistDetailView: View {
         loadGeneration = generation
         if loadedPlaylistID != playlistID { items = [] }
         isLoading = true
-        let result = await library.playlistTracks(for: playlistID)
-        guard !Task.isCancelled, loadGeneration == generation else { return }
-        items = result
-        loadedPlaylistID = playlistID
-        isLoading = false
+        do {
+            let result = try await library.playlistItems(for: playlistID)
+            guard !Task.isCancelled, loadGeneration == generation else { return }
+            items = result; loadError = nil; loadedPlaylistID = playlistID; isLoading = false
+        } catch {
+            guard !Task.isCancelled, loadGeneration == generation else { return }
+            items = []; loadError = error.localizedDescription; isLoading = false
+        }
     }
 
     private func entry(_ track: LibraryTrack) throws -> QueueEntry {
@@ -295,6 +318,7 @@ private struct PlaylistSongRow: View {
     let compact: Bool
     let alternate: Bool
     let isFirst: Bool
+    let smart: Bool
     let isLast: Bool
     let busy: Bool
     let library: LibraryModel
@@ -367,10 +391,12 @@ private struct PlaylistSongRow: View {
 
         }
         .songActions(library: library, track: item.track, busy: busy, play: play, playLabel: playing ? "Pause" : "Play", enqueue: enqueue) {
+            if !smart {
             Divider()
             if !isFirst { Button("Move Up", systemImage: "arrow.up") { moveUp() }.disabled(busy) }
             if !isLast { Button("Move Down", systemImage: "arrow.down") { moveDown() }.disabled(busy) }
             Button("Remove from Playlist", systemImage: "minus.circle", role: .destructive) { remove() }.disabled(busy)
+            }
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
