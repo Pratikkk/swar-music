@@ -253,6 +253,11 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
                     d->frame->extended_data[0] + ((size_t)(d->offset + frame) * channels + channel) * storage;
                 uint32_t value = 0;
                 memcpy(&value, src, storage);
+                // FFmpeg left-aligns reduced-precision signed PCM in S16/S32.
+                // For 24-in-32, discard the low padding byte, then emit the low
+                // three bytes on supported little-endian Macs. A logical shift
+                // preserves the 24-bit two's-complement sign bit (bit 23);
+                // arithmetic sign extension would only affect the omitted byte.
                 if (!d->info.is_float && d->info.pcm_bits < storage * 8) value >>= storage * 8 - d->info.pcm_bits;
                 if (A(av_get_packed_sample_fmt)(d->sample_format) == AV_SAMPLE_FMT_U8) value ^= 0x80;
                 memcpy(dest, &value, stride);

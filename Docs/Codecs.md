@@ -30,6 +30,26 @@ It does not normalize, dither, resample, or convert integer lossless sources to
 float. Float samples are copied without arithmetic. The bridge runs on the audio
 worker queue; the real-time AUHAL callback still only reads the atomic PCM ring.
 
+### Packed 24-bit extraction review
+
+For the bundled FFmpeg decoders, 24-bit signed integer samples occupy the upper
+24 bits of S32/S32P. On supported little-endian Apple Silicon and Intel Macs,
+the bridge shifts the unsigned bit pattern right by eight and copies its lowest
+three bytes. Logical shifting does not lose the packed sign: `0xFFFFFF00` (-1)
+becomes bytes `FF FF FF`, and `0x80000000` (minimum) becomes `00 00 80`.
+Arithmetic sign extension would affect only the fourth byte, which is omitted.
+Removing the shift would instead retain the padding byte and discard significant
+audio bits. No corruption was reproduced in this extraction path.
+
+`Packed24BitTests` forces the bundled bridge for PCM WAV (interleaved S32) and
+ALAC (planar S32P), using independently constructed signed extrema and varied
+low-bit stereo samples. It compares every output byte, tests irregular reads,
+checks buffer guard bytes, and seeks around decoder block boundaries. The
+existing FLAC/ALAC/WavPack matrix also checks full decoded reference bytes at
+24-bit/96 kHz and 24-bit/192 kHz. The full package suite passed 127 tests in 16
+suites after this review. This verifies decoder PCM, not physical DAC output;
+optional external APE/WMA fixtures and physical hardware checks remain separate.
+
 Short files without usable seek indexes fall back to an earlier decode position.
 WMA/ASF timestamp granularity and decoder preroll made exact direct seeks
 unreliable, so WMA seeking reopens the stream and decodes forward in bounded
