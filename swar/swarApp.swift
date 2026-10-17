@@ -14,6 +14,12 @@ import Library
 struct swarApp: App {
     @NSApplicationDelegateAdaptor(SwarAppDelegate.self) private var appDelegate
     @State private var library = LibraryModel()
+    init() {
+        if CommandLine.arguments.contains("--verify-bundled-codecs") {
+            BundledCodecVerification.runAndExit()
+        }
+    }
+
     var body: some Scene {
         Window("Swar", id: "library") {
             #if DEBUG

@@ -11,6 +11,15 @@ version="${SWAR_VERSION:-1.0.0}"
 build_number="${SWAR_BUILD_NUMBER:-$(git -C "$repo_root" rev-list --count HEAD)}"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 
+# Ad-hoc signatures have no Apple Team ID, so Hardened Runtime cannot match
+# the app to its bundled dylibs. Scope this exception to this local-only packager;
+# normal certificate-signed Xcode/production builds keep library validation.
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/swar-package.XXXXXX")"
+trap 'rm -rf "$work_dir"' EXIT
+local_entitlements="$work_dir/local-testing.entitlements"
+cp "$repo_root/swar/swar.entitlements" "$local_entitlements"
+/usr/libexec/PlistBuddy -c 'Add :com.apple.security.cs.disable-library-validation bool true' "$local_entitlements"
+
 echo "Building Swar $version ($build_number) for Apple Silicon and Intel…"
 if ! xcodebuild -project "$repo_root/swar.xcodeproj" -scheme swar \
     -configuration Release -destination 'generic/platform=macOS' \
@@ -23,9 +32,20 @@ if ! xcodebuild -project "$repo_root/swar.xcodeproj" -scheme swar \
     exit 1
 fi
 
-staging="$(mktemp -d "${TMPDIR:-/tmp}/swar-package.XXXXXX")"
-trap 'rm -rf "$staging"' EXIT
+staging="$work_dir/staging"
+mkdir -p "$staging"
 ditto "$build_dir/Build/Products/Release/swar.app" "$staging/Swar.app"
+# Sign only the packaged app with the explicit local entitlements. This also
+# strips Xcode's injected get-task-allow entitlement from the Release package.
+codesign --force --sign - --options runtime --entitlements "$local_entitlements" "$staging/Swar.app"
+codesign -d --entitlements :- "$staging/Swar.app" > "$work_dir/signed-entitlements.plist" 2>/dev/null
+for entitlement in com.apple.security.app-sandbox com.apple.security.files.user-selected.read-only com.apple.security.cs.disable-library-validation; do
+    test "$(/usr/libexec/PlistBuddy -c "Print :$entitlement" "$work_dir/signed-entitlements.plist")" = true
+done
+if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$work_dir/signed-entitlements.plist" >/dev/null 2>&1; then
+    echo "Release package unexpectedly permits debugger access" >&2
+    exit 1
+fi
 codesign --verify --deep --strict "$staging/Swar.app"
 lipo "$staging/Swar.app/Contents/MacOS/swar" -verify_arch arm64 x86_64
 for codec in "$staging/Swar.app/Contents/Frameworks/"*.dylib; do
@@ -33,6 +53,9 @@ for codec in "$staging/Swar.app/Contents/Frameworks/"*.dylib; do
 done
 test -s "$staging/Swar.app/Contents/Resources/AppIcon.icns"
 test -s "$staging/Swar.app/Contents/Resources/FFmpeg-LGPL.txt"
+# Signature verification alone cannot detect a runtime Team-ID mismatch. Execute
+# the actual signed app with its bundled libraries, without starting the UI/library.
+"$staging/Swar.app/Contents/MacOS/swar" --verify-bundled-codecs
 
 ln -s /Applications "$staging/Applications"
 cat > "$staging/Install Swar.txt" <<EOF

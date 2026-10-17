@@ -30,8 +30,32 @@ Optional environment variables are `SWAR_VERSION`, `SWAR_BUILD_NUMBER`,
 directory. Previous standalone app outputs are retained with a timestamp.
 
 The packaging command verifies code signatures, both executable architectures,
-bundled codec architectures, the icon, and license resources. It uses local ad-hoc
+bundled codec architectures, the icon, and license resources. It also launches the
+signed app with `--verify-bundled-codecs`, forces the bundled FFmpeg backend to
+decode known PCM samples, checks EOF and seeks back to compare samples. This runs
+without opening the UI, library database or audio device. A loading/decoding failure
+stops packaging before a DMG is produced. It uses local ad-hoc
 signing for testing on this Mac. It does not notarize or publish a release. Sharing
 downloads with other people requires a separate Developer ID signing and Apple
 notarization workflow; Gatekeeper acceptance on another Mac is not established by
 the local signature checks.
+
+## Local codec signing
+
+Hardened Runtime library validation requires an Apple/platform signature or a
+matching Apple Team ID. Ad-hoc signatures have no Team ID, so an ad-hoc Release
+app cannot load its ad-hoc codecs under that policy even when signature verification
+passes. For this local test packager only, the script copies the normal sandbox
+entitlements into a temporary file and adds
+`com.apple.security.cs.disable-library-validation`. The staged app is re-signed with exactly those entitlements, removing Xcode’s
+injected debugger entitlement. Packaging checks these entitlements before testing.
+The app remains sandboxed,
+with read-only user-selected file access and Hardened Runtime enabled. This exception
+relaxes library signature matching inside this app; it is not a system-wide change.
+The base `swar/swar.entitlements` and certificate-signed Xcode builds retain library
+validation. A public release should sign the app and every codec with the same Apple
+team instead of using this local exception.
+
+Files previously marked unreadable due to codec loading are retried on launch or
+Settings → Files → Rescan Now, even if their size and modification date are unchanged.
+Music files and metadata edits are preserved.
