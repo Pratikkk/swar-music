@@ -113,11 +113,12 @@ public actor LibraryRepository {
         }
     }
 
-    public func page(search: String = "", limit: Int = 500, recentFirst: Bool = false) throws -> LibraryPage {
+    public func page(search: String = "", limit: Int = 500, recentFirst: Bool = false, favoritesOnly: Bool = false) throws -> LibraryPage {
         let tokens = search.split(whereSeparator: \.isWhitespace).prefix(20)
         let pattern = tokens.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"*" }.joined(separator: " AND ")
         return try database.read { db in
             let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
+                + (favoritesOnly ? " AND EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isFavorite = 1)" : "")
             let condition = " WHERE " + visible + (pattern.isEmpty ? "" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
             var arguments: StatementArguments = pattern.isEmpty ? [] : [pattern]
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0

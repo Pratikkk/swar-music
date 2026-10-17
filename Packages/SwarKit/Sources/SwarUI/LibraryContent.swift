@@ -61,12 +61,15 @@ struct LibraryContent: View {
             }
             if library.totalCount > 0 {
                 HStack {
-                    Text("\(library.tracks.count) of \(library.totalCount) tracks")
+                    Text("\(library.tracks.count) of \(library.totalCount) \(library.totalCount == 1 ? "track" : "tracks")")
                         .foregroundStyle(.secondary)
                     if library.unreadableCount > 0 {
-                        Text("\(library.unreadableCount) unreadable in library").foregroundStyle(.orange)
+                        Text("\(library.unreadableCount) unreadable in \(section == "Favourites" ? "favourites" : "library")").foregroundStyle(.orange)
                     }
                     Spacer()
+                    if section == "Favourites" {
+                        favouritePlaybackButtons
+                    }
                     if library.tracks.count < library.totalCount {
                         Button("Load More") { Task { await library.loadMore() } }
                     }
@@ -75,9 +78,12 @@ struct LibraryContent: View {
             }
             if library.tracks.isEmpty {
                 ContentUnavailableView {
-                    Label(library.search.isEmpty ? "Your Music Library" : "No Matching Music", systemImage: "music.note.list")
+                    Label(library.search.isEmpty ? (section == "Favourites" ? "No Favourites Yet" : "Your Music Library") : "No Matching Music",
+                          systemImage: section == "Favourites" ? "star" : "music.note.list")
                 } description: {
-                    Text(library.search.isEmpty ? "Add a folder to browse your local music. Files stay where they are." : "Try a title, artist, or album name.")
+                    Text(library.search.isEmpty
+                         ? (section == "Favourites" ? "Choose Favourite from any song’s options menu to keep it here." : "Add a folder to browse your local music. Files stay where they are.")
+                         : "Try a title, artist, or album name.")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if section == "Albums" || section == "Recently Added" {
@@ -195,6 +201,24 @@ struct LibraryContent: View {
         return result
     }
 
+    private var favouritePlaybackButtons: some View {
+        HStack(spacing: 12) {
+            Button {
+                guard let first = library.tracks.first(where: { $0.error == nil }) else { return }
+                Task { await play(first, context: library.tracks, shuffle: false) }
+            } label: { Label("Play", systemImage: "play.fill") }
+            .accessibilityLabel("Play favourites in order")
+            Button {
+                guard let first = library.tracks.first(where: { $0.error == nil }) else { return }
+                Task { await play(first, context: library.tracks, shuffle: true) }
+            } label: { Label("Shuffle", systemImage: "shuffle") }
+            .accessibilityLabel("Shuffle favourites")
+        }
+        .foregroundStyle(.pink)
+        .buttonStyle(PlaybackButtonStyle(unavailable: library.tracks.allSatisfy { $0.error != nil }))
+        .disabled(player.isBusy || library.tracks.allSatisfy { $0.error != nil })
+    }
+
     private func trackList(_ tracks: [LibraryTrack]) -> some View {
         List {
             ForEach(tracks) { track in trackRow(track, context: tracks) }
@@ -216,8 +240,14 @@ struct LibraryContent: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(track.title).fontWeight(current ? .semibold : .medium)
-                        .foregroundStyle(current ? Color.accentColor : Color.primary).lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(track.title).fontWeight(current ? .semibold : .medium)
+                            .foregroundStyle(current ? Color.accentColor : Color.primary).lineLimit(1)
+                        if library.favoriteTrackIDs.contains(track.id) {
+                            Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.pink)
+                                .accessibilityLabel("Favourite")
+                        }
+                    }
                     Text(track.artist + " · " + track.album).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     if let error = track.error { Text(error).font(.caption).foregroundStyle(.orange).lineLimit(2) }
                 }

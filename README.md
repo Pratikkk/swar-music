@@ -58,7 +58,7 @@ for a compact summary. An orange dot marks a known conversion. Matching formats
 remain **Not verified** until the output path supplies sample-integrity evidence.
 Song ellipsis and right-click menus offer Add to Playlist (including New Playlist),
 Play Next/Last, Get Info, Favourite, Copy, Show in Finder, and Remove from Library.
-Favourites persist locally. Library removal leaves the original file in place and
+Favourites persist locally and have a dedicated sidebar screen with search, Play, and Shuffle. A pink star marks favourite songs. Library removal leaves the original file in place and
 keeps it excluded from folder scans; **Settings → Files → Restore Removed Songs**
 restores visibility. Playlist references are removed when a song is removed from the library.
 
@@ -82,7 +82,7 @@ for **Play Next** or **Add to Queue**. The player has previous/next controls
 (⌘← / ⌘→) and a Queue popover with Up Next, drag reordering, removal, and Clear Up Next.
 Previous restarts the current track after three seconds; otherwise it goes back.
 Shuffle mixes upcoming tracks while keeping the current track in place. The Repeat
-menu offers Off, All, and One; manual Next still advances in Repeat One.
+button cycles Off → All → One; manual Next still advances in Repeat One.
 Queue entries that cannot open keep an error row while the player tries the next.
 See [queue behavior and verification](Docs/Queue.md).
 

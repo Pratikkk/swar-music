@@ -19,6 +19,7 @@ public final class LibraryModel {
     public private(set) var errorMessage: String?
     public var search = ""
     public var recentFirst = false
+    public var favoritesOnly = false
     public private(set) var pageLimit = 500
     public private(set) var artworkDirectory: URL?
     private var repository: LibraryRepository?
@@ -142,10 +143,12 @@ public final class LibraryModel {
         refreshRevision += 1
         let revision = refreshRevision
         let query = search
+        let onlyFavorites = favoritesOnly
+        let recent = recentFirst
         do {
-            let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recentFirst)
+            let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites)
             let preferences = try await repository.trackPreferences()
-            guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search else { return }
+            guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, onlyFavorites == favoritesOnly, recent == recentFirst else { return }
             if tracks != page.tracks { tracks = page.tracks }
             if totalCount != page.count { totalCount = page.count }
             if unreadableCount != page.unreadableCount { unreadableCount = page.unreadableCount }

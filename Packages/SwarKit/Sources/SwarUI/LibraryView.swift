@@ -10,6 +10,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     case artists = "Artists"
     case albums = "Albums"
     case songs = "Songs"
+    case favorites = "Favourites"
     case genres = "Genres"
 
     var id: Self { self }
@@ -21,6 +22,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .artists: "music.mic"
         case .albums: "square.stack"
         case .songs: "music.note"
+        case .favorites: "star"
         case .genres: "guitars"
         }
     }
@@ -87,6 +89,7 @@ public struct LibraryView: View {
             }
         }
         .task(id: selection) {
+            library.favoritesOnly = selection == .section(.favorites)
             if case .section(let s) = selection {
                 library.recentFirst = s == .recentlyAdded || s == .home
             } else {

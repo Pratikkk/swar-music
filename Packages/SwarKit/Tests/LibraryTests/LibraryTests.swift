@@ -250,6 +250,37 @@ extension LibraryTests {
         #expect(try await repository.page(search: "Track 49999").count == 1)
     }
 
+    @Test func favouritesFilterBeforePaginationAndCombineWithSearch() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let template = try #require(try await repository.page().tracks.first)
+        let tracks = (0..<600).map { index in
+            var track = template
+            track.id = "fav-test-\(index)"; track.relativePath = "\(index).wav"
+            track.title = "Song \(index)"; track.trackNumber = index + 1
+            return track
+        }
+        try await repository.saveTracks(tracks)
+        // This favourite lies outside the first unfiltered page.
+        try await repository.setFavorite(trackID: tracks[599].id, favorite: true)
+        try await repository.setFavorite(trackID: tracks[598].id, favorite: true)
+        let page = try await repository.page(limit: 1, favoritesOnly: true)
+        #expect(page.count == 2 && page.tracks.count == 1)
+        #expect(try await repository.page(limit: 500, favoritesOnly: true).tracks.map(\.id) == [tracks[598].id, tracks[599].id])
+        #expect(try await repository.page(search: "Song 599", favoritesOnly: true).tracks.map(\.id) == [tracks[599].id])
+        #expect(try await repository.page(search: "Song 100", favoritesOnly: true).count == 0)
+        try await repository.setFavorite(trackID: tracks[599].id, favorite: false)
+        #expect(try await repository.page(favoritesOnly: true).count == 1)
+        try await repository.removeTrackFromLibrary(trackID: tracks[598].id)
+        #expect(try await repository.page(favoritesOnly: true).count == 0)
+        #expect(try await repository.page().count == 600)
+    }
+
     @MainActor @Test func restoredMonitoredFolderAutomaticallyImportsUpdatesAndRemovesFiles() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -363,6 +394,15 @@ extension LibraryTests {
         let track = try #require(model.tracks.first)
         await model.toggleFavorite(track)
         #expect(model.favoriteTrackIDs.contains(track.id))
+        model.favoritesOnly = true
+        await model.reload(resetLimit: true)
+        #expect(model.tracks.map(\.id) == [track.id] && model.totalCount == 1)
+        await model.toggleFavorite(track)
+        #expect(model.tracks.isEmpty && model.totalCount == 0)
+        model.favoritesOnly = false
+        await model.reload(resetLimit: true)
+        #expect(model.tracks.map(\.id) == [track.id])
+        await model.toggleFavorite(track)
         model.shutdown()
         let restored = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
         await restored.start()
