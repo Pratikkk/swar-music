@@ -5,6 +5,8 @@ import FormatInfo
 
 @MainActor
 struct HomeView: View {
+    @Environment(\.swarDensity) private var density
+    @Environment(\.swarPalette) private var palette
     let library: LibraryModel
     let player: Player
     let openNowPlaying: () -> Void
@@ -17,11 +19,11 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: density.sectionGap) {
                 HStack(spacing: 14) {
                     Text("स्व").font(.system(size: 30, weight: .semibold))
-                        .foregroundStyle(SwarTheme.accent).frame(width: 58, height: 58)
-                        .background(SwarTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
+                        .foregroundStyle(palette.accent).frame(width: 58, height: 58)
+                        .background(palette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Home").font(.system(size: 32, weight: .semibold, design: .serif))
                     }
@@ -81,7 +83,7 @@ struct HomeView: View {
     private func metric(_ count: Int, title: String, symbol: String) -> some View {
         Label {
             Text(count.formatted()).fontWeight(.semibold) + Text(" " + title)
-        } icon: { Image(systemName: symbol).foregroundStyle(SwarTheme.accent) }
+        } icon: { Image(systemName: symbol).foregroundStyle(palette.accent) }
         .font(.system(size: 12)).foregroundStyle(.secondary)
     }
 
@@ -108,13 +110,13 @@ struct HomeView: View {
                 Button { Task { await player.togglePlayback() } } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
-                        .frame(width: 48, height: 48).background(SwarTheme.buttonFill, in: Circle())
+                        .frame(width: 48, height: 48).background(palette.buttonFill, in: Circle())
                 }
                 .buttonStyle(PlaybackButtonStyle()).disabled(player.isBusy)
                 .accessibilityLabel(player.isPlaying ? "Pause current song" : "Continue listening")
             }
             .padding(20).background(SwarTheme.surface, in: RoundedRectangle(cornerRadius: 20))
-            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(SwarTheme.accent.opacity(0.12)))
+            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(palette.accent.opacity(0.12)))
         }
     }
 
@@ -123,11 +125,11 @@ struct HomeView: View {
             HStack {
                 heading("Favourites", symbol: "star")
                 Spacer()
-                Button("View All", action: openFavourites).buttonStyle(.plain).foregroundStyle(SwarTheme.accent)
+                Button("View All", action: openFavourites).buttonStyle(.plain).foregroundStyle(palette.accent)
             }
             if tracks.isEmpty {
                 HStack(spacing: 12) {
-                    Image(systemName: "star").foregroundStyle(SwarTheme.accent)
+                    Image(systemName: "star").foregroundStyle(palette.accent)
                     Text("No favourites yet")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
@@ -145,7 +147,7 @@ struct HomeView: View {
                                     Text(track.artist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                                 Image(systemName: track.error == nil ? "star.fill" : "exclamationmark.triangle")
-                                    .font(.system(size: 10)).foregroundStyle(track.error == nil ? SwarTheme.accent : .orange)
+                                    .font(.system(size: 10)).foregroundStyle(track.error == nil ? palette.accent : .orange)
                             }.padding(12).background(SwarTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                         }
                         .buttonStyle(PlaybackButtonStyle(unavailable: track.error != nil))
@@ -162,9 +164,9 @@ struct HomeView: View {
             HStack {
                 heading("Recent arrivals", symbol: "sparkle")
                 Spacer()
-                Button("View All", action: openRecent).buttonStyle(.plain).foregroundStyle(SwarTheme.accent)
+                Button("View All", action: openRecent).buttonStyle(.plain).foregroundStyle(palette.accent)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 200), spacing: 16, alignment: .top)], alignment: .leading, spacing: 20) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 200), spacing: density.gridGap, alignment: .top)], alignment: .leading, spacing: density.gridGap) {
                 ForEach(albums) { album in
                     VStack(alignment: .leading, spacing: 6) {
                         ZStack(alignment: .bottomTrailing) {
@@ -180,7 +182,7 @@ struct HomeView: View {
                             } label: {
                                 Image(systemName: "play.fill").font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.white).frame(width: 32, height: 32)
-                                    .background(SwarTheme.buttonFill, in: Circle())
+                                    .background(palette.buttonFill, in: Circle())
                             }.buttonStyle(PlaybackButtonStyle(unavailable: album.playableCount == 0))
                                 .disabled(player.isBusy || album.playableCount == 0)
                                 .padding(8).accessibilityLabel("Play album " + album.title)
@@ -202,12 +204,12 @@ struct HomeView: View {
             HStack {
                 heading("Music folders", symbol: "folder")
                 Spacer()
-                Button("Add Folder", action: addFolder).buttonStyle(.plain).foregroundStyle(SwarTheme.accent)
+                Button("Add Folder", action: addFolder).buttonStyle(.plain).foregroundStyle(palette.accent)
                     .disabled(library.isScanning)
             }
             ForEach(library.folders) { folder in
                 HStack(spacing: 12) {
-                    Image(systemName: "folder").font(.title3).foregroundStyle(SwarTheme.accent)
+                    Image(systemName: "folder").font(.title3).foregroundStyle(palette.accent)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(URL(fileURLWithPath: folder.path).lastPathComponent).font(.system(size: 13, weight: .medium))
                         Text(folder.path).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)

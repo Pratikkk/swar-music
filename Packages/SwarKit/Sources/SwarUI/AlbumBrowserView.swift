@@ -12,6 +12,7 @@ enum AlbumSortOrder: String, CaseIterable, Identifiable {
 
 @MainActor
 struct AlbumBrowserView: View {
+    @Environment(\.swarDensity) private var density
     let library: LibraryModel
     let player: Player
     let recent: Bool
@@ -129,7 +130,7 @@ struct AlbumBrowserView: View {
                     LazyVStack(alignment: .leading, spacing: 20) {
                         ForEach(sections, id: \.title) { section in
                             if recent { Text(section.title).font(.system(size: 17, weight: .semibold)).padding(.top, 8) }
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: max(120, min(220, coverSize))), spacing: 20, alignment: .top)], alignment: .leading, spacing: 24) {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: max(120, min(220, coverSize))), spacing: density.gridGap, alignment: .top)], alignment: .leading, spacing: density.gridGap + 4) {
                                 ForEach(section.albums) { album in
                                     AlbumBrowserCard(album: album, artworkURL: library.artworkURL(album.artworkKey),
                                         busy: player.isBusy || actionInProgress,
@@ -251,6 +252,7 @@ struct AlbumBrowserView: View {
 }
 
 private struct AlbumBrowserCard: View {
+    @Environment(\.swarPalette) private var palette
     let album: LibraryAlbumSummary
     let artworkURL: URL?
     let busy: Bool
@@ -267,7 +269,7 @@ private struct AlbumBrowserCard: View {
                     .buttonStyle(.plain).focused($focus, equals: .cover).accessibilityLabel("Open \(album.title), \(album.artist)")
                 Button(action: play) {
                     Image(systemName: "play.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                        .frame(width: 34, height: 34).background(SwarTheme.buttonFill, in: Circle())
+                        .frame(width: 34, height: 34).background(palette.buttonFill, in: Circle())
                 }.buttonStyle(PlaybackButtonStyle(unavailable: album.playableCount == 0))
                     .disabled(busy || album.playableCount == 0).padding(8)
                     .focused($focus, equals: .play).opacity(hovered || focus != nil ? 1 : 0)

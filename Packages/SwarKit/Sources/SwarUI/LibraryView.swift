@@ -38,6 +38,7 @@ private enum SidebarSelection: Hashable {
 /// Local library browsing and the single-file playback surface.
 @MainActor
 public struct LibraryView: View {
+    @Environment(\.swarPalette) private var palette
     @State private var selection: SidebarSelection? = .section(.home)
     @AppStorage("albumSortOrder") private var albumSortOrder: AlbumSortOrder = .artist
     @AppStorage("reverseAlbumSort") private var reverseAlbumSort = false
@@ -174,8 +175,8 @@ public struct LibraryView: View {
     private var windowPresentation: some View {
         libraryLayout
         .toolbarBackground(.hidden, for: .windowToolbar)
-        .tint(SwarTheme.accent)
-        .accentColor(SwarTheme.accent)
+        .tint(palette.accent)
+        .accentColor(palette.accent)
         .fileImporter(isPresented: $showImporter, allowedContentTypes: importingFolder ? [.folder] : [.item]) { result in
             switch result {
             case .success(let url):
@@ -349,7 +350,7 @@ public struct LibraryView: View {
                     .pickerStyle(.inline)
                 } label: {
                     Image(systemName: "magnifyingglass")
-                        .foregroundStyle(library.searchScope == .all ? Color.secondary : SwarTheme.accent)
+                        .foregroundStyle(library.searchScope == .all ? Color.secondary : palette.accent)
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .accessibilityLabel("Search field: " + library.searchScope.rawValue)
@@ -376,8 +377,8 @@ public struct LibraryView: View {
         VStack(spacing: 0) {
             HStack(spacing: 11) {
                 Text("स्व").font(.system(size: 25, weight: .semibold))
-                    .foregroundStyle(SwarTheme.accent).frame(width: 42, height: 42)
-                    .background(SwarTheme.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
+                    .foregroundStyle(palette.accent).frame(width: 42, height: 42)
+                    .background(palette.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
                     .accessibilityHidden(true)
                 Text("Swar").font(.system(size: 24, weight: .semibold, design: .serif))
                 Spacer(minLength: 0)
@@ -403,7 +404,7 @@ public struct LibraryView: View {
                             Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
                                 .frame(width: 24, height: 24).contentShape(Circle())
                         }
-                        .buttonStyle(.plain).foregroundStyle(SwarTheme.accent)
+                        .buttonStyle(.plain).foregroundStyle(palette.accent)
                         .help("New Playlist").accessibilityLabel("Create New Playlist")
                     }.padding(.top, 16).padding(.trailing, 4)
                     ForEach(library.playlists) { playlist in
@@ -422,11 +423,11 @@ public struct LibraryView: View {
                     ForEach(library.folders) { folder in
                         HStack(spacing: 10) {
                             Image(systemName: "folder").font(.system(size: 14)).frame(width: 22)
-                                .foregroundStyle(SwarTheme.accent.opacity(0.8))
+                                .foregroundStyle(palette.accent.opacity(0.8))
                             Text(URL(fileURLWithPath: folder.path).lastPathComponent)
                                 .font(.system(size: 12)).lineLimit(1)
                             Spacer(minLength: 0)
-                            Circle().fill(library.isMonitoring(folder) ? SwarTheme.accent : .orange)
+                            Circle().fill(library.isMonitoring(folder) ? palette.accent : .orange)
                                 .frame(width: 5, height: 5).accessibilityHidden(true)
                         }
                         .padding(.horizontal, 12).frame(minHeight: 34)

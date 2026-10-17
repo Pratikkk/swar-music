@@ -2,6 +2,8 @@ import SwiftUI
 
 /// One selection surface avoids competing native and custom highlight colours.
 struct SidebarItemLabel: View {
+    @Environment(\.swarDensity) private var density
+    @Environment(\.swarPalette) private var palette
     let title: String
     let symbol: String
     var selected = false
@@ -10,7 +12,7 @@ struct SidebarItemLabel: View {
     @State private var hovered = false
 
     private var fill: Color {
-        if selected { return SwarTheme.accent.opacity(0.11) }
+        if selected { return palette.accent.opacity(0.11) }
         if hovered && enabled { return Color.primary.opacity(0.045) }
         return isSearch ? SwarTheme.surface.opacity(0.6) : .clear
     }
@@ -18,7 +20,7 @@ struct SidebarItemLabel: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: symbol).font(.system(size: 15, weight: selected ? .medium : .regular))
-                .frame(width: 22).foregroundStyle(selected ? SwarTheme.accent : Color.secondary)
+                .frame(width: 22).foregroundStyle(selected ? palette.accent : Color.secondary)
                 .accessibilityHidden(true)
             Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular)).lineLimit(1)
             Spacer(minLength: 0)
@@ -27,11 +29,11 @@ struct SidebarItemLabel: View {
                     .accessibilityHidden(true)
             }
         }
-        .foregroundStyle(selected ? SwarTheme.accent : .primary)
-        .padding(.horizontal, 12).frame(minHeight: 36)
+        .foregroundStyle(selected ? palette.accent : .primary)
+        .padding(.horizontal, 12).frame(minHeight: density.sidebarHeight)
         .background(fill, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10)
-            .strokeBorder(selected ? SwarTheme.accent.opacity(0.12) : (isSearch ? Color.primary.opacity(0.05) : .clear), lineWidth: 0.5))
+            .strokeBorder(selected ? palette.accent.opacity(0.12) : (isSearch ? Color.primary.opacity(0.05) : .clear), lineWidth: 0.5))
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .opacity(enabled ? 1 : 0.5)
         .onHover { hovered = $0 }

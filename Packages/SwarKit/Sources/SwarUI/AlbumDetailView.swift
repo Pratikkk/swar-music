@@ -5,6 +5,8 @@ import Player
 /// Album artwork and metadata share one scrolling surface with the track list.
 @MainActor
 struct AlbumDetailView: View {
+    @Environment(\.swarDensity) private var density
+    @Environment(\.swarPalette) private var palette
     @Environment(\.floatingPlayerClearance) private var playerClearance
     let title: String
     let artist: String
@@ -43,7 +45,7 @@ struct AlbumDetailView: View {
                             Text(title).font(.system(size: compact ? 22 : 26, weight: .bold))
                                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                             Text(artist).font(.system(size: compact ? 20 : 25, weight: .medium))
-                                .foregroundStyle(SwarTheme.accent).textSelection(.enabled)
+                                .foregroundStyle(palette.accent).textSelection(.enabled)
                             if !metadata.isEmpty {
                                 Text(metadata).font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -95,7 +97,7 @@ struct AlbumDetailView: View {
                             let newDisc = index == 0 || track.discNumber != tracks[index - 1].discNumber
                             if newDisc && Set(tracks.map(\.discNumber)).count > 1 {
                                 Text("Disc \(max(1, track.discNumber))")
-                                    .font(.headline).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 14)
+                                    .font(.headline).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, density.songPadding)
                             }
                             AlbumSongRow(track: track, library: library, fallbackNumber: index + 1,
                                          current: isCurrent(track), playing: isCurrent(track) && player.isPlaying,
@@ -114,7 +116,7 @@ struct AlbumDetailView: View {
         Label(title, systemImage: symbol)
             .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
             .frame(width: 100, height: 30)
-            .background(SwarTheme.buttonFill, in: RoundedRectangle(cornerRadius: 6))
+            .background(palette.buttonFill, in: RoundedRectangle(cornerRadius: 6))
             .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 
@@ -125,6 +127,7 @@ struct AlbumDetailView: View {
 }
 
 struct AlbumSongRow: View {
+    @Environment(\.swarDensity) private var density
     let track: LibraryTrack
     let library: LibraryModel
     let fallbackNumber: Int
@@ -172,7 +175,7 @@ struct AlbumSongRow: View {
 
         }
         .songActions(library: library, track: track, busy: busy, enqueue: enqueue)
-        .font(.system(size: 13)).padding(.horizontal, 12).padding(.vertical, 14)
+        .font(.system(size: 13)).padding(.horizontal, 12).padding(.vertical, density.songPadding)
         .background(current ? Color.accentColor.opacity(0.1) : Color.primary.opacity(hovered ? 0.055 : (alternate ? 0.025 : 0)), in: RoundedRectangle(cornerRadius: 6))
         .onHover { hovered = $0 }
     }

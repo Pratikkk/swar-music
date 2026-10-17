@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct ArtworkEditorView: View {
+    @Environment(\.swarPalette) private var palette
     let tracks: [LibraryTrack]
     let library: LibraryModel
     let player: Player
@@ -77,7 +78,7 @@ struct ArtworkEditorView: View {
                 .disabled(busy || targets.isEmpty || (!resetting && chosenKey == nil))
             }
         }
-        .padding(24).frame(width: 540).background(SwarTheme.canvas).tint(SwarTheme.accent)
+        .padding(24).frame(width: 540).background(SwarTheme.canvas).tint(palette.accent)
         .interactiveDismissDisabled(saving)
         .task(id: wholeAlbum) { await loadScope() }
         .fileImporter(isPresented: $choosingImage, allowedContentTypes: [.image]) { result in

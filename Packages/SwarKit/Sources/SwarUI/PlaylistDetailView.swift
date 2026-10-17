@@ -4,6 +4,7 @@ import Player
 
 @MainActor
 public struct PlaylistDetailView: View {
+    @Environment(\.swarPalette) private var palette
     @Environment(\.floatingPlayerClearance) private var playerClearance
     public let playlist: LibraryPlaylist
     public let library: LibraryModel
@@ -169,7 +170,7 @@ public struct PlaylistDetailView: View {
                 CoverArt(url: url, title: playlist.name, cornerRadius: 10)
             } else {
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(LinearGradient(colors: [SwarTheme.buttonFill, .indigo.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .fill(LinearGradient(colors: [palette.buttonFill, .indigo.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing))
                     .overlay {
                         Image(systemName: "music.note.list")
                             .font(.system(size: size * 0.38))
@@ -186,7 +187,7 @@ public struct PlaylistDetailView: View {
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 100, height: 30)
-            .background(SwarTheme.buttonFill, in: RoundedRectangle(cornerRadius: 6))
+            .background(palette.buttonFill, in: RoundedRectangle(cornerRadius: 6))
             .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 
@@ -286,6 +287,7 @@ public struct PlaylistDetailView: View {
 }
 
 private struct PlaylistSongRow: View {
+    @Environment(\.swarDensity) private var density
     let item: PlaylistTrackItem
     let index: Int
     let current: Bool
@@ -372,7 +374,7 @@ private struct PlaylistSongRow: View {
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, density == .compact ? 4 : 8)
         .background(
             current ? Color.accentColor.opacity(0.1) : Color.primary.opacity(hovered ? 0.055 : (alternate ? 0.025 : 0)),
             in: RoundedRectangle(cornerRadius: 6)

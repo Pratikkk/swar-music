@@ -6,7 +6,10 @@ For regular use, install the packaged **Swar.app** in Applications. Build a loca
 DMG with `./scripts/package-macos.sh`; see [installation and updates](Docs/Installation.md).
 
 The library uses a floating glass player, a translucent native sidebar, and artwork-first
-album cards, with a warm canvas, violet accents, and serif Home headings. The sidebar
+album cards, with a warm canvas, curated accents, and serif Home headings.
+Settings → Appearance offers System/Light/Dark themes, five accent colours, and
+Compact/Comfortable spacing. Changes apply live and persist across launches; see
+[appearance settings](Docs/Appearance.md). The sidebar
 shares this identity with a “स्व” brand header, soft selections, folder status, and a
 compact Settings button. Home
 opens with Continue Listening, favourites, recent albums, and watched folders.

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// Settings and browsing share the same model, watchers, and security-scoped access.
 @MainActor
 public struct LibrarySettingsView: View {
+    @Environment(\.swarPalette) private var palette
     let library: LibraryModel
     @State private var showFolderPicker = false
     @State private var folderToRemove: LibraryFolder?
@@ -15,12 +16,14 @@ public struct LibrarySettingsView: View {
 
     public var body: some View {
         TabView {
+            AppearanceSettingsView()
+                .tabItem { Label("Appearance", systemImage: "paintpalette") }
             files
                 .tabItem { Label("Files", systemImage: "folder") }
         }
         .frame(width: 620, height: 470)
-        .tint(SwarTheme.accent)
-        .accentColor(SwarTheme.accent)
+        .tint(palette.accent)
+        .accentColor(palette.accent)
         .task { await library.start() }
         .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
             switch result {

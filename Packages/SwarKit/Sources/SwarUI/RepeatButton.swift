@@ -3,6 +3,7 @@ import Player
 
 @MainActor
 struct RepeatButton: View {
+    @Environment(\.swarPalette) private var palette
     let player: Player
 
     private var nextMode: RepeatMode {
@@ -16,7 +17,7 @@ struct RepeatButton: View {
     var body: some View {
         Button { player.setRepeatMode(nextMode) } label: {
             Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                .foregroundStyle(player.repeatMode == .off ? Color.secondary : SwarTheme.accent)
+                .foregroundStyle(player.repeatMode == .off ? Color.secondary : palette.accent)
                 .frame(width: 24, height: 32)
         }
         .buttonStyle(PlaybackButtonStyle(unavailable: !player.canTogglePlayback))

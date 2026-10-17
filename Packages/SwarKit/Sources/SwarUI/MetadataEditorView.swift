@@ -3,6 +3,7 @@ import Library
 
 @MainActor
 struct MetadataEditorView: View {
+    @Environment(\.swarPalette) private var palette
     let track: LibraryTrack
     let library: LibraryModel
     @Environment(\.dismiss) private var dismiss
@@ -52,7 +53,7 @@ struct MetadataEditorView: View {
                 }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(saving)
             }
         }
-        .padding(24).frame(width: 500).background(SwarTheme.canvas).tint(SwarTheme.accent)
+        .padding(24).frame(width: 500).background(SwarTheme.canvas).tint(palette.accent)
         .interactiveDismissDisabled(saving)
         .task { hasEdits = await library.hasMetadataEdits(track) }
     }

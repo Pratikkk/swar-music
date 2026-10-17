@@ -4,6 +4,8 @@ import Player
 
 @MainActor
 struct LibraryContent: View {
+    @Environment(\.swarDensity) private var density
+    @Environment(\.swarPalette) private var palette
     @Environment(\.floatingPlayerClearance) private var playerClearance
     let library: LibraryModel
     let player: Player
@@ -89,7 +91,7 @@ struct LibraryContent: View {
             } label: { Label("Shuffle", systemImage: "shuffle") }
             .accessibilityLabel("Shuffle favourites")
         }
-        .foregroundStyle(SwarTheme.accent)
+        .foregroundStyle(palette.accent)
         .buttonStyle(PlaybackButtonStyle(unavailable: library.tracks.allSatisfy { $0.error != nil }))
         .disabled(player.isBusy || library.tracks.allSatisfy { $0.error != nil })
     }
@@ -119,7 +121,7 @@ struct LibraryContent: View {
                         Text(track.title).fontWeight(current ? .semibold : .medium)
                             .foregroundStyle(current ? Color.accentColor : Color.primary).lineLimit(1)
                         if library.favoriteTrackIDs.contains(track.id) {
-                            Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(SwarTheme.accent)
+                            Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(palette.accent)
                                 .accessibilityLabel("Favourite")
                         }
                     }
@@ -139,7 +141,7 @@ struct LibraryContent: View {
                 .fixedSize(horizontal: true, vertical: false)
             }
             .songActions(library: library, track: track, busy: player.isBusy, enqueue: { enqueue(track, next: $0) })
-            .padding(.vertical, 6)
+            .padding(.vertical, density == .compact ? 3 : 6)
             .listRowBackground(current ? Color.accentColor.opacity(0.06) : Color.clear)
 
     }
@@ -169,6 +171,7 @@ struct LibraryContent: View {
 
 /// The cover is the entire hit target, keeping transport out of the text columns.
 private struct ArtworkPlaybackButton: View {
+    @Environment(\.swarDensity) private var density
     let url: URL?
     let album: String
     let title: String
@@ -183,7 +186,7 @@ private struct ArtworkPlaybackButton: View {
     var body: some View {
         Button(action: action) {
             CoverArt(url: url, title: album)
-                .frame(width: 44, height: 44)
+                .frame(width: density.artworkSize, height: density.artworkSize)
                 .overlay {
                     RoundedRectangle(cornerRadius: 6).fill(.black.opacity(hovered ? 0.12 : 0))
                     Image(systemName: unavailable ? "exclamationmark.triangle.fill" : (playing ? "pause.fill" : "play.fill"))

@@ -3,6 +3,7 @@ import Player
 
 @MainActor
 struct NowPlayingView: View {
+    @Environment(\.swarPalette) private var palette
     let player: Player
     let width: CGFloat
     let browseArtist: (String) -> Void
@@ -28,7 +29,7 @@ struct NowPlayingView: View {
                     Label("Up Next · \(player.upcomingEntries.count)", systemImage: "list.bullet")
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 10).frame(height: 28)
-                        .foregroundStyle(showQueue ? SwarTheme.accent : .primary)
+                        .foregroundStyle(showQueue ? palette.accent : .primary)
                         .background(.regularMaterial, in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -70,8 +71,8 @@ struct NowPlayingView: View {
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
         }
-        .clipped().tint(SwarTheme.accent)
-        .accentColor(SwarTheme.accent)
+        .clipped().tint(palette.accent)
+        .accentColor(palette.accent)
         .onExitCommand { dismiss() }
     }
 }

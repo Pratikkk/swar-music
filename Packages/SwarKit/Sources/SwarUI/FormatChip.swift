@@ -52,6 +52,7 @@ public struct FormatChip: View {
 }
 
 private struct SignalPathPopover: View {
+    @Environment(\.swarPalette) private var palette
     let info: FormatChipInfo
 
     private var statusSymbol: String {
@@ -85,7 +86,7 @@ private struct SignalPathPopover: View {
                     Text("Audio path").font(.system(size: 22, weight: .semibold, design: .serif))
                 }
                 Spacer()
-                Image(systemName: "waveform.path").font(.title2).foregroundStyle(SwarTheme.accent)
+                Image(systemName: "waveform.path").font(.title2).foregroundStyle(palette.accent)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -126,7 +127,7 @@ private struct SignalPathPopover: View {
             }
         }
         .padding(20).frame(width: 410, height: 550)
-        .background(SwarTheme.canvas).tint(SwarTheme.accent)
+        .background(SwarTheme.canvas).tint(palette.accent)
         .textSelection(.enabled)
     }
 
@@ -134,8 +135,8 @@ private struct SignalPathPopover: View {
                                      @ViewBuilder content: () -> Content) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Text("\(number)").font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(SwarTheme.accent).frame(width: 24, height: 24)
-                .background(SwarTheme.accent.opacity(0.08), in: Circle())
+                .foregroundStyle(palette.accent).frame(width: 24, height: 24)
+                .background(palette.accent.opacity(0.08), in: Circle())
             VStack(alignment: .leading, spacing: 7) {
                 Label(title, systemImage: symbol).font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)

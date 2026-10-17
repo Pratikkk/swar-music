@@ -23,6 +23,8 @@ private struct ArtistAlbum: Identifiable {
 /// Album artists keep compilations together; individual performers remain on song rows.
 @MainActor
 struct ArtistsView: View {
+    @Environment(\.swarDensity) private var density
+    @Environment(\.swarPalette) private var palette
     @Environment(\.floatingPlayerClearance) private var playerClearance
     let library: LibraryModel
     let player: Player
@@ -59,7 +61,7 @@ struct ArtistsView: View {
                 artistList.frame(width: listWidth)
                 Divider()
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 48) {
+                    LazyVStack(alignment: .leading, spacing: density == .compact ? 32 : 48) {
                         ForEach(visibleArtists) { artist in
                             artistSection(artist, compact: compact)
                         }
@@ -84,7 +86,7 @@ struct ArtistsView: View {
                     selectionRow(.all) {
                         HStack(spacing: 9) {
                             Image(systemName: "music.mic").font(.title2).frame(width: 36, height: 36)
-                                .foregroundStyle(SwarTheme.accent)
+                                .foregroundStyle(palette.accent)
                             Text("All Artists").fontWeight(.semibold)
                         }
                     }
@@ -116,9 +118,9 @@ struct ArtistsView: View {
             artistListFocused = true
         } label: {
             content()
-                .padding(.horizontal, 10).padding(.vertical, 9)
+                .padding(.horizontal, 10).padding(.vertical, density == .compact ? 5 : 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(selection == choice ? SwarTheme.accent : .primary)
+                .foregroundStyle(selection == choice ? palette.accent : .primary)
                 .background(selection == choice ? Color.primary.opacity(0.055) : .clear,
                             in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(RoundedRectangle(cornerRadius: 8))
@@ -265,7 +267,7 @@ struct ArtistsView: View {
     }
 
     private func circleIcon(_ symbol: String) -> some View {
-        Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(SwarTheme.accent)
+        Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(palette.accent)
             .frame(width: 26, height: 26).background(.primary.opacity(0.05), in: Circle())
     }
 

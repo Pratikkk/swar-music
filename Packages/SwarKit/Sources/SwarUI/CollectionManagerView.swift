@@ -5,6 +5,8 @@ import AppKit
 
 @MainActor
 struct CollectionManagerView: View {
+    @Environment(\.swarDensity) private var density
+    @Environment(\.swarPalette) private var palette
     let library: LibraryModel
     let player: Player
     let addFolder: () -> Void
@@ -157,9 +159,9 @@ struct CollectionManagerView: View {
                         Spacer(minLength: 4)
                         Text(summary.count(item).formatted()).monospacedDigit().fontWeight(.semibold)
                     }.font(.system(size: 12)).padding(10)
-                        .foregroundStyle(filter == item ? SwarTheme.accent : .primary)
-                        .background(filter == item ? SwarTheme.accent.opacity(0.1) : SwarTheme.surface, in: RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(filter == item ? SwarTheme.accent.opacity(0.2) : .clear))
+                        .foregroundStyle(filter == item ? palette.accent : .primary)
+                        .background(filter == item ? palette.accent.opacity(0.1) : SwarTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(filter == item ? palette.accent.opacity(0.2) : .clear))
                 }.buttonStyle(.plain).accessibilityAddTraits(filter == item ? .isSelected : [])
                     .accessibilityLabel("\(item.rawValue), \(summary.count(item)) songs")
             }
@@ -221,12 +223,12 @@ struct CollectionManagerView: View {
         Table(tracks, selection: $selected) {
             TableColumn("Song") { track in
                 HStack(spacing: 9) {
-                    CoverArt(url: library.artworkURL(track.artworkKey), title: track.album, cornerRadius: 5).frame(width: 30, height: 30)
+                    CoverArt(url: library.artworkURL(track.artworkKey), title: track.album, cornerRadius: 5).frame(width: density == .compact ? 24 : 30, height: density == .compact ? 24 : 30)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(track.title).fontWeight(.medium).lineLimit(1)
                         Text(track.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
-                }.padding(.vertical, 3)
+                }.padding(.vertical, density == .compact ? 1 : 3)
             }.width(min: 160, ideal: 240)
             TableColumn("Album", value: \.album).width(min: 110, ideal: 170)
             TableColumn("Format") { track in

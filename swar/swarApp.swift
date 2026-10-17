@@ -18,14 +18,16 @@ struct swarApp: App {
         Window("Swar", id: "library") {
             #if DEBUG
             if CommandLine.arguments.contains("--format-chip-preview") {
-                FormatChipPreview()
+                FormatChipPreview().swarAppearancePreferences()
             } else {
                 LibraryView(library: library)
                     .frame(minWidth: 760, minHeight: 500)
+                    .swarAppearancePreferences()
             }
             #else
             LibraryView(library: library)
                 .frame(minWidth: 760, minHeight: 500)
+                .swarAppearancePreferences()
             #endif
         }
         .windowStyle(.hiddenTitleBar)
@@ -33,7 +35,7 @@ struct swarApp: App {
         .commands { SwarCommands() }
 
         Settings {
-            LibrarySettingsView(library: library)
+            LibrarySettingsView(library: library).swarAppearancePreferences()
         }
     }
 }

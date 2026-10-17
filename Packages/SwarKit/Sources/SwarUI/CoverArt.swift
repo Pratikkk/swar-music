@@ -3,6 +3,7 @@ import ImageIO
 
 /// Shared local thumbnail view; decoding and the bounded memory cache live off the UI actor.
 struct CoverArt: View {
+    @Environment(\.swarPalette) private var palette
     let url: URL?
     var title = ""
     var cornerRadius: CGFloat = 6
@@ -12,7 +13,7 @@ struct CoverArt: View {
     @State private var loadedURL: URL?
 
     private var tint: Color {
-        let colors: [Color] = [.indigo, .teal, .purple, .blue, .orange, SwarTheme.accent]
+        let colors: [Color] = [.indigo, .teal, .purple, .blue, .orange, palette.accent]
         return colors[title.utf8.reduce(0) { ($0 + Int($1)) % colors.count }]
     }
 
