@@ -48,7 +48,9 @@ jobs:
 
       - name: Run package tests
         run: |
-          swift test --package-path Packages/SwarKit \
+          # Avoid unrelated test gates competing for the small runner's shared
+          # executors. Individual tests still exercise their own concurrency.
+          swift test --no-parallel --package-path Packages/SwarKit \
             --scratch-path "$RUNNER_TEMP/swar-tests" 2>&1 | tee dist/tests.log
 
       - name: Verify late EOF race with sanitizers

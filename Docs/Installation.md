@@ -8,7 +8,9 @@ This workflow is manual-only: pushes, pull requests, and schedules do not trigge
 installer builds. Builds for the same branch queue rather than interrupting one
 another.
 
-The Mac runner executes package tests and the sanitized EOF-race regression, then
+The Mac runner executes all package tests serially to avoid interference between
+test-only blocking gates on small runners; the tests' internal concurrency checks
+remain enabled. It also runs the sanitized EOF-race regression, then
 builds both Apple Silicon and Intel slices using Xcode 26.2. Packaging checks
 signatures, entitlements, codecs, runtime decoding/seeking, checksums, and the DMG.
 The completed run includes a direct DMG artifact plus companion ZIP, checksums,
