@@ -193,7 +193,14 @@ public struct LibraryView: View {
         }
         .onChange(of: selection) { selectedAlbum = nil }
         .sheet(isPresented: $showNowPlaying) {
-            NowPlayingView(player: player, width: max(640, min(900, windowWidth - 40)))
+            NowPlayingView(player: player, width: max(640, min(900, windowWidth - 40)),
+                browseArtist: { artist in
+                    library.searchScope = .artist; library.search = artist
+                    selection = .section(.artists)
+                }, browseAlbum: { album in
+                    library.searchScope = .album; library.search = album
+                    selection = .section(.albums)
+                })
         }
     }
 

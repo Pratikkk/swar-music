@@ -46,6 +46,7 @@ library without stopping playback. See [Now Playing notes](Docs/NowPlaying.md).
 Playback starts and seeks use a smaller initial decode buffer, retain song details,
 and coalesce rapid seek requests to the latest position. See [responsiveness notes](Docs/PlaybackResponsiveness.md)
 for hardware timings and remaining limitations.
+Expanded Now Playing uses an artwork-tinted background, artist/album library links, a wide scrubber with remaining time, and unified transport controls. Up Next keeps playback controls visible in compact windows.
 
 ## Current milestone: compact library layout
 

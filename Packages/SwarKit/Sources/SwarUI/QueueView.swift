@@ -47,10 +47,11 @@ struct QueueView: View {
                             Button { player.removeUpcoming(entry.id) } label: { Image(systemName: "xmark") }
                                 .buttonStyle(.borderless).accessibilityLabel("Remove \(entry.title) from queue")
                         }
+                        .listRowBackground(Color.clear)
                     }
                     .onMove { player.moveUpcoming(from: $0, to: $1) }
                 }
-                .listStyle(.inset)
+                .listStyle(.plain).scrollContentBackground(.hidden)
                 .disabled(player.isBusy)
             }
             let failures = player.queue.filter { $0.error != nil && $0.id != player.currentEntryID }

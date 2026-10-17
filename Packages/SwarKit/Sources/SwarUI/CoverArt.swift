@@ -6,6 +6,8 @@ struct CoverArt: View {
     let url: URL?
     var title = ""
     var cornerRadius: CGFloat = 6
+    var crossfade = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cover: CoverBitmap?
     @State private var loadedURL: URL?
 
@@ -18,8 +20,9 @@ struct CoverArt: View {
         GeometryReader { geometry in
             ZStack {
                 LinearGradient(colors: [tint.opacity(0.2), tint.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                if let cover, loadedURL == url {
+                if let cover, crossfade || loadedURL == url {
                     Image(decorative: cover.image, scale: 1).resizable().scaledToFill()
+                        .id(loadedURL).transition(.opacity)
                 } else {
                     Image(systemName: "music.note")
                         .font(.system(size: min(geometry.size.width, geometry.size.height) * 0.36, weight: .medium))
@@ -31,6 +34,7 @@ struct CoverArt: View {
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay { RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5) }
         }
+        .animation(crossfade && !reduceMotion ? .easeInOut(duration: 0.18) : nil, value: loadedURL)
         .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)
         .task(id: url) {

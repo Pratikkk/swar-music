@@ -21,6 +21,7 @@ struct SleepTimerMenu: View {
                 .frame(width: 24, height: 32)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .tint(timer.deadline == nil ? Color.secondary : .pink)
         .accessibilityLabel("Sleep Timer")
         .accessibilityValue(timer.deadline.map { "Pauses at " + $0.formatted(date: .omitted, time: .shortened) } ?? "Off")
         .help(timer.deadline.map { "Sleep Timer · Pauses at " + $0.formatted(date: .omitted, time: .shortened) } ?? "Sleep Timer · Off")

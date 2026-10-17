@@ -46,14 +46,6 @@ struct ToolbarPlayer: View {
         }
     }
 
-    private var nextRepeatMode: RepeatMode {
-        switch player.repeatMode {
-        case .off: .all
-        case .all: .one
-        case .one: .off
-        }
-    }
-
     private var bar: some View {
         HStack(spacing: 12) {
             HStack(spacing: 6) {
@@ -77,16 +69,7 @@ struct ToolbarPlayer: View {
                 }
                     .buttonStyle(PlaybackButtonStyle(unavailable: !player.canGoNext))
                     .accessibilityLabel("Next Track").disabled(!player.canGoNext || player.isBusy)
-                Button { player.setRepeatMode(nextRepeatMode) } label: {
-                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : .pink)
-                        .frame(width: 24, height: 32)
-                }
-                .accessibilityLabel("Repeat")
-                .accessibilityValue(player.repeatMode.rawValue)
-                .accessibilityHint("Switch to Repeat " + nextRepeatMode.rawValue)
-                .help("Repeat: " + player.repeatMode.rawValue + " · Click for " + nextRepeatMode.rawValue)
-                .disabled(!player.canTogglePlayback || player.isBusy)
+                RepeatButton(player: player)
                 SleepTimerMenu(timer: player.sleepTimer)
             }
             .buttonStyle(PlaybackButtonStyle())

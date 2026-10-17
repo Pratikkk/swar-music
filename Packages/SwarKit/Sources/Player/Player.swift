@@ -44,6 +44,9 @@ public final class Player {
         guard let currentURL else { return nil }
         return queue.first { $0.url == currentURL } ?? (standaloneEntry?.url == currentURL ? standaloneEntry : nil)
     }
+    public var currentArtist: String? { currentMediaEntry?.artist }
+    public var currentAlbum: String? { currentMediaEntry?.album }
+
     public var canSetOutputVolume: Bool {
         !isBusy && !isShutDown && outputVolume.canSet && (volumeDeviceID == nil || volumeDeviceID == outputVolume.deviceID)
     }
