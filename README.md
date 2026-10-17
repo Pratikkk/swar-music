@@ -11,6 +11,9 @@ navigation, editing and Finder access. See [context menus](Docs/ContextMenus.md)
 
 For regular use, install the packaged **Swar.app** in Applications. Build a local
 DMG with `./scripts/package-macos.sh`; see [installation and updates](Docs/Installation.md).
+For an on-demand GitHub build, use **Actions → Build DMG → Run workflow**. The run
+provides a downloadable universal DMG after tests and package verification pass.
+Ordinary pushes do not trigger installer builds.
 
 The library uses a floating glass player, a translucent native sidebar, and artwork-first
 album cards, with a warm canvas, curated accents, and serif Home headings.

@@ -1,5 +1,27 @@
 # Install Swar for regular testing
 
+## Build on GitHub when needed
+
+Open the repository's **Actions → Build DMG → Run workflow**. Select the branch
+and app version (three numeric components, for example `1.0.0`), then run it.
+This workflow is manual-only: pushes, pull requests, and schedules do not trigger
+installer builds. Builds for the same branch queue rather than interrupting one
+another.
+
+The Mac runner executes package tests and the sanitized EOF-race regression, then
+builds both Apple Silicon and Intel slices using Xcode 26.2. Packaging checks
+signatures, entitlements, codecs, runtime decoding/seeking, checksums, and the DMG.
+The completed run includes a direct DMG artifact plus companion ZIP, checksums,
+build metadata, and logs. Open **Artifacts** or use the run summary's download
+link. Downloads require GitHub sign-in and expire after 30 days. This does not
+create a public GitHub Release or perform Apple notarization.
+
+The checksum file uses portable filenames. Put it beside the downloaded DMG and
+app ZIP, then run `shasum -a 256 -c Swar-<version>-build<number>.sha256` from that
+folder. The build number uses the complete Git commit count, matching local builds.
+
+## Install
+
 Swar runs on macOS 14 or later. Local test packages include Apple Silicon and Intel
 executables, bundled codecs, licenses, and the स्व app icon. Xcode and Homebrew are
 not needed to run the packaged app.

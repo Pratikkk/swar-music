@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Local testing package; no Apple distribution credentials are required.
+# Ad-hoc testing package (local or CI); no Apple distribution credentials required.
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 output_dir="${1:-$repo_root/dist}"
 mkdir -p "$output_dir"
@@ -77,5 +77,6 @@ if [[ -e "$output_dir/Swar.app" ]]; then
     mv "$output_dir/Swar.app" "$backup"
 fi
 ditto "$staging/Swar.app" "$output_dir/Swar.app"
-shasum -a 256 "$artifact.dmg" "$artifact.zip" > "$artifact.sha256"
+# Portable names allow checksums to be verified after downloading CI artifacts.
+(cd "$output_dir" && shasum -a 256 "$(basename "$artifact").dmg" "$(basename "$artifact").zip") > "$artifact.sha256"
 echo "Ready: $artifact.dmg"
