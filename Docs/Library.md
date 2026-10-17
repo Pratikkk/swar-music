@@ -24,6 +24,25 @@ time, adjacent cover state, and cached artwork skips unchanged files. Failed fil
 remain visible and are retried. Missing entries are reconciled only after a complete,
 successful enumeration; inaccessible roots retain their stored tracks.
 
+The scan entry point is explicitly nonisolated, with `@concurrent` on Swift 6.2+
+to move the complete scan off the caller's actor even when caller-isolated async
+defaults are enabled. Earlier Swift compilers use their existing nonisolated
+async executor behavior. Enumeration retains its detached utility task and explicit
+cancellation forwarding. Four structured inspection workers remain bounded, and
+only progress/model publication hops back to MainActor.
+
+A main-actor regression test scans twelve real files through gated inspectors.
+The main actor must resume to release the gates, inspection must stay off the
+main thread, and active inspection must never exceed four workers. This test
+also passed before the explicit executor annotation under the current package
+defaults: the reported UI blocking was not reproduced in that configuration.
+The app target's MainActor default does not itself annotate the package scanner.
+The same responsiveness test also passed in a clean build with the Library
+target's `NonisolatedNonsendingByDefault` feature enabled temporarily. The normal
+package settings remain unchanged. The full suite passed 136 tests in 18 suites;
+the device-monitor test was made independent of unrelated global-queue scheduling
+while its simulated HAL probe is blocked.
+
 Recursive FSEvents trigger a debounced incremental rescan. Scans also run at launch
 and through Rescan. Changes arriving during a scan schedule another pass.
 

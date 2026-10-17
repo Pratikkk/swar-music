@@ -21,7 +21,12 @@ public struct AudioTags: Codable, Sendable {
     public var replayGainAlbum: String?
 }
 
-struct MediaInspector: Sendable {
+protocol MediaInspecting: Sendable {
+    var artworkDirectory: URL { get }
+    func inspect(file: ScanFile, folder: LibraryFolder, prior: ScanFingerprint?) -> LibraryTrack
+}
+
+struct MediaInspector: MediaInspecting {
     let codecDirectory: URL?
     let artworkDirectory: URL
 

@@ -6,7 +6,58 @@ import os
 import Testing
 @testable import Library
 
+private struct GatedMediaInspector: MediaInspecting {
+    struct Observations: Sendable {
+        var active = 0, peak = 0, inspections = 0
+        var usedMainThread = false, timedOut = false
+    }
+    let base: MediaInspector
+    let entered = DispatchSemaphore(value: 0)
+    let permit = DispatchSemaphore(value: 0)
+    let observations = OSAllocatedUnfairLock(initialState: Observations())
+    var artworkDirectory: URL { base.artworkDirectory }
+    func waitForEntry() -> Bool { entered.wait(timeout: .now() + 4) == .success }
+    func inspect(file: ScanFile, folder: LibraryFolder, prior: ScanFingerprint?) -> LibraryTrack {
+        observations.withLock {
+            $0.active += 1; $0.inspections += 1; $0.peak = max($0.peak, $0.active)
+            $0.usedMainThread = $0.usedMainThread || Thread.isMainThread
+        }
+        defer { observations.withLock { $0.active -= 1 } }
+        entered.signal()
+        let timeout = permit.wait(timeout: .now() + 2) == .timedOut
+        observations.withLock { $0.timedOut = $0.timedOut || timeout }
+        return base.inspect(file: file, folder: folder, prior: prior)
+    }
+}
+
 struct LibraryTests {
+    @MainActor @Test func scanFromMainActorAllowsUIProgressWhileInspectorsAreBlocked() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        for index in 0..<12 {
+            try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"),
+                to: music.appendingPathComponent("\(index).wav"))
+        }
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        let inspector = GatedMediaInspector(base: MediaInspector(codecDirectory: codecs, artworkDirectory: artwork))
+        let scanner = LibraryScanner(repository: repository, inspector: inspector)
+        let scan = Task { @MainActor in try await scanner.scan(folder: folder, root: music) }
+        // Await a worker without blocking the test's main actor. If inspection
+        // runs on that actor, its bounded gate times out before we can resume.
+        let entered = await Task.detached { inspector.waitForEntry() }.value
+        #expect(entered)
+        for _ in 0..<12 { inspector.permit.signal() }
+        let summary = try await scan.value
+        #expect(summary.total == 12 && summary.failed == 0)
+        let observed = inspector.observations.withLock { $0 }
+        #expect(observed.inspections == 12)
+        #expect(!observed.usedMainThread)
+        #expect(!observed.timedOut, "UI work must resume and unblock inspection before the worker gate expires")
+        #expect(observed.peak <= 4)
+    }
+
     @MainActor @Test func smartPlaylistModelTracksRescansFavouritesAndHiddenSongs() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

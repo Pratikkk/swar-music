@@ -17,13 +17,24 @@ public struct ScanSummary: Sendable {
 
 public struct LibraryScanner: Sendable {
     private let repository: LibraryRepository
-    private let inspector: MediaInspector
+    private let inspector: any MediaInspecting
     public init(repository: LibraryRepository, artworkDirectory: URL, codecDirectory: URL? = nil) {
         self.repository = repository
         inspector = MediaInspector(codecDirectory: codecDirectory, artworkDirectory: artworkDirectory)
     }
 
-    public func scan(folder: LibraryFolder, root: URL,
+    init(repository: LibraryRepository, inspector: any MediaInspecting) {
+        self.repository = repository
+        self.inspector = inspector
+    }
+
+    // Keep fingerprint I/O and task-group coordination off the caller's actor,
+    // including with Swift 6.2's caller-isolated async defaults. Older compilers
+    // already move nonisolated async functions to the generic executor (SE-0338).
+    #if compiler(>=6.2)
+    @concurrent
+    #endif
+    public nonisolated func scan(folder: LibraryFolder, root: URL,
                      progress: @escaping @Sendable (LibraryProgress) async -> Void = { _ in }) async throws -> ScanSummary {
         try Task.checkCancellation()
         let enumeration = Task.detached(priority: .utility) { try Self.enumerate(root) }

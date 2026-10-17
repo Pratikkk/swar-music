@@ -17,23 +17,18 @@ struct OutputDeviceMonitorTests {
         let firstRead = OSAllocatedUnfairLock(initialState: true)
         let monitor = OutputDeviceMonitor(initial: old, queue: queue) {
             if firstRead.withLock({ let first = $0; $0 = false; return first }) {
-                started.signal(); finish.wait()
+                started.signal(); _ = finish.wait(timeout: .now() + 4)
             }
             return fresh
         }
         monitor.setActive(true)
         #expect(started.wait(timeout: .now() + 2) == .success)
-        let status = OSAllocatedUnfairLock<OutputDeviceStatus?>(initialState: nil)
-        let read = DispatchSemaphore(value: 0)
-        DispatchQueue.global().async {
-            let value = monitor.status
-            status.withLock { $0 = value }
-            read.signal()
-        }
-        #expect(read.wait(timeout: .now() + 1) == .success)
+        // Read directly while the probe is gated. An extra global-queue hop
+        // makes this assertion depend on unrelated test load and scheduling.
+        let status = monitor.status
+        #expect(status.output == old)
         finish.signal()
         queue.sync { }
-        #expect(status.withLock { $0?.output } == old)
         #expect(monitor.status.output == fresh)
         monitor.setActive(false)
     }
