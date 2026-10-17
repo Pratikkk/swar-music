@@ -28,7 +28,6 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
       SWAR_VERSION: ${{ inputs.version }}
-      SWAR_BUILD_DIR: ${{ runner.temp }}/swar-distribution-build
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -45,6 +44,7 @@ jobs:
           xcodebuild -version
           swift --version
           mkdir -p dist
+          printf 'SWAR_BUILD_DIR=%s/swar-distribution-build\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Run package tests
         run: |
