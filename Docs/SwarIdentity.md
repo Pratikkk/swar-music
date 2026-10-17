@@ -7,8 +7,7 @@ material player remain. Playback buttons use a deep violet fill with white symbo
 Home is the default landing screen. It contains library-wide song, album, and
 lossless counts; a restored/current song with Resume/Pause; favourite song
 shortcuts; up to eight distinct recent albums; and watched-folder status with
-links to folder settings. Album artwork opens the album browser with its title
-filter. Its overlay Play button loads the full album in disc/track order, including
+links to folder settings. Album artwork opens that album directly in the album browser. Its overlay Play button loads the full album in disc/track order, including
 songs outside the library's initial page. Hidden songs are excluded, unreadable
 songs are skipped, and albums without playable songs have disabled Play buttons.
 Searching Home uses the existing song search; clearing the query returns Home.

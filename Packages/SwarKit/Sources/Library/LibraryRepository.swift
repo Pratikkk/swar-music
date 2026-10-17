@@ -163,6 +163,21 @@ public actor LibraryRepository {
         }
     }
 
+    /// Search selects matching albums; metadata and counts always describe the full visible album.
+    public func albums(search: String = "", searchScope: TrackSearchScope = .all) throws -> [LibraryAlbumSummary] {
+        let query = TrackSearchQuery(search)
+        let pattern = query.expression(scope: searchScope)
+        return try database.read { db in
+            let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
+            let match = query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND (albumArtist, album) IN (SELECT albumArtist, album FROM tracks WHERE " + visible + " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?))"
+            let arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
+            let rows = try Row.fetchAll(db, sql: "SELECT albumArtist, album, MAX(artworkKey) AS artworkKey, COUNT(*) AS trackCount, SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) AS playableCount, MIN(NULLIF(year, '')) AS year, MAX(addedAt) AS addedAt, SUM(CASE WHEN duration > 0 THEN duration ELSE 0 END) AS duration FROM tracks WHERE " + visible + match + " GROUP BY albumArtist, album ORDER BY albumArtist COLLATE NOCASE, album COLLATE NOCASE", arguments: arguments)
+            return rows.map { row in
+                LibraryAlbumSummary(title: row["album"], artist: row["albumArtist"], artworkKey: row["artworkKey"], trackCount: row["trackCount"], playableCount: row["playableCount"], year: row["year"], addedAt: row["addedAt"], duration: row["duration"])
+            }
+        }
+    }
+
     public func albumTracks(artist: String, title: String) throws -> [LibraryTrack] {
         try database.read { db in
             try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks WHERE albumArtist = ? AND album = ? AND NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1) ORDER BY discNumber, trackNumber, title COLLATE NOCASE, id", arguments: [artist, title])

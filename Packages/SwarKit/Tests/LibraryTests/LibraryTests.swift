@@ -284,8 +284,17 @@ extension LibraryTests {
         #expect(overview.recentAlbums.last?.artworkKey == "two-cover")
         #expect(Set(overview.favourites.map(\.id)) == [tracks[0].id, tracks[599].id])
         #expect(try await repository.albumTracks(artist: "A", title: "One").count == 600)
+        let browsed = try await repository.albums()
+        #expect(browsed.count == 2 && browsed.map(\.trackCount) == [600, 1])
+        #expect(try await repository.albums(search: "Song 0", searchScope: .title).first?.trackCount == 600)
+        #expect(try await repository.albums(search: "Song 599", searchScope: .title).first?.title == "Two")
+        #expect(try await repository.albums(search: "One", searchScope: .album).first?.trackCount == 600)
+        #expect(try await repository.albums(search: "One", searchScope: .title).isEmpty)
+        #expect(try await repository.albums(search: "*** : ()").isEmpty)
+
         #expect(try await repository.overview(limit: 1).recentAlbums.count == 1)
         try await repository.removeTrackFromLibrary(trackID: tracks[599].id)
+        #expect(try await repository.albums(search: "Song 599", searchScope: .title).isEmpty)
         let afterRemoval = try await repository.overview()
         #expect(afterRemoval.albumCount == 1 && afterRemoval.trackCount == 600)
         #expect(afterRemoval.favourites.map(\.id) == [tracks[0].id])
@@ -295,6 +304,38 @@ extension LibraryTests {
         let empty = try await repository.overview()
         #expect(empty.trackCount == 0 && empty.albumCount == 0 && empty.losslessCount == 0)
         #expect(empty.recentAlbums.isEmpty && empty.favourites.isEmpty)
+    }
+
+    @Test func albumSearchKeepsArtistsDistinctAndReturnsCompleteVisibleMetadata() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        var first = try #require(try await repository.page().tracks.first)
+        first.title = "Needle"; first.album = "Same Title"; first.albumArtist = "Artist A"
+        first.year = "2020"; first.duration = 30; first.addedAt = Date(timeIntervalSince1970: 10)
+        var second = first
+        second.id = "second"; second.title = "Other"; second.trackNumber = 2; second.duration = 60
+        second.error = "Unavailable"; second.artworkKey = "cover"; second.addedAt = Date(timeIntervalSince1970: 20)
+        var third = first
+        third.id = "third"; third.albumArtist = "Artist B"; third.year = nil
+        try await repository.saveTracks([first, second, third])
+        let albums = try await repository.albums(search: "Need", searchScope: .title)
+        #expect(albums.count == 2)
+        let album = try #require(albums.first { $0.artist == "Artist A" })
+        #expect(album.trackCount == 2 && album.playableCount == 1)
+        #expect(album.duration == 90 && album.year == "2020" && album.artworkKey == "cover")
+        #expect(album.addedAt == Date(timeIntervalSince1970: 20))
+        #expect(try await repository.albumTracks(artist: album.artist, title: album.title).count == 2)
+        try await repository.removeTrackFromLibrary(trackID: first.id)
+        #expect(try await repository.albums(search: "Need", searchScope: .title).map(\.artist) == ["Artist B"])
+        let visible = try #require(try await repository.albums().first { $0.artist == "Artist A" })
+        #expect(visible.trackCount == 1 && visible.playableCount == 0 && visible.duration == 60)
+        try await repository.removeFolder(folder.id)
+        #expect(try await repository.albums().isEmpty)
     }
 
     @Test func expandedSearchMatchesScopesPunctuationAccentsAndIndianScripts() async throws {

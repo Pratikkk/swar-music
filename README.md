@@ -8,7 +8,10 @@ DMG with `./scripts/package-macos.sh`; see [installation and updates](Docs/Insta
 The library uses a floating glass player, a translucent native sidebar, and artwork-first
 album cards, with a warm canvas, violet accents, and serif Home headings. Home
 opens with Continue Listening, favourites, recent albums, and watched folders.
-Recently Added groups albums by month. See [Swar identity notes](Docs/SwarIdentity.md). Radio is omitted. Open an album by clicking its cover or title, or play it
+Recently Added groups albums by month. Albums browse the full library, with adjustable
+cover sizes, saved title/artist/year/recent sorting, and album context menus.
+Song search finds complete albums, and Back preserves the grid position. See
+[album browsing](Docs/AlbumBrowsing.md). See [Swar identity notes](Docs/SwarIdentity.md). Radio is omitted. Open an album by clicking its cover or title, or play it
 using the button over its artwork. Album details show large cover art, artist and
 genre/year tags, Play and Shuffle actions, numbered songs, duration, and queue menus.
 Play starts in disc/track order; Shuffle includes the whole album. Library actions (open file, add folder, rescan)

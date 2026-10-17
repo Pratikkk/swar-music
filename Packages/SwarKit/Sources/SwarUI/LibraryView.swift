@@ -40,6 +40,7 @@ public struct LibraryView: View {
         .flatMap { NSImage(contentsOf: $0) } ?? NSImage(named: NSImage.applicationIconName) ?? NSImage()
     @State private var selection: SidebarSelection? = .section(.home)
     @AppStorage("albumSortOrder") private var albumSortOrder: AlbumSortOrder = .artist
+    @AppStorage("reverseAlbumSort") private var reverseAlbumSort = false
     @AppStorage("songSortOrder") private var songSortOrder: TrackSortOrder = .album
     @AppStorage("reverseSongSort") private var reverseSongSort = false
     @FocusState private var searchFocused: Bool
@@ -192,7 +193,9 @@ public struct LibraryView: View {
                     .onChange(of: geometry.size.width) { _, width in windowWidth = width }
             }
         }
-        .onChange(of: selection) { selectedAlbum = nil }
+        .onChange(of: selection) { old, new in
+            if old != .section(.home) || new != .section(.albums) { selectedAlbum = nil }
+        }
         .sheet(isPresented: $showNowPlaying) {
             NowPlayingView(player: player, width: max(640, min(900, windowWidth - 40)),
                 browseArtist: { artist in
@@ -261,9 +264,14 @@ public struct LibraryView: View {
                     openFavourites: { selection = .section(.favorites) },
                     openRecent: { selection = .section(.recentlyAdded) },
                     browseAlbum: { album in
-                        library.searchScope = .album; library.search = album.title
+                        library.search = ""
                         selection = .section(.albums)
+                        selectedAlbum = album.id
                     }, addFolder: openFolderPicker)
+            } else if selection == .section(.albums) || selection == .section(.recentlyAdded) {
+                AlbumBrowserView(library: library, player: player,
+                    recent: selection == .section(.recentlyAdded), selectedAlbum: $selectedAlbum,
+                    sortOrder: albumSortOrder, reversed: reverseAlbumSort)
             } else {
                 let sectionName: String = {
                     if case .section(let s) = selection {
@@ -272,8 +280,7 @@ public struct LibraryView: View {
                     return "Recently Added"
                 }()
                 LibraryContent(library: library, player: player,
-                               section: sectionName,
-                               selectedAlbum: $selectedAlbum, albumSortOrder: albumSortOrder)
+                               section: sectionName)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -307,6 +314,7 @@ public struct LibraryView: View {
                     Picker("Sort Albums", selection: $albumSortOrder) {
                         ForEach(AlbumSortOrder.allCases) { order in Text(order.rawValue).tag(order) }
                     }
+                    Toggle("Reverse Order", isOn: $reverseAlbumSort)
                     Divider()
                 }
                 if showsSongSort {

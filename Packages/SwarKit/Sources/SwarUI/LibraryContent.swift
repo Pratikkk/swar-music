@@ -2,47 +2,12 @@ import SwiftUI
 import Library
 import Player
 
-enum AlbumSortOrder: String, CaseIterable, Identifiable {
-    case title = "Album Title"
-    case artist = "Artist"
-    case recentlyAdded = "Recently Added"
-    var id: Self { self }
-}
-
 @MainActor
 struct LibraryContent: View {
     @Environment(\.floatingPlayerClearance) private var playerClearance
     let library: LibraryModel
     let player: Player
     let section: String
-    @Binding var selectedAlbum: String?
-    var albumSortOrder: AlbumSortOrder = .artist
-
-    private var albums: [AlbumGroup] {
-        Dictionary(grouping: library.tracks, by: { $0.albumArtist + "\u{1f}" + $0.album }).map { key, tracks in
-            AlbumGroup(id: key, title: tracks[0].album, artist: tracks[0].albumArtist, tracks: tracks.sorted {
-                if $0.discNumber != $1.discNumber { return $0.discNumber < $1.discNumber }
-                if $0.trackNumber != $1.trackNumber { return $0.trackNumber < $1.trackNumber }
-                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-            })
-        }.sorted {
-            if section == "Recently Added" || albumSortOrder == .recentlyAdded {
-                let first = $0.tracks.map(\.addedAt).max() ?? .distantPast
-                let second = $1.tracks.map(\.addedAt).max() ?? .distantPast
-                if first != second { return first > second }
-            }
-            if albumSortOrder == .title {
-                let titleOrder = $0.title.localizedStandardCompare($1.title)
-                if titleOrder != .orderedSame { return titleOrder == .orderedAscending }
-            }
-            let artistOrder = $0.artist.localizedStandardCompare($1.artist)
-            if artistOrder != .orderedSame { return artistOrder == .orderedAscending }
-            let titleOrder = $0.title.localizedStandardCompare($1.title)
-            if titleOrder != .orderedSame { return titleOrder == .orderedAscending }
-            return $0.id < $1.id
-        }
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             if let error = library.errorMessage {
@@ -86,8 +51,6 @@ struct LibraryContent: View {
                          : "Try different words or choose All Fields from the search icon.")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if section == "Albums" || section == "Recently Added" {
-                albumContent
             } else if section == "Artists" {
                 ArtistsView(library: library, player: player,
                             play: { track, context, shuffle in Task { await play(track, context: context, shuffle: shuffle) } },
@@ -111,94 +74,6 @@ struct LibraryContent: View {
 
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onChange(of: library.search) { selectedAlbum = nil }
-        .onChange(of: section) { selectedAlbum = nil }
-        .onChange(of: albums.map(\.id)) { _, ids in
-            if let selectedAlbum, !ids.contains(selectedAlbum) { self.selectedAlbum = nil }
-        }
-    }
-
-    @ViewBuilder private var albumContent: some View {
-        if let selectedAlbum, let album = albums.first(where: { $0.id == selectedAlbum }) {
-            AlbumDetailView(
-                title: album.title, artist: album.artist, tracks: album.tracks,
-                artworkURL: library.artworkURL(album.tracks.compactMap(\.artworkKey).first),
-                player: player, library: library,
-                playlists: library.playlists,
-                isCurrent: { track in
-                    player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
-                },
-                playAlbum: { shuffle in
-                    let playable = album.tracks.filter { $0.error == nil }
-                    if let first = playable.first {
-                        Task { await play(first, context: album.tracks, shuffle: shuffle) }
-                    }
-                },
-                playTrack: { track in
-                    Task {
-                        let current = player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
-                        if current { await player.togglePlayback() }
-                        else { await play(track, context: album.tracks) }
-                    }
-                },
-                enqueueTrack: { track, next in enqueue(track, next: next) },
-                enqueueAlbum: { next in
-                    do {
-                        let entries = try album.tracks.filter { $0.error == nil }.map { try entry($0) }
-                        for entry in next ? Array(entries.reversed()) : entries { player.enqueue(entry, playNext: next) }
-                    } catch { player.reportImportError(error) }
-                },
-                addAlbumToPlaylist: { playlist in
-                    let playable = album.tracks.filter { $0.error == nil }
-                    Task { await library.addTracks(playable, to: playlist) }
-                }
-            )
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(albumSections, id: \.title) { group in
-                        if section == "Recently Added" {
-                            Text(group.title).font(.system(size: 17, weight: .bold))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 28).padding(.top, 16).padding(.bottom, 8)
-                        }
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 200), spacing: 18, alignment: .top)], alignment: .leading, spacing: 26) {
-                            ForEach(group.albums) { album in
-                                let current = album.tracks.contains { track in
-                                    player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
-                                }
-                                AlbumGridCard(album: album,
-                                    artworkURL: library.artworkURL(album.tracks.compactMap(\.artworkKey).first),
-                                    current: current, playing: current && player.isPlaying, busy: player.isBusy,
-                                    open: { selectedAlbum = album.id }, play: {
-                                        if current { Task { await player.togglePlayback() } }
-                                        else if let first = album.tracks.first(where: { $0.error == nil }) {
-                                            Task { await play(first, context: album.tracks) }
-                                        }
-                                    })
-                            }
-                        }.padding(.horizontal, 28).padding(.top, 4).padding(.bottom, 28)
-                    }
-                }
-                .padding(.bottom, playerClearance)
-            }
-        }
-    }
-
-    private var albumSections: [(title: String, albums: [AlbumGroup])] {
-        guard section == "Recently Added" else { return [("Albums", albums)] }
-        let calendar = Calendar.current
-        let now = Date()
-        var result: [(title: String, albums: [AlbumGroup])] = []
-        for album in albums {
-            let date = album.tracks.map(\.addedAt).max() ?? .distantPast
-            let title: String
-            if calendar.isDate(date, equalTo: now, toGranularity: .month) { title = "This Month" }
-            else { title = date.formatted(.dateTime.month(.wide).year()) }
-            if let index = result.firstIndex(where: { $0.title == title }) { result[index].albums.append(album) }
-            else { result.append((title, [album])) }
-        }
-        return result
     }
 
     private var favouritePlaybackButtons: some View {
@@ -289,61 +164,6 @@ struct LibraryContent: View {
     private func enqueue(_ track: LibraryTrack, next: Bool) {
         do { player.enqueue(try entry(track), playNext: next) }
         catch { player.reportImportError(error) }
-    }
-}
-
-private struct AlbumGroup: Identifiable {
-    let id: String
-    let title: String
-    let artist: String
-    let tracks: [LibraryTrack]
-}
-
-private struct AlbumGridCard: View {
-    let album: AlbumGroup
-    let artworkURL: URL?
-    let current: Bool
-    let playing: Bool
-    let busy: Bool
-    let open: () -> Void
-    let play: () -> Void
-    @State private var hovered = false
-    @FocusState private var focus: CardFocus?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private enum CardFocus: Hashable { case cover, play, title }
-    private var unavailable: Bool { album.tracks.allSatisfy { $0.error != nil } }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .bottomTrailing) {
-                Button(action: open) {
-                    CoverArt(url: artworkURL, title: album.title, cornerRadius: 6)
-                }
-                .buttonStyle(.plain).focused($focus, equals: .cover)
-                .accessibilityLabel("Open \(album.title), \(album.artist)")
-                Button(action: play) {
-                    Image(systemName: playing ? "pause.fill" : "play.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white).frame(width: 32, height: 32)
-                        .background(.black.opacity(0.6), in: Circle())
-                }
-                .buttonStyle(PlaybackButtonStyle(unavailable: unavailable))
-                .focused($focus, equals: .play).disabled(busy || unavailable)
-                .opacity(hovered || current || focus != nil ? 1 : 0)
-                .padding(8).help("\(playing ? "Pause" : "Play") \(album.title)")
-                .accessibilityLabel("\(playing ? "Pause" : "Play") \(album.title)")
-            }
-            Button(action: open) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(album.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                    Text(album.artist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).focused($focus, equals: .title)
-            .help("\(album.title)\n\(album.artist)")
-        }
-        .onHover { hovered = $0 }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
     }
 }
 
