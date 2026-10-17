@@ -3,6 +3,30 @@ import RealtimeAudio
 import Testing
 
 struct RingBufferTests {
+    @Test func partialFinalBlockAndRepeatedDrainReadsDoNotCountUnderruns() throws {
+        let ring = try #require(swar_ring_create(5, 6))
+        defer { swar_ring_destroy(ring) }
+        let input = Array(UInt8(1)...UInt8(18))
+        #expect(input.withUnsafeBytes { swar_ring_write(ring, $0.baseAddress!, 3) } == 3)
+        swar_ring_finish(ring)
+        var output = [UInt8](repeating: 255, count: 30)
+        #expect(output.withUnsafeMutableBytes { swar_ring_read(ring, $0.baseAddress!, 5) } == 3)
+        #expect(output == input + [UInt8](repeating: 0, count: 12))
+        for _ in 0..<10 {
+            output = [UInt8](repeating: 255, count: 30)
+            #expect(output.withUnsafeMutableBytes { swar_ring_read(ring, $0.baseAddress!, 5) } == 0)
+            #expect(output == [UInt8](repeating: 0, count: 30))
+        }
+        #expect(swar_ring_consumed(ring) == 3)
+        #expect(swar_ring_underruns(ring) == 0)
+        swar_ring_reset(ring)
+        #expect(output.withUnsafeMutableBytes { swar_ring_read(ring, $0.baseAddress!, 5) } == 0)
+        #expect(swar_ring_underruns(ring) == 5, "Reset must restore starvation counting for the next stream")
+        swar_ring_finish(ring)
+        #expect(output.withUnsafeMutableBytes { swar_ring_read(ring, $0.baseAddress!, 5) } == 0)
+        #expect(swar_ring_underruns(ring) == 5, "EOF must not erase genuine earlier starvation")
+    }
+
     @Test func endOfFileSilenceIsNotAnUnderrun() throws {
         let ring = try #require(swar_ring_create(5, 6))
         defer { swar_ring_destroy(ring) }

@@ -39,6 +39,34 @@ Detection uses polling, not an immediate notification or a hard latency guarante
 it depends on monitor scheduling and driver response time. Physical disconnect,
 external rate changes, and audio underruns were not hardware-tested for this change.
 
+## EOF-tail underrun accounting
+
+A short ring read rechecks EOF after copying the initially available samples. If
+the producer published EOF during that copy, the reader acquires the final write
+position, copies any newly published final PCM, and zero-fills the remaining tail
+without increasing underruns. Reads after the final drain remain silent and do
+not advance consumed frames. Genuine shortages observed before EOF publication
+still count; finish does not erase earlier starvation. The producer must publish
+finish after its last write and must not write again until a stopped reset.
+
+`Tools/verify_ring_eof.c` deterministically publishes EOF during the copy, both
+with and without an additional final write. Its test-only copy interposition
+includes the production C source; no hooks or interposition ship in the app.
+Both cases fail against the previous implementation (three false underrun frames)
+and pass with the fix. Run from the repository root:
+
+```sh
+clang -std=c11 -Wall -Wextra -Werror \
+  -I Packages/SwarKit/Sources/RealtimeAudio/include Tools/verify_ring_eof.c \
+  -framework AudioUnit -framework AudioToolbox -o /tmp/swar-verify-ring-eof
+/tmp/swar-verify-ring-eof
+```
+
+The full package suite passed 135 tests in 18 suites, including partial final
+blocks, repeated late drains, reset/starvation counting, packed-24-bit wraparound,
+and concurrent producer/consumer ordering. These checks do not measure physical
+output underruns.
+
 Player snapshots update observable values only when they change. Source/output
 format descriptions are rebuilt only when their inputs change, and unchanged
 hardware volume no longer invalidates its views. Library reloads retain the

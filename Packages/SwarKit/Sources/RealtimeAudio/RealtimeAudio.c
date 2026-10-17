@@ -48,16 +48,33 @@ uint32_t swar_ring_write(SwarRing *ring, const void *source, uint32_t frames) {
     atomic_store_explicit(&ring->written, w + count, memory_order_release);
     return count;
 }
+static void copy_frames(const SwarRing *ring, void *destination, uint64_t r, uint32_t count) {
+    uint32_t offset = (uint32_t)(r % ring->capacity);
+    uint32_t first = count < ring->capacity - offset ? count : ring->capacity - offset;
+    memcpy(destination, ring->bytes + (size_t)offset * ring->stride, (size_t)first * ring->stride);
+    memcpy((uint8_t *)destination + (size_t)first * ring->stride, ring->bytes, (size_t)(count - first) * ring->stride);
+}
 uint32_t swar_ring_read(SwarRing *ring, void *destination, uint32_t frames) {
     uint64_t r = atomic_load_explicit(&ring->read, memory_order_relaxed);
     // Observing EOF before written ensures all final PCM writes are visible.
     uint64_t finished = atomic_load_explicit(&ring->finished, memory_order_acquire);
     uint64_t w = atomic_load_explicit(&ring->written, memory_order_acquire);
     uint32_t count = frames < w - r ? frames : (uint32_t)(w - r);
-    uint32_t offset = (uint32_t)(r % ring->capacity);
-    uint32_t first = count < ring->capacity - offset ? count : ring->capacity - offset;
-    memcpy(destination, ring->bytes + (size_t)offset * ring->stride, (size_t)first * ring->stride);
-    memcpy((uint8_t *)destination + (size_t)first * ring->stride, ring->bytes, (size_t)(count - first) * ring->stride);
+    copy_frames(ring, destination, r, count);
+    if (count < frames && !finished) {
+        // EOF can be published while the final PCM block is being copied. Do
+        // not classify its tail using the stale flag from the start of the read.
+        finished = atomic_load_explicit(&ring->finished, memory_order_acquire);
+        if (finished) {
+            // The producer may also have published its final samples since our
+            // first written load. Drain them before zero-filling the EOF tail.
+            w = atomic_load_explicit(&ring->written, memory_order_acquire);
+            uint32_t final_count = frames < w - r ? frames : (uint32_t)(w - r);
+            copy_frames(ring, (uint8_t *)destination + (size_t)count * ring->stride,
+                        r + count, final_count - count);
+            count = final_count;
+        }
+    }
     if (count < frames) {
         memset((uint8_t *)destination + (size_t)count * ring->stride, 0, (size_t)(frames - count) * ring->stride);
         if (!finished)
