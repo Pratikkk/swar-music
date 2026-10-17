@@ -2,7 +2,11 @@
 
 Swar uses an appearance-aware violet accent, warm light canvas, dark surfaces,
 and serif display headings on Home. The native translucent sidebar and floating
-material player remain. Playback buttons use a deep violet fill with white symbols.
+material player remain. The sidebar shares Home's serif Swar heading and violet
+“स्व” monogram, with rounded violet selection, subtle hover feedback, a Search
+shortcut hint, spaced section labels, folder-monitoring indicators, and an anchored
+local-library/settings card. Its navigation scrolls independently at compact heights;
+keyboard navigation, playlist actions, and folder context menus remain available. Playback buttons use a deep violet fill with white symbols.
 
 Home is the default landing screen. It contains library-wide song, album, and
 lossless counts; a restored/current song with Resume/Pause; favourite song
@@ -25,7 +29,7 @@ tracks; other restored files retain the saved-place message until playback.
 
 ## Validation
 
-- Swift package: 102 tests across 13 suites passed.
+- Swift package: 103 tests across 13 suites passed.
 - Debug macOS app built successfully under Swift 6.
 - New repository coverage checks counts, hidden tracks, favourites, distinct recent
   albums, and full album retrieval with 601 records, beyond the first 500 songs.
@@ -33,5 +37,7 @@ tracks; other restored files retain the saved-place message until playback.
   navigation to favourites/albums, and scrolling clear of the floating player.
 - Accessibility inspection verified the three signal-path stages and inactive
   output explanation. Window screenshots did not capture the separate popover.
+- Sidebar checks covered wide/compact layouts, scrolling, selected states, arrow-key
+  navigation, and ⌘F search focus.
 - Restored song, position, queue, and output volume were preserved. No new physical
   output-integrity measurement or separate dark-appearance visual pass was done.
