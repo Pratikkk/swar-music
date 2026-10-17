@@ -168,12 +168,8 @@ private final class EngineState: @unchecked Sendable {
 
     func snapshot() -> PlaybackSnapshot {
         defer { updateTimer() }
-        if let session, session.isPlaying {
-            do { try session.device.validate(rate: session.decoder.source.sampleRate) }
-            catch { try? session.pause(); self.error = error.localizedDescription }
-        }
         return PlaybackSnapshot(source: session?.decoder.source,
-                                output: session.flatMap { try? $0.device.description() },
+                                output: session?.outputStatus.output,
                                 duration: session?.duration ?? 0, position: session?.position ?? 0,
                                 isPlaying: session?.isPlaying ?? false,
                                 underrunFrames: session.flatMap { $0.ring.map(swar_ring_underruns) } ?? 0,
@@ -187,6 +183,8 @@ private final class EngineState: @unchecked Sendable {
 private final class OutputSession {
     let decoder: any AudioDecoding
     let device: OutputDevice
+    private var deviceMonitor: OutputDeviceMonitor?
+    var outputStatus: OutputDeviceStatus { deviceMonitor?.status ?? OutputDeviceStatus() }
     private var unit: AudioUnit?
     private(set) var ring: OpaquePointer?
     private let scratch: UnsafeMutableRawPointer
@@ -229,6 +227,7 @@ private final class OutputSession {
             try checkAudio(swar_install_render_callback(created, buffer), "Install PCM render callback")
             try checkAudio(AudioUnitInitialize(created), "Initialize AUHAL")
             try prime()
+            deviceMonitor = device.makeMonitor(rate: decoder.source.sampleRate)
             engineLog.info("Opened \(decoder.source.description, privacy: .public)")
         } catch { close(); throw error }
     }
@@ -238,17 +237,21 @@ private final class OutputSession {
     func play() throws {
         guard let unit, !closed else { throw AudioFailure("The output session is closed.") }
         try device.validate(rate: decoder.source.sampleRate)
+        // Explicit start may configure/query HAL. Periodic snapshots never do.
+        deviceMonitor?.reset(output: try? device.description())
         if position >= duration { try seek(0) }
         try prime()
         didFinish = false
         try checkAudio(AudioOutputUnitStart(unit), "Start AUHAL")
         isPlaying = true
+        deviceMonitor?.setActive(true)
     }
 
     func pause() throws {
         guard let unit else { return }
         try checkAudio(AudioOutputUnitStop(unit), "Pause AUHAL")
         isPlaying = false
+        deviceMonitor?.setActive(false)
     }
 
     func seek(_ seconds: Double) throws {
@@ -266,6 +269,7 @@ private final class OutputSession {
     }
 
     func pump() throws {
+        if let error = outputStatus.error { throw AudioFailure(error) }
         try fill()
         if eof, let ring, swar_ring_readable(ring) == 0 {
             try pause()
@@ -294,6 +298,8 @@ private final class OutputSession {
     func close() {
         guard !closed else { return }
         closed = true
+        deviceMonitor?.setActive(false)
+        deviceMonitor = nil
         if let unit {
             AudioOutputUnitStop(unit)
             AudioUnitUninitialize(unit)

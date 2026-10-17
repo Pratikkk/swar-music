@@ -20,7 +20,9 @@ public struct OutputDescription: Sendable, Equatable {
     }
 }
 
-/// All device calls run on the engine's serial queue, never on the render thread.
+/// Configuration/restoration run on the engine queue. Periodic read-only probes
+/// use an independent monitor queue and capture only immutable device identifiers.
+/// No device calls run on the render thread.
 final class OutputDevice {
     let id: AudioDeviceID
     let stream: AudioStreamID
@@ -83,6 +85,10 @@ final class OutputDevice {
     }
 
     func validate(rate: Double) throws {
+        try Self.validate(id: id, rate: rate)
+    }
+
+    private static func validate(id: AudioDeviceID, rate: Double) throws {
         let alive = try Self.value(id, kAudioDevicePropertyDeviceIsAlive, initial: UInt32(0))
         guard alive != 0 else { throw AudioFailure("The output device disconnected. Reconnect it and reopen the file.") }
         let actual = try Self.value(id, kAudioDevicePropertyNominalSampleRate, initial: Double(0))
@@ -90,6 +96,18 @@ final class OutputDevice {
     }
 
     func description() throws -> OutputDescription {
+        try Self.description(id: id, stream: stream, name: name)
+    }
+
+    func makeMonitor(rate: Double) -> OutputDeviceMonitor {
+        let id = id, stream = stream, name = name
+        return OutputDeviceMonitor(initial: try? description()) {
+            try Self.validate(id: id, rate: rate)
+            return try Self.description(id: id, stream: stream, name: name)
+        }
+    }
+
+    private static func description(id: AudioDeviceID, stream: AudioStreamID, name: String) throws -> OutputDescription {
         let physical = try Self.value(stream, kAudioStreamPropertyPhysicalFormat, initial: AudioStreamBasicDescription())
         let rawTransport = try? Self.value(id, kAudioDevicePropertyTransportType, initial: UInt32(0))
         let transport: DeviceTransport
