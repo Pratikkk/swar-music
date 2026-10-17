@@ -60,5 +60,7 @@ presentation; newly queued entries use the corrected library details.
   this is correctness coverage, not a UI frame-rate benchmark.
 - Native dark-appearance review covered the collection overview, selection,
   empty-duplicate state, editor opening/cancel, and the compact filter/table layout
-  at minimum window height. No real collection metadata or removals were changed
+  at minimum window height. Installed build checks also verified multi-selection
+  and opening/cancelling the New Playlist prompt. The playlist menu keeps its
+  intrinsic width. No real collection metadata or removals were changed
   during manual review. A pre-migration SQLite backup is retained locally in dist.

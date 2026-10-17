@@ -201,7 +201,7 @@ struct CollectionManagerView: View {
                                 Task { await library.addTracks(tracks, to: playlist) }
                             }
                         }
-                    }
+                    }.fixedSize()
                     Button("Remove…") { pendingRemoval = selected; showRemoval = true }
                 }
                 Button("Clear") { selected.removeAll() }
