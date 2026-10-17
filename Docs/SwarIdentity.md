@@ -5,7 +5,7 @@ and serif display headings on Home. The native translucent sidebar and floating
 material player remain. The sidebar shares Home's serif Swar heading and violet
 “स्व” monogram, with rounded violet selection, subtle hover feedback, a Search
 shortcut hint, spaced section labels, folder-monitoring indicators, and an anchored
-local-library/settings card. Its navigation scrolls independently at compact heights;
+Settings button. Decorative taglines and placeholder copy are omitted. Its navigation scrolls independently at compact heights;
 keyboard navigation, playlist actions, and folder context menus remain available. Playback buttons use a deep violet fill with white symbols.
 
 Home is the default landing screen. It contains library-wide song, album, and
@@ -25,7 +25,7 @@ Format-chip details now separate Source, Playback path, Output, and verification
 Matching formats still do not prove unchanged samples. A restored session can
 show source metadata without opening audio hardware; inactive output remains
 unavailable and unverified. This fallback source lookup covers loaded library
-tracks; other restored files retain the saved-place message until playback.
+tracks; other restored files show source information after playback begins.
 
 ## Validation
 
@@ -41,3 +41,8 @@ tracks; other restored files retain the saved-place message until playback.
   navigation, and ⌘F search focus.
 - Restored song, position, queue, and output volume were preserved. No new physical
   output-integrity measurement or separate dark-appearance visual pass was done.
+
+UI wording cleanup: removed Home/sidebar taglines, empty-playlist prose, redundant
+local-library counts, and saved-place copy. Simplified the Settings footer, audio
+path title, and empty album-search guidance. Debug build and native visual review
+passed; playback and library behaviour are unchanged.

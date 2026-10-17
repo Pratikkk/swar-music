@@ -24,8 +24,6 @@ struct HomeView: View {
                         .background(SwarTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Your music").font(.system(size: 32, weight: .semibold, design: .serif))
-                        Text("A place for your collection and your next listen.")
-                            .font(.system(size: 13)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                 }
@@ -106,7 +104,6 @@ struct HomeView: View {
                     Text(player.currentURL == nil ? "Your queue is ready" : player.title).font(.system(size: 21, weight: .semibold)).lineLimit(2)
                     Text(player.subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
                     if let info = player.formatInfo ?? currentSourceInfo { FormatChip(info: info) }
-                    else { Text("Your place is saved").font(.caption).foregroundStyle(.secondary) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Button { Task { await player.togglePlayback() } } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
@@ -131,7 +128,7 @@ struct HomeView: View {
             if tracks.isEmpty {
                 HStack(spacing: 12) {
                     Image(systemName: "star").foregroundStyle(SwarTheme.accent)
-                    Text("Favourite songs from their options menu to keep them close.")
+                    Text("No favourites yet")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
                     .background(SwarTheme.surface, in: RoundedRectangle(cornerRadius: 14))
@@ -220,7 +217,7 @@ struct HomeView: View {
                         .help(library.folderErrors[folder.id] ?? "Swar watches this folder for new and changed songs.")
                 }.padding(16).background(SwarTheme.surface, in: RoundedRectangle(cornerRadius: 14))
             }
-            SettingsLink { Text("Manage folders in Settings…").font(.caption).foregroundStyle(.secondary) }
+            SettingsLink { Text("Folder Settings…").font(.caption).foregroundStyle(.secondary) }
                 .buttonStyle(.plain)
         }
     }

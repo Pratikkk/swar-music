@@ -82,8 +82,7 @@ private struct SignalPathPopover: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Your sound, explained").font(.system(size: 22, weight: .semibold, design: .serif))
-                    Text("Source → playback path → output").font(.caption).foregroundStyle(.secondary)
+                    Text("Audio path").font(.system(size: 22, weight: .semibold, design: .serif))
                 }
                 Spacer()
                 Image(systemName: "waveform.path").font(.title2).foregroundStyle(SwarTheme.accent)

@@ -79,7 +79,7 @@ struct AlbumBrowserView: View {
         VStack(spacing: 0) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(recent ? "Recent arrivals" : "Your albums")
+                    Text(recent ? "Recent arrivals" : "Albums")
                         .font(.system(size: 26, weight: .semibold, design: .serif))
                     Text(collectionSummary)
                         .font(.caption).foregroundStyle(.secondary)
@@ -119,7 +119,7 @@ struct AlbumBrowserView: View {
                 ContentUnavailableView {
                     Label(TrackSearchQuery(library.search).isEmpty ? "No Albums Yet" : "No Matching Albums", systemImage: "square.stack")
                 } description: {
-                    Text(TrackSearchQuery(library.search).isEmpty ? "Add a music folder to start your collection." : "Try another artist, album, or song title. Matching songs lead to their complete albums.")
+                    Text(TrackSearchQuery(library.search).isEmpty ? "Add a music folder to start your collection." : "Try a different album, artist, or song.")
                 } actions: {
                     if !TrackSearchQuery(library.search).isEmpty { Button("Clear Search") { library.search = "" } }
                     else { SettingsLink { Text("Music Folder Settings…") } }

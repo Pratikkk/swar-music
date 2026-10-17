@@ -375,10 +375,7 @@ public struct LibraryView: View {
                     .foregroundStyle(SwarTheme.accent).frame(width: 42, height: 42)
                     .background(SwarTheme.accent.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Swar").font(.system(size: 24, weight: .semibold, design: .serif))
-                    Text("Your music, close by.").font(.system(size: 10)).foregroundStyle(.secondary)
-                }
+                Text("Swar").font(.system(size: 24, weight: .semibold, design: .serif))
                 Spacer(minLength: 0)
             }.padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 18)
             ScrollView {
@@ -405,11 +402,6 @@ public struct LibraryView: View {
                         .buttonStyle(.plain).foregroundStyle(SwarTheme.accent)
                         .help("New Playlist").accessibilityLabel("Create New Playlist")
                     }.padding(.top, 16).padding(.trailing, 4)
-                    if library.playlists.isEmpty {
-                        Text("Your playlists will appear here.").font(.system(size: 11))
-                            .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                    }
                     ForEach(library.playlists) { playlist in
                         navigationRow(.playlist(playlist.id), title: playlist.name, symbol: "music.note.list")
                             .help(playlist.name)
@@ -455,25 +447,13 @@ public struct LibraryView: View {
                 let next = direction == .down ? index + 1 : direction == .up ? index - 1 : index
                 if choices.indices.contains(next) { self.selection = choices[next] }
             }
-            HStack(spacing: 9) {
-                Image(systemName: "waveform.circle.fill").font(.system(size: 25)).foregroundStyle(SwarTheme.accent)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Local library").font(.system(size: 12, weight: .medium))
-                    Text("\(library.folders.count) \(library.folders.count == 1 ? "music folder" : "music folders")")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                SettingsLink {
-                    Image(systemName: "gearshape").font(.system(size: 13))
-                        .frame(width: 30, height: 30).background(SwarTheme.surface.opacity(0.65), in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain).foregroundStyle(.secondary).help("Settings (⌘,)")
-                .accessibilityLabel("Settings")
+            SettingsLink {
+                Label("Settings", systemImage: "gearshape")
+                    .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12).contentShape(RoundedRectangle(cornerRadius: 12))
+                    .background(SwarTheme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
             }
-            .padding(12).background(SwarTheme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.04), lineWidth: 0.5))
+            .buttonStyle(.plain).foregroundStyle(.secondary).help("Settings (⌘,)")
             .padding(12)
         }
         .background {
