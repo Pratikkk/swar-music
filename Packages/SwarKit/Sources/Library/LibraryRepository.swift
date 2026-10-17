@@ -101,6 +101,13 @@ public actor LibraryRepository {
                 t.column("editsJSON", .blob).notNull()
             }
         }
+        migrator.registerMigration("library-artwork-v7") { db in
+            try db.create(table: "track_artwork") { t in
+                t.column("trackID", .text).primaryKey().references("tracks", onDelete: .cascade)
+                t.column("originalKey", .text)
+                t.column("artworkKey", .text).notNull()
+            }
+        }
         try migrator.migrate(database)
     }
 
@@ -129,6 +136,10 @@ public actor LibraryRepository {
                     let original = try JSONEncoder().encode(TrackMetadata(track: track))
                     try db.execute(sql: "UPDATE track_metadata SET originalJSON = ? WHERE trackID = ?", arguments: [original, track.id])
                     edits.apply(to: &track)
+                }
+                if let key = try String.fetchOne(db, sql: "SELECT artworkKey FROM track_artwork WHERE trackID = ?", arguments: [track.id]) {
+                    try db.execute(sql: "UPDATE track_artwork SET originalKey = ? WHERE trackID = ?", arguments: [track.artworkKey, track.id])
+                    track.artworkKey = key
                 }
                 try track.save(db)
             }
@@ -230,6 +241,41 @@ public actor LibraryRepository {
             let order = filter == .duplicates ? "title COLLATE NOCASE, artist COLLATE NOCASE, duration, relativePath, id" : "albumArtist COLLATE NOCASE, album COLLATE NOCASE, discNumber, trackNumber, title COLLATE NOCASE, id"
             let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: pageArguments)
             return CollectionPage(summary: summary, tracks: tracks, count: total)
+        }
+    }
+
+    public func artworkSelection(ids: Set<String>, referenceID: String) throws -> ArtworkSelection {
+        try database.read { db in
+            var count = 0
+            for id in ids {
+                count += try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM track_artwork WHERE trackID = ?", arguments: [id]) ?? 0
+            }
+            let row = try Row.fetchOne(db, sql: "SELECT originalKey FROM track_artwork WHERE trackID = ?", arguments: [referenceID])
+            let key: String?
+            if let row { key = row["originalKey"] }
+            else { key = try String.fetchOne(db, sql: "SELECT artworkKey FROM tracks WHERE id = ?", arguments: [referenceID]) }
+            return ArtworkSelection(customCount: count, originalKey: key)
+        }
+    }
+
+    /// A nil key resets overrides; originalKey retains the latest scanner result.
+    public func setArtwork(ids: Set<String>, key: String?) throws -> [LibraryTrack] {
+        if let key, key.isEmpty || key.contains("/") || key.contains("\\") || key == "." || key == ".." { throw LibraryFailure("Invalid artwork key.") }
+        return try database.write { db in
+            var result: [LibraryTrack] = []
+            for id in ids.sorted() {
+                guard var track = try LibraryTrack.fetchOne(db, key: id) else { continue }
+                if let key {
+                    try db.execute(sql: "INSERT INTO track_artwork(trackID, originalKey, artworkKey) VALUES (?, ?, ?) ON CONFLICT(trackID) DO UPDATE SET artworkKey = excluded.artworkKey", arguments: [id, track.artworkKey, key])
+                    track.artworkKey = key
+                } else if let row = try Row.fetchOne(db, sql: "SELECT originalKey FROM track_artwork WHERE trackID = ?", arguments: [id]) {
+                    track.artworkKey = row["originalKey"]
+                    try db.execute(sql: "DELETE FROM track_artwork WHERE trackID = ?", arguments: [id])
+                } else { continue }
+                try track.update(db)
+                result.append(track)
+            }
+            return result
         }
     }
 

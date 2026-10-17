@@ -107,7 +107,10 @@ artwork, possible duplicates, unreadable songs, and removed items. Select songs 
 create/add to playlists, remove them from the library, or restore a chosen subset.
 **Edit Details** saves corrections locally in Swar, survives rescans, and supports
 resetting to scanned file details. Original file tags stay untouched.
-See [collection management](Docs/CollectionManagement.md).
+Select songs in Manage Library and choose **Artwork…** to preview and replace covers
+for the entire album or selected songs. **Reset Artwork** restores scanned covers.
+Covers persist across rescans and update Now Playing without restarting audio.
+See [collection management](Docs/CollectionManagement.md) and [artwork editing](Docs/ArtworkEditing.md).
 
 ## Architecture
 

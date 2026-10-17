@@ -2,12 +2,48 @@ import AudioEngine
 import AppKit
 import Foundation
 import Observation
+import Library
 import os
 @testable import Player
 import Testing
 
 @MainActor
 struct QueueTests {
+    @Test func libraryArtworkUpdatesAllQueueCopiesWithoutRestartingPlayback() async throws {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let first = QueueEntry(url: entry("one").url, artworkURL: URL(fileURLWithPath: "/tmp/old.png"))
+        let duplicate = QueueEntry(url: first.url, artworkURL: first.artworkURL)
+        let other = entry("two")
+        await player.play([first, duplicate, other])
+        await player.seek(to: 4)
+        let order = player.queue.map(\.id), current = player.currentEntryID
+        let cover = URL(fileURLWithPath: "/tmp/new.png")
+        player.updateLibraryArtwork([LibraryArtworkChange(fileURL: first.url, artworkURL: cover)])
+        #expect(player.artworkURL == cover && player.queue[0].artworkURL == cover && player.queue[1].artworkURL == cover)
+        #expect(player.queue[2] == other && player.queue.map(\.id) == order && player.currentEntryID == current)
+        #expect(player.position == 4 && player.isPlaying && engine.opened.count == 1)
+        player.updateLibraryArtwork([LibraryArtworkChange(fileURL: first.url, artworkURL: nil)])
+        #expect(player.artworkURL == nil && player.queue[0].artworkURL == nil && player.queue[1].artworkURL == nil)
+        #expect(player.position == 4 && player.isPlaying && engine.opened.count == 1)
+        player.shutdown()
+    }
+
+    @Test func artworkChangedDuringTrackOpenIsNotReplacedByCapturedOldEntry() async {
+        let gate = OpenGate()
+        let engine = QueueTestEngine(gate: gate)
+        let player = Player(engine: engine)
+        let song = QueueEntry(url: entry("one").url, artworkURL: URL(fileURLWithPath: "/tmp/old.png"))
+        let opening = Task { await player.play([song]) }
+        await gate.waitUntilBlocked()
+        player.updateLibraryArtwork([LibraryArtworkChange(fileURL: song.url, artworkURL: nil)])
+        await gate.release()
+        await opening.value
+        #expect(player.artworkURL == nil && player.queue[0].artworkURL == nil && player.isPlaying)
+        #expect(engine.opened.count == 1)
+        player.shutdown()
+    }
+
     @Test func sleepTimerPausesWithoutClearingQueueOrSeeking() async throws {
         let clock = TimerWaitGate()
         let timer = SleepTimer(wait: { _ in await clock.wait() })

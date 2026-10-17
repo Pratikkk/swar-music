@@ -171,6 +171,45 @@ public final class LibraryModel {
         return try await repository.collectionPage(filter: filter, search: search, scope: scope, limit: limit)
     }
 
+    public func importArtwork(_ url: URL) async throws -> String {
+        guard let artworkDirectory else { throw LibraryFailure("The artwork cache is not ready.") }
+        let task = Task.detached(priority: .userInitiated) {
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values.isRegularFile == true, (values.fileSize ?? Int.max) <= 20 * 1024 * 1024 else {
+                throw LibraryFailure("Choose an image smaller than 20 MB.")
+            }
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            try Task.checkCancellation()
+            guard let key = try MediaInspector(codecDirectory: nil, artworkDirectory: artworkDirectory).cacheArtwork(data, maximumPixelSize: 1024) else {
+                throw LibraryFailure("This image could not be opened. Try a JPEG, PNG, or HEIC image.")
+            }
+            return key
+        }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+
+    public func artworkSelection(ids: Set<String>, referenceID: String) async throws -> ArtworkSelection {
+        guard let repository else { throw LibraryFailure("The library is not ready.") }
+        return try await repository.artworkSelection(ids: ids, referenceID: referenceID)
+    }
+
+    public func setArtwork(ids: Set<String>, key: String?) async throws -> [LibraryArtworkChange] {
+        guard let repository else { throw LibraryFailure("The library is not ready.") }
+        if let key, artworkURL(key).map({ FileManager.default.fileExists(atPath: $0.path) }) != true {
+            throw LibraryFailure("The chosen image is no longer available. Choose it again.")
+        }
+        let tracks = try await repository.setArtwork(ids: ids, key: key)
+        let changes = tracks.compactMap { track -> LibraryArtworkChange? in
+            guard let url = try? location(for: track).file else { return nil }
+            return LibraryArtworkChange(fileURL: url, artworkURL: artworkURL(track.artworkKey))
+        }
+        trackActionsRevision += 1; overviewRevision += 1
+        await reload()
+        return changes
+    }
+
     public func updateMetadata(_ track: LibraryTrack, metadata: TrackMetadata) async throws {
         guard let repository else { throw LibraryFailure("The library is not ready.") }
         try await repository.updateMetadata(trackID: track.id, metadata: metadata)

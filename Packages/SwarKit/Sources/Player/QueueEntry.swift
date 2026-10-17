@@ -7,7 +7,7 @@ public struct QueueEntry: Identifiable, Sendable, Equatable, Codable {
     public let accessRoot: URL
     public let title: String
     public let subtitle: String
-    public let artworkURL: URL?
+    public internal(set) var artworkURL: URL?
     public let artist: String?
     public let album: String?
     public internal(set) var error: String?

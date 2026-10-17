@@ -1,10 +1,12 @@
 import SwiftUI
 import Library
+import Player
 import AppKit
 
 @MainActor
 struct CollectionManagerView: View {
     let library: LibraryModel
+    let player: Player
     let addFolder: () -> Void
     @Environment(\.floatingPlayerClearance) private var clearance
     @State private var filter: CollectionFilter = .all
@@ -12,6 +14,7 @@ struct CollectionManagerView: View {
     @State private var limit = 200
     @State private var selected = Set<String>()
     @State private var editing: LibraryTrack?
+    @State private var artworkRequest: ArtworkEditRequest?
     @State private var pendingRemoval = Set<String>()
     @State private var showRemoval = false
     @State private var error: String?
@@ -90,6 +93,7 @@ struct CollectionManagerView: View {
         .onChange(of: filter) { selected.removeAll(); limit = 200 }
         .onChange(of: library.search) { selected.removeAll(); limit = 200 }
         .onChange(of: library.searchScope) { selected.removeAll(); limit = 200 }
+        .sheet(item: $artworkRequest) { request in ArtworkEditorView(tracks: request.tracks, library: library, player: player) }
         .sheet(item: $editing) { MetadataEditorView(track: $0, library: library) }
         .alert("New Playlist", isPresented: $showNewPlaylist) {
             TextField("Playlist Name", text: $playlistName)
@@ -190,6 +194,7 @@ struct CollectionManagerView: View {
                     Button("Restore") { manage(selected, restore: true) }
                 } else {
                     if selected.count == 1, let track = selectedTracks.first { Button("Edit Details") { editing = track } }
+                    Button("Artwork…") { artworkRequest = ArtworkEditRequest(tracks: selectedTracks) }
                     Menu("Add to Playlist") {
                         Button("New Playlist…") {
                             playlistTracks = selectedTracks; playlistName = ""; showNewPlaylist = true
@@ -243,6 +248,9 @@ struct CollectionManagerView: View {
                 }
             }
             if !ids.isEmpty {
+                if filter != .removed {
+                    Button("Edit Album Artwork…") { artworkRequest = ArtworkEditRequest(tracks: tracks.filter { ids.contains($0.id) }) }
+                }
                 if filter == .removed { Button("Restore") { manage(ids, restore: true) } }
                 else { Button("Remove from Library…", role: .destructive) { pendingRemoval = ids; showRemoval = true } }
             }
@@ -272,4 +280,9 @@ struct CollectionManagerView: View {
             catch { self.error = error.localizedDescription }
         }
     }
+}
+
+private struct ArtworkEditRequest: Identifiable {
+    let id = UUID()
+    let tracks: [LibraryTrack]
 }

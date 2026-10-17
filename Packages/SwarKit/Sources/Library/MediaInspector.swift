@@ -64,14 +64,14 @@ struct MediaInspector: Sendable {
 
     private static func number(_ value: String?) -> Int? { value.flatMap { Int($0.split(separator: "/").first ?? "") } }
 
-    func cacheArtwork(_ data: Data) throws -> String? {
+    func cacheArtwork(_ data: Data, maximumPixelSize: Int = 384) throws -> String? {
         guard data.count <= 20 * 1024 * 1024 else { return nil }
-        let key = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() + ".png"
+        let key = (maximumPixelSize == 384 ? "" : "custom-\(maximumPixelSize)-") + SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() + ".png"
         let target = artworkDirectory.appendingPathComponent(key)
         if FileManager.default.fileExists(atPath: target.path) { return key }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 384,
+                kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
                 kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: true
               ] as CFDictionary) else { return nil }
         let output = NSMutableData()

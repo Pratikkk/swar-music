@@ -15,7 +15,8 @@ menu to leave room for the native selection table.
   corrections supersede missing original tags. Optional genre/year tags are not
   required, and decoder-error rows have a separate review filter.
 - Missing Artwork means no indexed artwork key; it does not inspect cached files
-  for damage or download artwork.
+  for damage or download artwork. Choose Artwork… to assign a cover locally; see
+  [artwork editing](ArtworkEditing.md).
 - Possible Duplicates compares case-folded (SQLite lower), trimmed title/artist and
   duration rounded to a second, excluding unreadable/unknown-artist/nonpositive
   duration entries. These are candidates, not byte-identical duplicates. No song is

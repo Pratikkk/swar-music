@@ -33,6 +33,25 @@ public final class Player {
     private var describedOutput: OutputDescription?
     @ObservationIgnored private var mediaControls: SystemMediaControls?
 
+    @ObservationIgnored private var activeArtworkChange: LibraryArtworkChange?
+
+    public func updateLibraryArtwork(_ changes: [LibraryArtworkChange]) {
+        let updates = Dictionary(changes.map { ($0.fileURL.standardizedFileURL, $0) }, uniquingKeysWith: { _, last in last })
+        var updatedQueue = queue
+        for index in updatedQueue.indices {
+            if let change = updates[updatedQueue[index].url.standardizedFileURL] { updatedQueue[index].artworkURL = change.artworkURL }
+        }
+        if updatedQueue != queue { queue = updatedQueue }
+        if let entry = standaloneEntry, let change = updates[entry.url.standardizedFileURL] {
+            standaloneEntry?.artworkURL = change.artworkURL
+            activeArtworkChange = change
+        }
+        if let currentURL, let change = updates[currentURL.standardizedFileURL] {
+            artworkURL = change.artworkURL
+            activeArtworkChange = change
+        }
+    }
+
     public func enableSystemMediaControls() {
         guard mediaControls == nil, !isShutDown else { return }
         let controls = SystemMediaControls(player: self, output: MacNowPlayingOutput())
@@ -186,6 +205,7 @@ public final class Player {
         queue = []
         unshuffledOrder = []
         currentEntryID = nil
+        activeArtworkChange = nil
         standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: displayTitle)
         await load(url, accessRoot: accessRoot, displayTitle: displayTitle)
     }
@@ -223,7 +243,11 @@ public final class Player {
             }
             title = displayTitle ?? presentation?.title ?? url.deletingPathExtension().lastPathComponent
             subtitle = entry?.subtitle ?? presentation?.subtitle ?? ""
-            artworkURL = entry?.artworkURL ?? presentation?.artworkURL
+            if let updated = entry.flatMap({ entry in queue.first { $0.id == entry.id } }) {
+                artworkURL = updated.artworkURL
+            } else if let change = activeArtworkChange, change.fileURL.standardizedFileURL == url.standardizedFileURL {
+                artworkURL = change.artworkURL
+            } else { artworkURL = entry?.artworkURL ?? presentation?.artworkURL }
             currentURL = url
             if entry == nil {
                 standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle,

@@ -269,7 +269,7 @@ public struct LibraryView: View {
                         selectedAlbum = album.id
                     }, addFolder: openFolderPicker)
             } else if selection == .section(.manage) {
-                CollectionManagerView(library: library, addFolder: openFolderPicker)
+                CollectionManagerView(library: library, player: player, addFolder: openFolderPicker)
             } else if selection == .section(.albums) || selection == .section(.recentlyAdded) {
                 AlbumBrowserView(library: library, player: player,
                     recent: selection == .section(.recentlyAdded), selectedAlbum: $selectedAlbum,

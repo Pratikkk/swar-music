@@ -339,6 +339,98 @@ extension LibraryTests {
         #expect(try await repository.albums().isEmpty)
     }
 
+    @MainActor @Test func customArtworkImportValidatesImagesAndPreservesSource() async throws {
+        let (temporary, _, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        let source = Bundle.module.resourceURL!.appendingPathComponent("Fixtures/front.png")
+        let original = try Data(contentsOf: source)
+        let key = try await model.importArtwork(source)
+        #expect(key.hasPrefix("custom-1024-"))
+        #expect(FileManager.default.fileExists(atPath: try #require(model.artworkURL(key)).path))
+        #expect(try Data(contentsOf: source) == original)
+        #expect(try await model.importArtwork(source) == key)
+        let invalid = temporary.appendingPathComponent("bad.png")
+        try Data("Not an image".utf8).write(to: invalid)
+        await #expect(throws: (any Error).self) { try await model.importArtwork(invalid) }
+        let oversized = temporary.appendingPathComponent("large.png")
+        FileManager.default.createFile(atPath: oversized.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: oversized)
+        try handle.truncate(atOffset: 21 * 1024 * 1024)
+        try handle.close()
+        await #expect(throws: (any Error).self) { try await model.importArtwork(oversized) }
+    }
+
+    @Test func artworkOverridesSurviveActualRescansAndResetIndependentlyOfMetadata() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = music.appendingPathComponent("song.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: source)
+        let original = try Data(contentsOf: source)
+        let path = temporary.appendingPathComponent("library.sqlite").path
+        let repository = try LibraryRepository(path: path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        let scanner = LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs)
+        _ = try await scanner.scan(folder: folder, root: music)
+        let track = try #require(try await repository.page().tracks.first)
+        #expect(track.artworkKey == nil)
+        _ = try await repository.setArtwork(ids: [track.id], key: "custom.png")
+        let selection = try await repository.artworkSelection(ids: [track.id], referenceID: track.id)
+        #expect(selection.customCount == 1 && selection.originalKey == nil)
+        _ = try await repository.setArtwork(ids: [track.id], key: "replacement.png")
+        #expect(try await repository.artworkSelection(ids: [track.id], referenceID: track.id).originalKey == nil)
+        let reopened = try LibraryRepository(path: path)
+        #expect(try await reopened.page().tracks.first?.artworkKey == "replacement.png")
+        var details = TrackMetadata(track: track)
+        details.title = "Local title"; details.artist = "Artist"; details.albumArtist = "Artist"; details.album = "Album"
+        try await repository.updateMetadata(trackID: track.id, metadata: details)
+        try FileManager.default.copyItem(at: Bundle.module.resourceURL!.appendingPathComponent("Fixtures/front.png"), to: music.appendingPathComponent("front.png"))
+        _ = try await scanner.scan(folder: folder, root: music)
+        let rescanned = try #require(try await repository.page().tracks.first)
+        #expect(rescanned.artworkKey == "replacement.png" && rescanned.title == "Local title")
+        let scannedCover = try #require(try await repository.artworkSelection(ids: [track.id], referenceID: track.id).originalKey)
+        #expect(scannedCover != "replacement.png")
+        _ = try await repository.setArtwork(ids: [track.id], key: nil)
+        let reset = try #require(try await repository.page().tracks.first)
+        #expect(reset.artworkKey == scannedCover && reset.title == "Local title")
+        #expect(try await repository.hasMetadataEdits(trackID: track.id))
+        #expect(try await repository.artworkSelection(ids: [track.id], referenceID: track.id).customCount == 0)
+        #expect(try Data(contentsOf: source) == original)
+    }
+
+    @Test func albumArtworkAppliesBeyondFirstPageAndResetsMissingCovers() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        var template = try #require(try await repository.page().tracks.first)
+        template.album = "Album"; template.albumArtist = "Artist"
+        let tracks = (0..<601).map { i in
+            var track = template
+            track.id = "art-\(i)"; track.trackNumber = i + 1
+            return track
+        }
+        try await repository.saveTracks(tracks)
+        let album = try await repository.albumTracks(artist: "Artist", title: "Album")
+        #expect(album.count == 601)
+        let ids = Set(album.map(\.id))
+        #expect(try await repository.setArtwork(ids: ids, key: "cover.png").count == 601)
+        #expect(try await repository.albums().first { $0.title == "Album" }?.artworkKey == "cover.png")
+        #expect(try await repository.artworkSelection(ids: ids, referenceID: album[0].id).customCount == 601)
+        _ = try await repository.setArtwork(ids: [album[0].id], key: nil)
+        #expect(try await repository.artworkSelection(ids: ids, referenceID: album[0].id).customCount == 600)
+        #expect(try await repository.collectionPage(filter: .artwork).count == 2)
+        await #expect(throws: (any Error).self) { try await repository.setArtwork(ids: ids, key: "../bad.png") }
+        try await repository.removeFolder(folder.id)
+        #expect(try await repository.artworkSelection(ids: ids, referenceID: album[0].id).customCount == 0)
+    }
+
     @Test func collectionReviewUsesFullLibraryAndTreatsDuplicatesAsCandidates() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
