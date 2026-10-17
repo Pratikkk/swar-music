@@ -147,6 +147,28 @@ public actor LibraryRepository {
         }
     }
 
+    public func overview(limit: Int = 8) throws -> LibraryOverview {
+        try database.read { db in
+            let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
+            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE " + visible) ?? 0
+            let lossless = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE isLossless = 1 AND " + visible) ?? 0
+            let albums = "SELECT albumArtist, album FROM tracks WHERE " + visible + " GROUP BY albumArtist, album"
+            let albumCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM (" + albums + ")") ?? 0
+            let rows = try Row.fetchAll(db, sql: "SELECT albumArtist, album, MAX(artworkKey) AS artworkKey, COUNT(*) AS trackCount, SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) AS playableCount FROM tracks WHERE " + visible + " GROUP BY albumArtist, album ORDER BY MAX(addedAt) DESC, albumArtist COLLATE NOCASE, album COLLATE NOCASE LIMIT ?", arguments: [max(1, limit)])
+            let recent = rows.map { row in
+                LibraryAlbumSummary(title: row["album"], artist: row["albumArtist"], artworkKey: row["artworkKey"], trackCount: row["trackCount"], playableCount: row["playableCount"])
+            }
+            let favourites = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks WHERE " + visible + " AND EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isFavorite = 1) ORDER BY addedAt DESC, id LIMIT ?", arguments: [max(1, limit)])
+            return LibraryOverview(trackCount: count, albumCount: albumCount, losslessCount: lossless, favourites: favourites, recentAlbums: recent)
+        }
+    }
+
+    public func albumTracks(artist: String, title: String) throws -> [LibraryTrack] {
+        try database.read { db in
+            try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks WHERE albumArtist = ? AND album = ? AND NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1) ORDER BY discNumber, trackNumber, title COLLATE NOCASE, id", arguments: [artist, title])
+        }
+    }
+
     public func trackPreferences() throws -> (favorites: Set<String>, hiddenCount: Int) {
         try database.read { db in
             let favorites = try String.fetchAll(db, sql: "SELECT trackID FROM track_preferences WHERE isFavorite = 1 AND isHidden = 0")

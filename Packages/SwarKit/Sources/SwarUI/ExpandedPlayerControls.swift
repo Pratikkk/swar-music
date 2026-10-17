@@ -17,7 +17,7 @@ struct ExpandedPlayerControls: View {
                 HStack {
                     Text(time(displayedPosition)).frame(width: 46, alignment: .leading)
                     Spacer()
-                    Text("Seek to " + time(seekPosition)).foregroundStyle(.pink)
+                    Text("Seek to " + time(seekPosition)).foregroundStyle(SwarTheme.accent)
                         .opacity(scrubbing ? 1 : 0).accessibilityHidden(!scrubbing)
                     Spacer()
                     Text("−" + time(ceil(max(0, player.duration - displayedPosition))))
@@ -49,7 +49,7 @@ struct ExpandedPlayerControls: View {
             HStack(spacing: 24) {
                 Button { player.toggleShuffle() } label: {
                     Image(systemName: "shuffle").frame(width: 24, height: 32)
-                        .foregroundStyle(player.shuffleEnabled ? Color.pink : .secondary)
+                        .foregroundStyle(player.shuffleEnabled ? SwarTheme.accent : .secondary)
                 }
                 .accessibilityLabel("Shuffle").accessibilityValue(player.shuffleEnabled ? "On" : "Off")
                 .disabled(player.isBusy)
@@ -63,7 +63,7 @@ struct ExpandedPlayerControls: View {
                         .font(.system(size: 23, weight: .semibold))
                         .offset(x: player.isPlaying ? 0 : 1)
                         .foregroundStyle(.white).frame(width: 56, height: 56)
-                        .background(.pink, in: Circle()).contentShape(Circle())
+                        .background(SwarTheme.buttonFill, in: Circle()).contentShape(Circle())
                 }
                 .buttonStyle(PlaybackButtonStyle(unavailable: !player.canTogglePlayback))
                 .disabled(!player.canTogglePlayback || player.isBusy)

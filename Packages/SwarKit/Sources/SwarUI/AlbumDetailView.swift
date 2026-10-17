@@ -43,7 +43,7 @@ struct AlbumDetailView: View {
                             Text(title).font(.system(size: compact ? 22 : 26, weight: .bold))
                                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                             Text(artist).font(.system(size: compact ? 20 : 25, weight: .medium))
-                                .foregroundStyle(.pink).textSelection(.enabled)
+                                .foregroundStyle(SwarTheme.accent).textSelection(.enabled)
                             if !metadata.isEmpty {
                                 Text(metadata).font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -114,7 +114,7 @@ struct AlbumDetailView: View {
         Label(title, systemImage: symbol)
             .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
             .frame(width: 100, height: 30)
-            .background(.pink, in: RoundedRectangle(cornerRadius: 6))
+            .background(SwarTheme.buttonFill, in: RoundedRectangle(cornerRadius: 6))
             .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 

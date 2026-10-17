@@ -38,7 +38,7 @@ private enum SidebarSelection: Hashable {
 public struct LibraryView: View {
     private static let brandIcon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
         .flatMap { NSImage(contentsOf: $0) } ?? NSImage(named: NSImage.applicationIconName) ?? NSImage()
-    @State private var selection: SidebarSelection? = .section(.albums)
+    @State private var selection: SidebarSelection? = .section(.home)
     @AppStorage("albumSortOrder") private var albumSortOrder: AlbumSortOrder = .artist
     @AppStorage("songSortOrder") private var songSortOrder: TrackSortOrder = .album
     @AppStorage("reverseSongSort") private var reverseSongSort = false
@@ -173,7 +173,8 @@ public struct LibraryView: View {
     private var windowPresentation: some View {
         libraryLayout
         .toolbarBackground(.hidden, for: .windowToolbar)
-        .tint(.pink)
+        .tint(SwarTheme.accent)
+        .accentColor(SwarTheme.accent)
         .fileImporter(isPresented: $showImporter, allowedContentTypes: importingFolder ? [.folder] : [.item]) { result in
             switch result {
             case .success(let url):
@@ -221,7 +222,7 @@ public struct LibraryView: View {
                 .environment(\.floatingPlayerClearance, playerHeight + 36)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(SwarTheme.canvas)
         .ignoresSafeArea(.container, edges: .top)
         .overlay(alignment: .bottom) {
             ToolbarPlayer(player: player, openNowPlaying: { showNowPlaying = true })
@@ -254,10 +255,19 @@ public struct LibraryView: View {
                     }
                 )
                 .id(playlist.id)
+            } else if selection == .section(.home), TrackSearchQuery(library.search).isEmpty {
+                HomeView(library: library, player: player,
+                    openNowPlaying: { showNowPlaying = true },
+                    openFavourites: { selection = .section(.favorites) },
+                    openRecent: { selection = .section(.recentlyAdded) },
+                    browseAlbum: { album in
+                        library.searchScope = .album; library.search = album.title
+                        selection = .section(.albums)
+                    }, addFolder: openFolderPicker)
             } else {
                 let sectionName: String = {
                     if case .section(let s) = selection {
-                        return s == .home ? "Recently Added" : s.rawValue
+                        return s == .home ? "Songs" : s.rawValue
                     }
                     return "Recently Added"
                 }()
@@ -329,7 +339,7 @@ public struct LibraryView: View {
                     .pickerStyle(.inline)
                 } label: {
                     Image(systemName: "magnifyingglass")
-                        .foregroundStyle(library.searchScope == .all ? Color.secondary : .pink)
+                        .foregroundStyle(library.searchScope == .all ? Color.secondary : SwarTheme.accent)
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .accessibilityLabel("Search field: " + library.searchScope.rawValue)
@@ -349,7 +359,7 @@ public struct LibraryView: View {
             .overlay(Capsule().strokeBorder(.primary.opacity(0.04), lineWidth: 0.5))
         }
         .padding(.horizontal, 24).frame(height: 54)
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(SwarTheme.canvas)
     }
 
     private var sidebar: some View {
@@ -443,7 +453,7 @@ public struct LibraryView: View {
             Text(title).font(.system(size: 12)).lineLimit(1)
             Spacer(minLength: 0)
         }
-        .foregroundStyle(selected ? Color.pink : .primary)
+        .foregroundStyle(selected ? SwarTheme.accent : .primary)
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(selected ? Color.primary.opacity(0.055) : .clear, in: RoundedRectangle(cornerRadius: 7))
         .contentShape(Rectangle())

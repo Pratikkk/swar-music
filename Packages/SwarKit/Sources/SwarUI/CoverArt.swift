@@ -12,7 +12,7 @@ struct CoverArt: View {
     @State private var loadedURL: URL?
 
     private var tint: Color {
-        let colors: [Color] = [.indigo, .teal, .purple, .blue, .orange, .pink]
+        let colors: [Color] = [.indigo, .teal, .purple, .blue, .orange, SwarTheme.accent]
         return colors[title.utf8.reduce(0) { ($0 + Int($1)) % colors.count }]
     }
 

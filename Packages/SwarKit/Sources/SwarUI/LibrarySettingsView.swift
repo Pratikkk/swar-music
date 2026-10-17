@@ -19,7 +19,8 @@ public struct LibrarySettingsView: View {
                 .tabItem { Label("Files", systemImage: "folder") }
         }
         .frame(width: 620, height: 470)
-        .tint(.pink)
+        .tint(SwarTheme.accent)
+        .accentColor(SwarTheme.accent)
         .task { await library.start() }
         .fileImporter(isPresented: $showFolderPicker, allowedContentTypes: [.folder]) { result in
             switch result {

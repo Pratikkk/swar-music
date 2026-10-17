@@ -251,6 +251,52 @@ extension LibraryTests {
         #expect(try await repository.page(search: "Track 49999").count == 1)
     }
 
+    @Test func homeOverviewUsesWholeLibraryAndDistinctAlbumsAndExcludesHiddenSongs() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        var template = try #require(try await repository.page().tracks.first)
+        template.albumArtist = "A"; template.album = "One"; template.addedAt = Date(timeIntervalSince1970: 5000)
+        let tracks = (0..<600).map { index in
+            var track = template
+            track.id = "home-\(index)"; track.relativePath = "home-\(index).wav"
+            track.title = "Song \(index)"; track.trackNumber = index + 1
+            track.addedAt = Date(timeIntervalSince1970: 100)
+            if index == 599 {
+                track.album = "Two"; track.artworkKey = "two-cover"
+                track.addedAt = Date(timeIntervalSince1970: 1)
+                track.error = "Unavailable"; track.isLossless = false
+            }
+            return track
+        }
+        try await repository.saveTracks([template] + tracks)
+        try await repository.setFavorite(trackID: tracks[0].id, favorite: true)
+        try await repository.setFavorite(trackID: tracks[599].id, favorite: true)
+        let overview = try await repository.overview()
+        #expect(overview.trackCount == 601 && overview.albumCount == 2 && overview.losslessCount == 600)
+        #expect(overview.recentAlbums.map(\.title) == ["One", "Two"])
+        #expect(overview.recentAlbums.map(\.trackCount) == [600, 1])
+        #expect(overview.recentAlbums.map(\.playableCount) == [600, 0])
+        #expect(overview.recentAlbums.last?.artworkKey == "two-cover")
+        #expect(Set(overview.favourites.map(\.id)) == [tracks[0].id, tracks[599].id])
+        #expect(try await repository.albumTracks(artist: "A", title: "One").count == 600)
+        #expect(try await repository.overview(limit: 1).recentAlbums.count == 1)
+        try await repository.removeTrackFromLibrary(trackID: tracks[599].id)
+        let afterRemoval = try await repository.overview()
+        #expect(afterRemoval.albumCount == 1 && afterRemoval.trackCount == 600)
+        #expect(afterRemoval.favourites.map(\.id) == [tracks[0].id])
+        try await repository.removeTrackFromLibrary(trackID: tracks[1].id)
+        #expect(try await repository.albumTracks(artist: "A", title: "One").count == 599)
+        try await repository.removeFolder(folder.id)
+        let empty = try await repository.overview()
+        #expect(empty.trackCount == 0 && empty.albumCount == 0 && empty.losslessCount == 0)
+        #expect(empty.recentAlbums.isEmpty && empty.favourites.isEmpty)
+    }
+
     @Test func expandedSearchMatchesScopesPunctuationAccentsAndIndianScripts() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -517,6 +563,14 @@ extension LibraryTests {
         await model.reload(resetLimit: true)
         #expect(model.tracks.map(\.id) == [track.id])
         await model.toggleFavorite(track)
+        let revision = model.overviewRevision
+        model.search = "not-a-match"
+        await model.reload()
+        #expect(model.tracks.isEmpty && model.overviewRevision > revision)
+        #expect(await model.overview()?.trackCount == 1)
+        #expect(await model.overview()?.favourites.first?.id == track.id)
+        model.search = ""
+        await model.reload()
         model.shutdown()
         let restored = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
         await restored.start()

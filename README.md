@@ -6,13 +6,14 @@ For regular use, install the packaged **Swar.app** in Applications. Build a loca
 DMG with `./scripts/package-macos.sh`; see [installation and updates](Docs/Installation.md).
 
 The library uses a floating glass player, a translucent native sidebar, and artwork-first
-album cards. Recently Added groups albums by month; Home opens the recent local
-library. Radio is omitted. Open an album by clicking its cover or title, or play it
+album cards, with a warm canvas, violet accents, and serif Home headings. Home
+opens with Continue Listening, favourites, recent albums, and watched folders.
+Recently Added groups albums by month. See [Swar identity notes](Docs/SwarIdentity.md). Radio is omitted. Open an album by clicking its cover or title, or play it
 using the button over its artwork. Album details show large cover art, artist and
 genre/year tags, Play and Shuffle actions, numbered songs, duration, and queue menus.
 Play starts in disc/track order; Shuffle includes the whole album. Library actions (open file, add folder, rescan)
 are in the menu at the right of the section header. The sidebar uses native macOS
-blur; album backgrounds are white in light mode and dark in dark mode.
+blur; library surfaces adapt between warm light and dark appearances.
 
 The floating player and expanded player include an output-volume slider. It controls
 the selected playback device (or the default output before playback), follows system
@@ -59,7 +60,7 @@ for a compact summary. An orange dot marks a known conversion. Matching formats
 remain **Not verified** until the output path supplies sample-integrity evidence.
 Song ellipsis and right-click menus offer Add to Playlist (including New Playlist),
 Play Next/Last, Get Info, Favourite, Copy, Show in Finder, and Remove from Library.
-Favourites persist locally and have a dedicated sidebar screen with search, Play, and Shuffle. A pink star marks favourite songs. Library removal leaves the original file in place and
+Favourites persist locally and have a dedicated sidebar screen with search, Play, and Shuffle. A violet star marks favourite songs. Library removal leaves the original file in place and
 keeps it excluded from folder scans; **Settings → Files → Restore Removed Songs**
 restores visibility. Playlist references are removed when a song is removed from the library.
 Songs and Favourites support saved sorting by title, artist, album, duration, or

@@ -9,6 +9,7 @@ public final class LibraryModel {
     public private(set) var favoriteTrackIDs: Set<String> = []
     public private(set) var hiddenTrackCount = 0
     public private(set) var trackActionsRevision = 0
+    public private(set) var overviewRevision = 0
     public private(set) var totalCount = 0
     public private(set) var unreadableCount = 0
     public private(set) var isScanning = false
@@ -155,12 +156,28 @@ public final class LibraryModel {
             let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed, searchScope: scope)
             let preferences = try await repository.trackPreferences()
             guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, scope == searchScope, onlyFavorites == favoritesOnly, recent == recentFirst, order == sortOrder, reversed == reverseSort else { return }
+            let overviewChanged = tracks != page.tracks || totalCount != page.count || favoriteTrackIDs != preferences.favorites || hiddenTrackCount != preferences.hiddenCount
             if tracks != page.tracks { tracks = page.tracks }
             if totalCount != page.count { totalCount = page.count }
             if unreadableCount != page.unreadableCount { unreadableCount = page.unreadableCount }
             if favoriteTrackIDs != preferences.favorites { favoriteTrackIDs = preferences.favorites }
             if hiddenTrackCount != preferences.hiddenCount { hiddenTrackCount = preferences.hiddenCount }
+            if overviewChanged { overviewRevision += 1 }
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func dismissError() { errorMessage = nil }
+
+    public func overview() async -> LibraryOverview? {
+        guard let repository, !isShutDown else { return nil }
+        do { return try await repository.overview() }
+        catch { errorMessage = error.localizedDescription; return nil }
+    }
+
+    public func tracks(in album: LibraryAlbumSummary) async -> [LibraryTrack] {
+        guard let repository, !isShutDown else { return [] }
+        do { return try await repository.albumTracks(artist: album.artist, title: album.title) }
+        catch { errorMessage = error.localizedDescription; return [] }
     }
 
     public func isMonitoring(_ folder: LibraryFolder) -> Bool { watchers[folder.id] != nil }

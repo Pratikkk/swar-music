@@ -214,7 +214,7 @@ struct LibraryContent: View {
             } label: { Label("Shuffle", systemImage: "shuffle") }
             .accessibilityLabel("Shuffle favourites")
         }
-        .foregroundStyle(.pink)
+        .foregroundStyle(SwarTheme.accent)
         .buttonStyle(PlaybackButtonStyle(unavailable: library.tracks.allSatisfy { $0.error != nil }))
         .disabled(player.isBusy || library.tracks.allSatisfy { $0.error != nil })
     }
@@ -244,7 +244,7 @@ struct LibraryContent: View {
                         Text(track.title).fontWeight(current ? .semibold : .medium)
                             .foregroundStyle(current ? Color.accentColor : Color.primary).lineLimit(1)
                         if library.favoriteTrackIDs.contains(track.id) {
-                            Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.pink)
+                            Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(SwarTheme.accent)
                                 .accessibilityLabel("Favourite")
                         }
                     }

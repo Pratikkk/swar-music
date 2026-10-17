@@ -16,7 +16,7 @@ struct RepeatButton: View {
     var body: some View {
         Button { player.setRepeatMode(nextMode) } label: {
             Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                .foregroundStyle(player.repeatMode == .off ? Color.secondary : .pink)
+                .foregroundStyle(player.repeatMode == .off ? Color.secondary : SwarTheme.accent)
                 .frame(width: 24, height: 32)
         }
         .buttonStyle(PlaybackButtonStyle(unavailable: !player.canTogglePlayback))

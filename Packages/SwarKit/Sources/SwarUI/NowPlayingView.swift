@@ -28,7 +28,7 @@ struct NowPlayingView: View {
                     Label("Up Next · \(player.upcomingEntries.count)", systemImage: "list.bullet")
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 10).frame(height: 28)
-                        .foregroundStyle(showQueue ? Color.pink : .primary)
+                        .foregroundStyle(showQueue ? SwarTheme.accent : .primary)
                         .background(.regularMaterial, in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -62,7 +62,7 @@ struct NowPlayingView: View {
         }
         .frame(width: width, height: 650)
         .background {
-            Color(nsColor: .textBackgroundColor)
+            SwarTheme.canvas
             if !reduceTransparency, player.artworkURL != nil {
                 CoverArt(url: player.artworkURL, crossfade: true)
                     .frame(width: 480, height: 480).blur(radius: 70).scaleEffect(1.4)
@@ -70,7 +70,8 @@ struct NowPlayingView: View {
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
         }
-        .clipped().tint(.pink)
+        .clipped().tint(SwarTheme.accent)
+        .accentColor(SwarTheme.accent)
         .onExitCommand { dismiss() }
     }
 }

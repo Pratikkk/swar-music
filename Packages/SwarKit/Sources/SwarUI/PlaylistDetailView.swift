@@ -169,7 +169,7 @@ public struct PlaylistDetailView: View {
                 CoverArt(url: url, title: playlist.name, cornerRadius: 10)
             } else {
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(LinearGradient(colors: [.pink.opacity(0.8), .purple.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .fill(LinearGradient(colors: [SwarTheme.buttonFill, .indigo.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing))
                     .overlay {
                         Image(systemName: "music.note.list")
                             .font(.system(size: size * 0.38))
@@ -186,7 +186,7 @@ public struct PlaylistDetailView: View {
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 100, height: 30)
-            .background(.pink, in: RoundedRectangle(cornerRadius: 6))
+            .background(SwarTheme.buttonFill, in: RoundedRectangle(cornerRadius: 6))
             .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 

@@ -84,7 +84,7 @@ struct ArtistsView: View {
                     selectionRow(.all) {
                         HStack(spacing: 9) {
                             Image(systemName: "music.mic").font(.title2).frame(width: 36, height: 36)
-                                .foregroundStyle(Color.pink)
+                                .foregroundStyle(SwarTheme.accent)
                             Text("All Artists").fontWeight(.semibold)
                         }
                     }
@@ -118,7 +118,7 @@ struct ArtistsView: View {
             content()
                 .padding(.horizontal, 10).padding(.vertical, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(selection == choice ? Color.pink : .primary)
+                .foregroundStyle(selection == choice ? SwarTheme.accent : .primary)
                 .background(selection == choice ? Color.primary.opacity(0.055) : .clear,
                             in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(RoundedRectangle(cornerRadius: 8))
@@ -265,7 +265,7 @@ struct ArtistsView: View {
     }
 
     private func circleIcon(_ symbol: String) -> some View {
-        Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(.pink)
+        Image(systemName: symbol).font(.system(size: 11, weight: .semibold)).foregroundStyle(SwarTheme.accent)
             .frame(width: 26, height: 26).background(.primary.opacity(0.05), in: Circle())
     }
 
