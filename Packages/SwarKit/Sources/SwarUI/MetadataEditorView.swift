@@ -20,7 +20,7 @@ struct MetadataEditorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Edit Details").font(.system(size: 24, weight: .semibold, design: .serif))
-            Text("Saved in Swar. Original file tags stay unchanged.").font(.caption).foregroundStyle(.secondary)
+            Text("Saved in your library. Original file tags stay unchanged.").font(.caption).foregroundStyle(.secondary)
             Form {
                 TextField("Title", text: $metadata.title)
                 TextField("Artist", text: $metadata.artist)

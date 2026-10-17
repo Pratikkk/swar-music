@@ -20,15 +20,7 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: density.sectionGap) {
-                HStack(spacing: 14) {
-                    Text("स्व").font(.system(size: 30, weight: .semibold))
-                        .foregroundStyle(palette.accent).frame(width: 58, height: 58)
-                        .background(palette.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Home").font(.system(size: 32, weight: .semibold, design: .serif))
-                    }
-                    Spacer(minLength: 0)
-                }
+                Text("Home").font(.system(size: 32, weight: .semibold, design: .serif))
                 if let overview {
                     if let error = library.errorMessage {
                         HStack(alignment: .top) {
@@ -48,7 +40,7 @@ struct HomeView: View {
                         ContentUnavailableView {
                             Label("Your library starts with a folder", systemImage: "folder.badge.plus")
                         } description: {
-                            Text("Choose where your music lives. Swar will watch for new songs.")
+                            Text("Choose a music folder. New songs appear automatically.")
                         } actions: {
                             Button("Add Music Folder", action: addFolder).buttonStyle(.borderedProminent)
                         }
@@ -219,7 +211,7 @@ struct HomeView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     Label(library.isMonitoring(folder) ? "Watching" : "Needs attention", systemImage: library.isMonitoring(folder) ? "checkmark.circle" : "exclamationmark.circle")
                         .font(.system(size: 11)).foregroundStyle(library.isMonitoring(folder) ? Color.secondary : .orange)
-                        .help(library.folderErrors[folder.id] ?? "Swar watches this folder for new and changed songs.")
+                        .help(library.folderErrors[folder.id] ?? "Watching for new and changed songs.")
                 }.padding(16).background(SwarTheme.surface, in: RoundedRectangle(cornerRadius: 14))
             }
             SettingsLink { Text("Folder Settings…").font(.caption).foregroundStyle(.secondary) }

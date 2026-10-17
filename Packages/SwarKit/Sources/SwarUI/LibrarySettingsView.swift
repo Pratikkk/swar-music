@@ -51,7 +51,7 @@ public struct LibrarySettingsView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Music Folders").font(.title2.bold())
-                Text("Choose the folders Swar should keep in your library.")
+                Text("Choose the folders to include in your library.")
                     .foregroundStyle(.secondary)
             }
             List {
@@ -79,7 +79,7 @@ public struct LibrarySettingsView: View {
                     .disabled(!library.isReady || library.isScanning || library.folders.isEmpty)
             }
             scanStatus
-            Text("While Swar is open, new, changed, and removed audio files update automatically, including files in subfolders. Saved folders are checked again on launch. Music stays in its original location.")
+            Text("While the app is open, new, changed, and removed audio files update automatically, including files in subfolders. Saved folders are checked again on launch. Music stays in its original location.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let error = pickerError ?? library.errorMessage {
                 Text(error).font(.caption).foregroundStyle(.orange).lineLimit(3).textSelection(.enabled)

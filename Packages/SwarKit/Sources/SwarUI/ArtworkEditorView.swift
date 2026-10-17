@@ -33,7 +33,7 @@ struct ArtworkEditorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Album Artwork").font(.system(size: 24, weight: .semibold, design: .serif))
-            Text("Saved in Swar. Original files stay unchanged.").font(.caption).foregroundStyle(.secondary)
+            Text("Saved in your library. Original files stay unchanged.").font(.caption).foregroundStyle(.secondary)
             HStack(alignment: .top, spacing: 20) {
                 CoverArt(url: library.artworkURL(previewKey), title: tracks.first?.album ?? "Artwork", cornerRadius: 12)
                     .frame(width: 180, height: 180).accessibilityLabel("Artwork preview")

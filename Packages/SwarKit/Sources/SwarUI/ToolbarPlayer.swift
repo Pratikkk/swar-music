@@ -92,10 +92,10 @@ struct ToolbarPlayer: View {
                 VStack(spacing: 1) {
                     Button(action: openNowPlaying) {
                         VStack(spacing: 2) {
-                            Text(player.currentURL == nil ? (player.queue.isEmpty ? "Swar" : "Queue Ready") : player.title)
+                            Text(player.currentURL == nil ? (player.queue.isEmpty ? "Nothing Playing" : "Queue Ready") : player.title)
                                 .font(.system(size: 12, weight: .medium))
                                 .frame(maxWidth: .infinity)
-                            Text(player.subtitle.isEmpty ? "Your music, in full detail" : player.subtitle)
+                            Text(player.subtitle.isEmpty ? "Choose a song" : player.subtitle)
                                 .font(.system(size: 11)).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity)
                         }.lineLimit(1).truncationMode(.tail)
