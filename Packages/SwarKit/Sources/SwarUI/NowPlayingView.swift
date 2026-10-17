@@ -172,8 +172,8 @@ private struct NowPlayingArtwork: View {
         } else if player.underrunFrames > 0 {
             Label("Buffer underruns: \(player.underrunFrames) frames", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
-        } else {
-            Text(player.isRestoredSession ? "Ready to resume" : (player.currentURL == nil ? "Local music, ready when you are" : (player.isPlaying ? "Playing" : "Paused")))
+        } else if !player.isPlaying {
+            Text(player.isRestoredSession ? "Ready to resume" : (player.currentURL == nil ? "Local music, ready when you are" : "Paused"))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
