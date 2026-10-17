@@ -23,7 +23,7 @@ struct HomeView: View {
                         .foregroundStyle(SwarTheme.accent).frame(width: 58, height: 58)
                         .background(SwarTheme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 18))
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Your music").font(.system(size: 32, weight: .semibold, design: .serif))
+                        Text("Home").font(.system(size: 32, weight: .semibold, design: .serif))
                     }
                     Spacer(minLength: 0)
                 }
