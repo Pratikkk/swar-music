@@ -36,3 +36,9 @@ Artist selection uses inset rounded highlights with a pink label, matching the m
 Playlist playback and queue actions are disabled independently of management actions: empty playlists can still be renamed or deleted. Loading displays progress instead of a premature empty state. Playlist identity isolates local state on selection changes, and cancellation plus a generation token prevents older asynchronous reloads from publishing over newer results.
 
 Validation: 92 package tests passed and the Debug app built successfully. Manual checks covered artist selection, the empty-playlist options menu and Rename dialog, cleanup of the temporary test playlist, and Songs at 1100- and 792-point window widths in dark appearance. Light appearance was not separately inspected in this pass.
+
+## Floating player scrolling
+
+The detail viewport now extends to the window bottom. The player overlays it without reserving a rectangular bottom strip; rows and artwork scroll behind its glass capsule. Library counts and Load More remain above the content. Bottom clearance is part of the scrolling content, sized from the actual player height (including notices). Scroll views use trailing content padding; Songs and Genres use a hidden trailing spacer row because macOS List does not reliably apply scroll-content margins. This lets the final song scroll entirely above the controls.
+
+Validation: Debug build succeeded. In the app's light appearance, Songs scrolled beneath the player, and the final song and its options were fully visible above it at the bottom of the list.

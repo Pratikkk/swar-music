@@ -11,6 +11,7 @@ enum AlbumSortOrder: String, CaseIterable, Identifiable {
 
 @MainActor
 struct LibraryContent: View {
+    @Environment(\.floatingPlayerClearance) private var playerClearance
     let library: LibraryModel
     let player: Player
     let section: String
@@ -58,6 +59,20 @@ struct LibraryContent: View {
                 }
                 .font(.caption).padding(12)
             }
+            if library.totalCount > 0 {
+                HStack {
+                    Text("\(library.tracks.count) of \(library.totalCount) tracks")
+                        .foregroundStyle(.secondary)
+                    if library.unreadableCount > 0 {
+                        Text("\(library.unreadableCount) unreadable in library").foregroundStyle(.orange)
+                    }
+                    Spacer()
+                    if library.tracks.count < library.totalCount {
+                        Button("Load More") { Task { await library.loadMore() } }
+                    }
+                }
+                .font(.caption).padding(12)
+            }
             if library.tracks.isEmpty {
                 ContentUnavailableView {
                     Label(library.search.isEmpty ? "Your Music Library" : "No Matching Music", systemImage: "music.note.list")
@@ -82,24 +97,12 @@ struct LibraryContent: View {
                     ForEach(groups.keys.sorted(), id: \.self) { name in
                         Section(name) { ForEach(groups[name] ?? []) { track in trackRow(track, context: groups[name] ?? []) } }
                     }
+                    FloatingPlayerScrollSpacer()
                 }.listStyle(.inset)
             } else {
                 trackList(library.tracks)
             }
-            if library.totalCount > 0 {
-                HStack {
-                    Text("\(library.tracks.count) of \(library.totalCount) tracks")
-                        .foregroundStyle(.secondary)
-                    if library.unreadableCount > 0 {
-                        Text("\(library.unreadableCount) unreadable in library").foregroundStyle(.orange)
-                    }
-                    Spacer()
-                    if library.tracks.count < library.totalCount {
-                        Button("Load More") { Task { await library.loadMore() } }
-                    }
-                }
-                .font(.caption).padding(12)
-            }
+
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onChange(of: library.search) { selectedAlbum = nil }
@@ -171,8 +174,8 @@ struct LibraryContent: View {
                         }.padding(.horizontal, 28).padding(.top, 4).padding(.bottom, 28)
                     }
                 }
+                .padding(.bottom, playerClearance)
             }
-
         }
     }
 
@@ -193,7 +196,10 @@ struct LibraryContent: View {
     }
 
     private func trackList(_ tracks: [LibraryTrack]) -> some View {
-        List(tracks) { track in trackRow(track, context: tracks) }.listStyle(.inset)
+        List {
+            ForEach(tracks) { track in trackRow(track, context: tracks) }
+            FloatingPlayerScrollSpacer()
+        }.listStyle(.inset)
     }
 
     private func trackRow(_ track: LibraryTrack, context: [LibraryTrack]) -> some View {

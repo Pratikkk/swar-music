@@ -5,6 +5,7 @@ import Player
 /// Album artwork and metadata share one scrolling surface with the track list.
 @MainActor
 struct AlbumDetailView: View {
+    @Environment(\.floatingPlayerClearance) private var playerClearance
     let title: String
     let artist: String
     let tracks: [LibraryTrack]
@@ -103,8 +104,9 @@ struct AlbumDetailView: View {
                         }
                     }
                 }
-                .padding(.horizontal, inset).padding(.top, 12).padding(.bottom, 32)
+                .padding(.horizontal, inset).padding(.top, 12).padding(.bottom, 32 + playerClearance)
             }
+
         }
     }
 

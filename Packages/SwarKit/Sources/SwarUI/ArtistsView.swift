@@ -23,6 +23,7 @@ private struct ArtistAlbum: Identifiable {
 /// Album artists keep compilations together; individual performers remain on song rows.
 @MainActor
 struct ArtistsView: View {
+    @Environment(\.floatingPlayerClearance) private var playerClearance
     let library: LibraryModel
     let player: Player
     let play: (LibraryTrack, [LibraryTrack], Bool?) -> Void
@@ -64,7 +65,9 @@ struct ArtistsView: View {
                         }
                     }
                     .padding(.horizontal, compact ? 20 : 40).padding(.vertical, 24)
+                    .padding(.bottom, playerClearance)
                 }
+
                 .id(selection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -95,8 +98,9 @@ struct ArtistsView: View {
                         }.help(artist.name)
                     }
                 }
-                .padding(8)
+                .padding(8).padding(.bottom, playerClearance)
             }
+
             .focusable().focused($artistListFocused).focusEffectDisabled()
             .onMoveCommand(perform: moveArtistSelection)
             .onChange(of: selection) { _, choice in

@@ -193,7 +193,7 @@ public struct LibraryView: View {
         VStack(spacing: 0) {
             sectionHeader
             selectedContent
-                .safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: playerHeight + 36) }
+                .environment(\.floatingPlayerClearance, playerHeight + 36)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(nsColor: .textBackgroundColor))

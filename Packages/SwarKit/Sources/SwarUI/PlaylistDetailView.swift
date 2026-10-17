@@ -4,6 +4,7 @@ import Player
 
 @MainActor
 public struct PlaylistDetailView: View {
+    @Environment(\.floatingPlayerClearance) private var playerClearance
     public let playlist: LibraryPlaylist
     public let library: LibraryModel
     public let player: Player
@@ -138,8 +139,9 @@ public struct PlaylistDetailView: View {
                 }
                 .padding(.horizontal, inset)
                 .padding(.top, 16)
-                .padding(.bottom, 32)
+                .padding(.bottom, 32 + playerClearance)
             }
+
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: [playlist.id, String(library.trackActionsRevision)]) {
