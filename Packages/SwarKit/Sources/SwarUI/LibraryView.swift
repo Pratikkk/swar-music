@@ -40,6 +40,8 @@ public struct LibraryView: View {
         .flatMap { NSImage(contentsOf: $0) } ?? NSImage(named: NSImage.applicationIconName) ?? NSImage()
     @State private var selection: SidebarSelection? = .section(.albums)
     @AppStorage("albumSortOrder") private var albumSortOrder: AlbumSortOrder = .artist
+    @AppStorage("songSortOrder") private var songSortOrder: TrackSortOrder = .album
+    @AppStorage("reverseSongSort") private var reverseSongSort = false
     @FocusState private var searchFocused: Bool
     @FocusState private var sidebarFocused: Bool
     @State private var player = Player(sessionStore: .applicationDefault())
@@ -90,11 +92,19 @@ public struct LibraryView: View {
         }
         .task(id: selection) {
             library.favoritesOnly = selection == .section(.favorites)
+            library.sortOrder = showsSongSort ? songSortOrder : .album
+            library.reverseSort = showsSongSort && reverseSongSort
             if case .section(let s) = selection {
                 library.recentFirst = s == .recentlyAdded || s == .home
             } else {
                 library.recentFirst = false
             }
+            await library.reload(resetLimit: true)
+        }
+        .task(id: songSortOrder.rawValue + String(reverseSongSort)) {
+            guard showsSongSort else { return }
+            library.sortOrder = songSortOrder
+            library.reverseSort = reverseSongSort
             await library.reload(resetLimit: true)
         }
         .task(id: library.search) {
@@ -255,6 +265,10 @@ public struct LibraryView: View {
         }
     }
 
+    private var showsSongSort: Bool {
+        selection == .section(.songs) || selection == .section(.favorites)
+    }
+
     private var sectionHeader: some View {
         HStack(spacing: 12) {
             if selectedAlbum != nil {
@@ -271,6 +285,13 @@ public struct LibraryView: View {
                     Picker("Sort Albums", selection: $albumSortOrder) {
                         ForEach(AlbumSortOrder.allCases) { order in Text(order.rawValue).tag(order) }
                     }
+                    Divider()
+                }
+                if showsSongSort {
+                    Picker("Sort Songs", selection: $songSortOrder) {
+                        ForEach(TrackSortOrder.allCases) { order in Text(order.rawValue).tag(order) }
+                    }
+                    Toggle("Reverse Order", isOn: $reverseSongSort)
                     Divider()
                 }
                 SettingsLink { Label("Music Folder Settings…", systemImage: "gearshape") }

@@ -250,6 +250,49 @@ extension LibraryTests {
         #expect(try await repository.page(search: "Track 49999").count == 1)
     }
 
+    @Test func trackSortingAppliesBeforePagingWithStableTies() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let template = try #require(try await repository.page().tracks.first)
+        let tracks = (0..<3).map { index in
+            var track = template
+            track.id = "sort-\(index)"; track.relativePath = "sort-\(index).wav"
+            track.title = ["Sortcase C", "Sortcase A", "Sortcase B"][index]
+            track.artist = ["Z", "Y", "X"][index]
+            track.album = ["B", "C", "A"][index]
+            track.duration = [30.0, 10.0, 20.0][index]
+            track.addedAt = Date(timeIntervalSince1970: [3.0, 1.0, 2.0][index])
+            return track
+        }
+        try await repository.saveTracks(tracks)
+        let expected: [(TrackSortOrder, [Int])] = [
+            (.title, [1, 2, 0]), (.artist, [2, 1, 0]), (.album, [2, 0, 1]),
+            (.duration, [1, 2, 0]), (.recentlyAdded, [0, 2, 1])
+        ]
+        for (order, indices) in expected {
+            let page = try await repository.page(search: "Sortcase", limit: 2, sortOrder: order)
+            #expect(page.count == 3)
+            #expect(page.tracks.map(\.id) == indices.prefix(2).map { tracks[$0].id })
+            let reversed = try await repository.page(search: "Sortcase", limit: 2, sortOrder: order, reversed: true)
+            #expect(reversed.tracks.map(\.id) == indices.reversed().prefix(2).map { tracks[$0].id })
+        }
+        var tie = tracks[0]
+        tie.title = "Tiecase"; tie.id = "tie-b"; tie.relativePath = "tie-b.wav"
+        var otherTie = tie
+        otherTie.id = "tie-a"; otherTie.relativePath = "tie-a.wav"
+        try await repository.saveTracks([tie, otherTie])
+        for reversed in [false, true] {
+            #expect(try await repository.page(search: "Tiecase", limit: 1, sortOrder: .title, reversed: reversed).tracks.first?.id == "tie-a")
+        }
+        // A recent-library request retains its newest-first semantics.
+        #expect(try await repository.page(search: "Sortcase", recentFirst: true, sortOrder: .title, reversed: true).tracks.map(\.id) == [tracks[0].id, tracks[2].id, tracks[1].id])
+    }
+
     @Test func favouritesFilterBeforePaginationAndCombineWithSearch() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

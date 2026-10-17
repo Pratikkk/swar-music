@@ -61,6 +61,9 @@ Play Next/Last, Get Info, Favourite, Copy, Show in Finder, and Remove from Libra
 Favourites persist locally and have a dedicated sidebar screen with search, Play, and Shuffle. A pink star marks favourite songs. Library removal leaves the original file in place and
 keeps it excluded from folder scans; **Settings → Files → Restore Removed Songs**
 restores visibility. Playlist references are removed when a song is removed from the library.
+Songs and Favourites support saved sorting by title, artist, album, duration, or
+recently added, with Reverse Order in the view-options menu. Sorting applies
+across the database before paging.
 
 Artists uses a two-pane browser with All Artists and a selectable artist list.
 Album artists keep compilations together, with album covers, numbered songs, and

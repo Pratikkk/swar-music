@@ -20,6 +20,8 @@ public final class LibraryModel {
     public var search = ""
     public var recentFirst = false
     public var favoritesOnly = false
+    public var sortOrder: TrackSortOrder = .album
+    public var reverseSort = false
     public private(set) var pageLimit = 500
     public private(set) var artworkDirectory: URL?
     private var repository: LibraryRepository?
@@ -145,10 +147,12 @@ public final class LibraryModel {
         let query = search
         let onlyFavorites = favoritesOnly
         let recent = recentFirst
+        let order = sortOrder
+        let reversed = reverseSort
         do {
-            let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites)
+            let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed)
             let preferences = try await repository.trackPreferences()
-            guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, onlyFavorites == favoritesOnly, recent == recentFirst else { return }
+            guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, onlyFavorites == favoritesOnly, recent == recentFirst, order == sortOrder, reversed == reverseSort else { return }
             if tracks != page.tracks { tracks = page.tracks }
             if totalCount != page.count { totalCount = page.count }
             if unreadableCount != page.unreadableCount { unreadableCount = page.unreadableCount }
