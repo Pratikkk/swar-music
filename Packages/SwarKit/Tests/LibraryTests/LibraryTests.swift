@@ -6,6 +6,52 @@ import Testing
 @testable import Library
 
 struct LibraryTests {
+    @MainActor @Test func playingFileLookupIgnoresSearchAndExcludesHiddenOrOutsideFiles() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = music.appendingPathComponent("song.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: file)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let original = try #require(model.tracks.first)
+        model.search = "no matching song"
+        await model.reload()
+        #expect(model.tracks.isEmpty)
+        #expect(await model.track(at: file)?.id == original.id)
+        #expect(await model.track(at: music.deletingLastPathComponent().appendingPathComponent("MusicSibling/song.wav")) == nil)
+        #expect(await model.track(at: URL(string: "https://example.com/song.wav")!) == nil)
+        await model.removeTrackFromLibrary(original)
+        #expect(await model.track(at: file) == nil)
+        await model.restoreRemovedTracks()
+        #expect(await model.track(at: file)?.id == original.id)
+    }
+
+    @Test func exactTrackLookupWorksBeyondTheVisiblePageAndHonoursRemoval() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let seed = try #require(try await repository.page().tracks.first)
+        let tracks = (0..<600).map { index in
+            var track = seed
+            track.id = folder.id + ":extra-\(index).wav"
+            track.relativePath = "extra-\(index).wav"
+            track.title = String(format: "%04d", index)
+            return track
+        }
+        try await repository.saveTracks(tracks)
+        let target = tracks[599]
+        #expect(!(try await repository.page(limit: 500).tracks.contains { $0.id == target.id }))
+        #expect(try await repository.visibleTrack(id: target.id)?.title == target.title)
+        try await repository.removeTrackFromLibrary(trackID: target.id)
+        #expect(try await repository.visibleTrack(id: target.id) == nil)
+    }
+
     @MainActor @Test func unchangedReloadAndScanDoNotInvalidateTracksAndFolderRemovalRefreshesPlaylists() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

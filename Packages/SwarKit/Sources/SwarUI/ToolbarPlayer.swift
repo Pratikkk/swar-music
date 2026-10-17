@@ -1,10 +1,12 @@
 import SwiftUI
 import Player
+import Library
 
 /// Persistent glass player floats above the library with stable transport widths.
 @MainActor
 struct ToolbarPlayer: View {
     let player: Player
+    let library: LibraryModel
     let openNowPlaying: () -> Void
     @State private var showQueue = false
     @State private var showActivity = false
@@ -86,6 +88,7 @@ struct ToolbarPlayer: View {
                         }
                 }.buttonStyle(.plain).accessibilityLabel("Open Now Playing").help("Open Now Playing (⇧⌘N)")
                     .fixedSize()
+                    .currentSongActions(library: library, player: player)
                 VStack(spacing: 1) {
                     Button(action: openNowPlaying) {
                         VStack(spacing: 2) {
@@ -98,6 +101,7 @@ struct ToolbarPlayer: View {
                         }.lineLimit(1).truncationMode(.tail)
                             .frame(minWidth: 0, maxWidth: .infinity)
                     }.buttonStyle(.plain).accessibilityLabel("Open Now Playing")
+                        .currentSongActions(library: library, player: player)
                     FloatingPlayerSeekBar(player: player)
                 }
                 .frame(minWidth: 0, maxWidth: .infinity)

@@ -363,6 +363,20 @@ public final class LibraryModel {
     }
     public func artworkURL(_ key: String?) -> URL? { key.flatMap { artworkDirectory?.appendingPathComponent($0) } }
 
+    /// Resolve a playing file against connected library roots, not the visible page.
+    public func track(at url: URL) async -> LibraryTrack? {
+        guard url.isFileURL, let repository, !isShutDown else { return nil }
+        let components = url.standardizedFileURL.pathComponents
+        for (folderID, access) in scopes {
+            let root = access.url.standardizedFileURL.pathComponents
+            guard components.count > root.count, components.starts(with: root) else { continue }
+            let relativePath = components.dropFirst(root.count).joined(separator: "/")
+            do { return try await repository.visibleTrack(id: folderID + ":" + relativePath) }
+            catch { return nil }
+        }
+        return nil
+    }
+
     public func location(for track: LibraryTrack) throws -> (file: URL, root: URL) {
         guard let scope = scopes[track.folderID] else { throw LibraryFailure("The library folder is unavailable. Remove it and add it again to reconnect.") }
         return (scope.url.appendingPathComponent(track.relativePath), scope.url)

@@ -140,7 +140,12 @@ struct LibraryContent: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: true, vertical: false)
             }
-            .songActions(library: library, track: track, busy: player.isBusy, enqueue: { enqueue(track, next: $0) })
+            .songActions(library: library, track: track, busy: player.isBusy, play: {
+                Task {
+                    if current { await player.togglePlayback() }
+                    else { await play(track, context: context) }
+                }
+            }, playLabel: current && player.isPlaying ? "Pause" : "Play", enqueue: { enqueue(track, next: $0) })
             .padding(.vertical, density == .compact ? 3 : 6)
             .listRowBackground(current ? Color.accentColor.opacity(0.06) : Color.clear)
 

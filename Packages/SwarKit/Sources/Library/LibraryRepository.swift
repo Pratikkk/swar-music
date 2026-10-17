@@ -204,6 +204,13 @@ public actor LibraryRepository {
         }
     }
 
+    /// An exact lookup independent of the current search, sort and page limit.
+    public func visibleTrack(id: String) throws -> LibraryTrack? {
+        try database.read { db in
+            try LibraryTrack.fetchOne(db, sql: "SELECT * FROM tracks WHERE id = ? AND NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)", arguments: [id])
+        }
+    }
+
     public func albumTracks(artist: String, title: String) throws -> [LibraryTrack] {
         try database.read { db in
             try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks WHERE albumArtist = ? AND album = ? AND NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1) ORDER BY discNumber, trackNumber, title COLLATE NOCASE, id", arguments: [artist, title])

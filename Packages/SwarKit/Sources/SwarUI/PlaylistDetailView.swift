@@ -366,7 +366,7 @@ private struct PlaylistSongRow: View {
 
 
         }
-        .songActions(library: library, track: item.track, busy: busy, enqueue: enqueue) {
+        .songActions(library: library, track: item.track, busy: busy, play: play, playLabel: playing ? "Pause" : "Play", enqueue: enqueue) {
             Divider()
             if !isFirst { Button("Move Up", systemImage: "arrow.up") { moveUp() }.disabled(busy) }
             if !isLast { Button("Move Down", systemImage: "arrow.down") { moveDown() }.disabled(busy) }

@@ -153,6 +153,9 @@ struct HomeView: View {
                         .buttonStyle(PlaybackButtonStyle(unavailable: track.error != nil))
                         .disabled(player.isBusy || track.error != nil)
                         .accessibilityLabel("Play favourite " + track.title).help(track.error ?? track.title)
+                        .songActions(library: library, track: track, busy: player.isBusy,
+                            play: { Task { await play([track]) } }, showsButton: false,
+                            enqueue: { LibraryQueueActions.enqueue([track], next: $0, library: library, player: player) })
                     }
                 }
             }
@@ -193,7 +196,7 @@ struct HomeView: View {
                                 Text(album.artist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                             }.frame(maxWidth: .infinity, alignment: .leading)
                         }.buttonStyle(.plain).help("\(album.title)\n\(album.artist) · \(album.trackCount) \(album.trackCount == 1 ? "track" : "tracks")")
-                    }
+                    }.albumActions(library: library, player: player, album: album)
                 }
             }
         }

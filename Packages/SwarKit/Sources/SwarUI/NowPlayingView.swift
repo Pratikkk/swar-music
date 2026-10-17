@@ -1,10 +1,12 @@
 import SwiftUI
 import Player
+import Library
 
 @MainActor
 struct NowPlayingView: View {
     @Environment(\.swarPalette) private var palette
     let player: Player
+    let library: LibraryModel
     let width: CGFloat
     let browseArtist: (String) -> Void
     let browseAlbum: (String) -> Void
@@ -33,6 +35,8 @@ struct NowPlayingView: View {
                     NowPlayingAppearanceControls().padding(20).frame(width: 320)
                         .onExitCommand { showAppearance = false }
                 }
+                Color.clear.frame(width: 0, height: 28)
+                    .currentSongActions(library: library, player: player, showsButton: true)
                 SleepTimerMenu(timer: player.sleepTimer)
                 Button { showQueue.toggle() } label: {
                     Label("Up Next · \(player.upcomingEntries.count)", systemImage: "list.bullet")
@@ -54,7 +58,7 @@ struct NowPlayingView: View {
                             QueueView(player: player, embedded: true)
                                 .frame(maxHeight: .infinity)
                         } else {
-                            NowPlayingArtwork(player: player, size: min(250, max(180, geometry.size.height * 0.40)),
+                            NowPlayingArtwork(player: player, library: library, size: min(250, max(180, geometry.size.height * 0.40)),
                                 browseArtist: { name in dismiss(); browseArtist(name) },
                                 browseAlbum: { name in dismiss(); browseAlbum(name) })
                         }
@@ -84,6 +88,7 @@ struct NowPlayingView: View {
 @MainActor
 private struct NowPlayingArtwork: View {
     let player: Player
+    let library: LibraryModel
     let size: CGFloat
     let browseArtist: (String) -> Void
     let browseAlbum: (String) -> Void
@@ -100,6 +105,7 @@ private struct NowPlayingArtwork: View {
             VStack(spacing: 12) {
                 CoverArt(url: player.artworkURL, title: player.title, cornerRadius: 14, crossfade: true)
                     .frame(width: size, height: size)
+                    .currentSongActions(library: library, player: player)
                     .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
                     .overlay {
                         ProgressView().controlSize(.small).padding(10)

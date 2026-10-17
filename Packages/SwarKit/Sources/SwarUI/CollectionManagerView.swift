@@ -243,7 +243,11 @@ struct CollectionManagerView: View {
         }
         .contextMenu(forSelectionType: String.self) { ids in
             if ids.count == 1, let track = tracks.first(where: { ids.contains($0.id) }) {
-                if filter != .removed { Button("Edit Details…") { editing = track } }
+                if filter != .removed {
+                    SongNavigationItems(track: track)
+                    Divider()
+                    Button("Edit Details…") { editing = track }
+                }
                 Button("Show in Finder") {
                     do { NSWorkspace.shared.activateFileViewerSelecting([try library.location(for: track).file]) }
                     catch { self.error = error.localizedDescription }
@@ -251,6 +255,21 @@ struct CollectionManagerView: View {
             }
             if !ids.isEmpty {
                 if filter != .removed {
+                    Menu("Add to Playlist") {
+                        Button("New Playlist…") {
+                            playlistTracks = tracks.filter { ids.contains($0.id) }; playlistName = ""; showNewPlaylist = true
+                        }
+                        Divider()
+                        ForEach(library.playlists) { playlist in
+                            Button(playlist.name) {
+                                let chosen = tracks.filter { ids.contains($0.id) }
+                                Task { await library.addTracks(chosen, to: playlist) }
+                            }
+                        }
+                    }
+                    Button("Play Next") { LibraryQueueActions.enqueue(tracks.filter { ids.contains($0.id) }, next: true, library: library, player: player) }.disabled(player.isBusy)
+                    Button("Play Last") { LibraryQueueActions.enqueue(tracks.filter { ids.contains($0.id) }, next: false, library: library, player: player) }.disabled(player.isBusy)
+                    Divider()
                     Button("Edit Album Artwork…") { artworkRequest = ArtworkEditRequest(tracks: tracks.filter { ids.contains($0.id) }) }
                 }
                 if filter == .removed { Button("Restore") { manage(ids, restore: true) } }

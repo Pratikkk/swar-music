@@ -22,6 +22,11 @@ struct AlbumDetailView: View {
     let enqueueAlbum: (Bool) -> Void
     var addAlbumToPlaylist: ((LibraryPlaylist) -> Void)? = nil
 
+    private var albumSummary: LibraryAlbumSummary {
+        LibraryAlbumSummary(title: title, artist: artist, artworkKey: tracks.first?.artworkKey,
+            trackCount: tracks.count, playableCount: tracks.filter { $0.error == nil }.count)
+    }
+
     private var canPlay: Bool { tracks.contains { $0.error == nil } }
     private var metadata: String {
         let genres = Array(Set(tracks.map(\.genre).filter { !$0.isEmpty && $0 != "Unknown Genre" })).sorted()
@@ -75,22 +80,8 @@ struct AlbumDetailView: View {
                         Text("\(tracks.count) \(tracks.count == 1 ? "song" : "songs") · \(durationDescription)")
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
-                        Menu {
-                            Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { enqueueAlbum(true) }
-                                .disabled(player.isBusy)
-                            Button("Add to Queue", systemImage: "text.badge.plus") { enqueueAlbum(false) }
-                                .disabled(player.isBusy)
-                            if !playlists.isEmpty {
-                                Divider()
-                                Menu("Add to Playlist", systemImage: "music.note.list") {
-                                    ForEach(playlists) { playlist in
-                                        Button(playlist.name) { addAlbumToPlaylist?(playlist) }
-                                    }
-                                }
-                            }
-                        } label: { Image(systemName: "ellipsis.circle.fill").font(.title2) }
-                        .menuStyle(.borderlessButton).fixedSize().disabled(!canPlay)
-                        .accessibilityLabel("Album actions")
+                        Color.clear.frame(width: 0, height: 28)
+                            .albumActions(library: library, player: player, album: albumSummary, showsButton: true)
                     }
                     LazyVStack(spacing: 0) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -174,7 +165,7 @@ struct AlbumSongRow: View {
             .accessibilityValue(current ? (playing ? "Now playing" : "Paused") : "")
 
         }
-        .songActions(library: library, track: track, busy: busy, enqueue: enqueue)
+        .songActions(library: library, track: track, busy: busy, play: play, playLabel: playing ? "Pause" : "Play", enqueue: enqueue)
         .font(.system(size: 13)).padding(.horizontal, 12).padding(.vertical, density.songPadding)
         .background(current ? Color.accentColor.opacity(0.1) : Color.primary.opacity(hovered ? 0.055 : (alternate ? 0.025 : 0)), in: RoundedRectangle(cornerRadius: 6))
         .onHover { hovered = $0 }

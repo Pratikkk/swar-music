@@ -17,6 +17,7 @@ struct AlbumBrowserView: View {
     let player: Player
     let recent: Bool
     @Binding var selectedAlbum: String?
+    @Binding var requestedAlbum: String?
     let sortOrder: AlbumSortOrder
     let reversed: Bool
     @Environment(\.floatingPlayerClearance) private var clearance
@@ -68,6 +69,13 @@ struct AlbumBrowserView: View {
                     detail(album)
                 } else { ProgressView("Opening album…") }
             }
+        }
+        .task(id: requestedAlbum) {
+            guard let id = requestedAlbum else { return }
+            await reload()
+            guard !Task.isCancelled, requestedAlbum == id else { return }
+            if albums.contains(where: { $0.id == id }) { selectedAlbum = id }
+            requestedAlbum = nil
         }
         .task(id: refreshKey) { await reload() }
         .task(id: "\(selectedAlbum ?? "")-\(refreshKey)-\(ready)") { await loadDetail() }
@@ -138,8 +146,8 @@ struct AlbumBrowserView: View {
                                         AlbumBrowserCard(album: album, artworkURL: library.artworkURL(album.artworkKey),
                                             busy: player.isBusy || actionInProgress,
                                             open: { selectedAlbum = album.id },
-                                            play: { perform(album, action: .play(false)) })
-                                            .contextMenu { albumMenu(album) }.id(album.id)
+                                            play: { perform(album) })
+                                            .albumActions(library: library, player: player, album: album).id(album.id)
                                     }
                                 }
                             }
@@ -166,23 +174,6 @@ struct AlbumBrowserView: View {
             else { result.append((title, [album])) }
         }
         albumSections = result
-    }
-
-    @ViewBuilder private func albumMenu(_ album: LibraryAlbumSummary) -> some View {
-        Button("Open Album", systemImage: "square.stack") { selectedAlbum = album.id }
-        Divider()
-        Group {
-            Button("Play", systemImage: "play.fill") { perform(album, action: .play(false)) }
-            Button("Shuffle", systemImage: "shuffle") { perform(album, action: .play(true)) }
-            Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { perform(album, action: .enqueue(true)) }
-            Button("Play Last", systemImage: "text.append") { perform(album, action: .enqueue(false)) }
-            Menu("Add to Playlist") {
-                ForEach(library.playlists) { playlist in
-                    Button(playlist.name) { perform(album, action: .playlist(playlist)) }
-                }
-                if library.playlists.isEmpty { Text("Create a playlist from the sidebar first") }
-            }
-        }.disabled(player.isBusy || actionInProgress || album.playableCount == 0)
     }
 
     private func reload() async {
@@ -224,18 +215,13 @@ struct AlbumBrowserView: View {
             addAlbumToPlaylist: { playlist in Task { await library.addTracks(detailTracks.filter { $0.error == nil }, to: playlist) } })
     }
 
-    private enum AlbumAction { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist) }
-    private func perform(_ album: LibraryAlbumSummary, action: AlbumAction) {
+    private func perform(_ album: LibraryAlbumSummary) {
         guard !actionInProgress, !player.isBusy else { return }
         actionInProgress = true
         Task {
             defer { actionInProgress = false }
             let tracks = await library.tracks(in: album)
-            switch action {
-            case .play(let shuffle): await play(tracks, shuffle: shuffle)
-            case .enqueue(let next): enqueue(tracks, next: next)
-            case .playlist(let playlist): await library.addTracks(tracks.filter { $0.error == nil }, to: playlist)
-            }
+            await play(tracks, shuffle: false)
         }
     }
     private func isCurrent(_ track: LibraryTrack) -> Bool {

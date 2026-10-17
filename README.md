@@ -2,6 +2,9 @@
 
 A native macOS local music player built with SwiftUI and Swift 6.
 
+Song and album context menus provide playlist creation, queue actions, album/artist
+navigation, editing and Finder access. See [context menus](Docs/ContextMenus.md).
+
 For regular use, install the packaged **Swar.app** in Applications. Build a local
 DMG with `./scripts/package-macos.sh`; see [installation and updates](Docs/Installation.md).
 

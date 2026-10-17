@@ -48,6 +48,7 @@ public struct LibraryView: View {
     @FocusState private var sidebarFocused: Bool
     @State private var player = Player(sessionStore: .applicationDefault())
     @State private var selectedAlbum: String?
+    @State private var requestedAlbum: String?
     @State private var showImporter = false
     @State private var showNowPlaying = false
     @State private var windowWidth: CGFloat = 900
@@ -196,9 +197,10 @@ public struct LibraryView: View {
         }
         .onChange(of: selection) { old, new in
             if old != .section(.home) || new != .section(.albums) { selectedAlbum = nil }
+            if new != .section(.albums) { requestedAlbum = nil }
         }
         .sheet(isPresented: $showNowPlaying) {
-            NowPlayingView(player: player, width: max(640, min(900, windowWidth - 40)),
+            NowPlayingView(player: player, library: library, width: max(640, min(900, windowWidth - 40)),
                 browseArtist: { artist in
                     library.searchScope = .artist; library.search = artist
                     selection = .section(.artists)
@@ -206,6 +208,25 @@ public struct LibraryView: View {
                     library.searchScope = .album; library.search = album
                     selection = .section(.albums)
                 })
+        }
+        .environment(\.libraryNavigation, LibraryNavigation(go: navigate))
+        .environment(\.libraryPlayer, player)
+    }
+
+    private func navigate(_ destination: LibraryDestination) {
+        showNowPlaying = false
+        searchFocused = false
+        switch destination {
+        case .album(let artist, let title):
+            library.search = ""; library.searchScope = .all
+            requestedAlbum = artist + "\u{1f}" + title
+            selection = .section(.albums)
+        case .artist(let name):
+            library.searchScope = .artist; library.search = name
+            selection = .section(.artists)
+        case .genre(let name):
+            library.searchScope = .genre; library.search = name
+            selection = .section(.genres)
         }
     }
 
@@ -229,7 +250,7 @@ public struct LibraryView: View {
         .background(SwarTheme.canvas)
         .ignoresSafeArea(.container, edges: .top)
         .overlay(alignment: .bottom) {
-            ToolbarPlayer(player: player, openNowPlaying: { showNowPlaying = true })
+            ToolbarPlayer(player: player, library: library, openNowPlaying: { showNowPlaying = true })
                 .frame(maxWidth: 760)
                 .background {
                     GeometryReader { geometry in
@@ -265,15 +286,13 @@ public struct LibraryView: View {
                     openFavourites: { selection = .section(.favorites) },
                     openRecent: { selection = .section(.recentlyAdded) },
                     browseAlbum: { album in
-                        library.search = ""
-                        selection = .section(.albums)
-                        selectedAlbum = album.id
+                        navigate(.album(artist: album.artist, title: album.title))
                     }, addFolder: openFolderPicker)
             } else if selection == .section(.manage) {
                 CollectionManagerView(library: library, player: player, addFolder: openFolderPicker)
             } else if selection == .section(.albums) || selection == .section(.recentlyAdded) {
                 AlbumBrowserView(library: library, player: player,
-                    recent: selection == .section(.recentlyAdded), selectedAlbum: $selectedAlbum,
+                    recent: selection == .section(.recentlyAdded), selectedAlbum: $selectedAlbum, requestedAlbum: $requestedAlbum,
                     sortOrder: albumSortOrder, reversed: reverseAlbumSort)
             } else {
                 let sectionName: String = {

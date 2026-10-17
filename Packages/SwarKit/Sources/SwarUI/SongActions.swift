@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Library
+import Player
 
 /// One menu definition powers the ellipsis and right-click menus in every song list.
 @MainActor
@@ -8,8 +9,13 @@ private struct SongActions<Extra: View>: ViewModifier {
     let library: LibraryModel
     let track: LibraryTrack
     let busy: Bool
+    let play: (() -> Void)?
+    let playLabel: String
+    let showsButton: Bool
+    @Environment(\.libraryPlayer) private var player
     let enqueue: (Bool) -> Void
     let extra: Extra
+    @State private var showArtwork = false
     @State private var showInfo = false
     @State private var showEditor = false
     @State private var showRemoval = false
@@ -19,24 +25,32 @@ private struct SongActions<Extra: View>: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .padding(.trailing, 32)
+            .padding(.trailing, showsButton ? 32 : 0)
             .overlay(alignment: .trailing) {
-                Menu { menuItems } label: { Image(systemName: "ellipsis").frame(width: 18, height: 28) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .accessibilityLabel("Actions for \(track.title)").padding(.trailing, 10)
+                if showsButton {
+                    Menu { menuItems } label: { Image(systemName: "ellipsis").frame(width: 18, height: 28) }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                        .accessibilityLabel("Actions for \(track.title)").padding(.trailing, showsButton ? 10 : 0)
+                }
             }
             .contextMenu { menuItems }
             .sheet(isPresented: $showEditor) { MetadataEditorView(track: track, library: library) }
+            .sheet(isPresented: $showArtwork) {
+                if let player { ArtworkEditorView(tracks: [track], library: library, player: player) }
+            }
             .sheet(isPresented: $showInfo) { SongInfoView(track: track, library: library) }
             .alert("New Playlist", isPresented: $showNewPlaylist) {
                 TextField("Playlist Name", text: $playlistName)
                 Button("Create") {
+                    let name = playlistName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty else { return }
                     Task {
-                        if let playlist = await library.createPlaylist(name: playlistName) {
+                        if let playlist = await library.createPlaylist(name: name) {
                             await library.addTracks([track], to: playlist)
                         }
                     }
                 }
+                .disabled(playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel", role: .cancel) {}
             }
             .alert("Remove from Library?", isPresented: $showRemoval) {
@@ -51,6 +65,9 @@ private struct SongActions<Extra: View>: ViewModifier {
     }
 
     @ViewBuilder private var items: some View {
+        if let play {
+            Button(playLabel, systemImage: playLabel == "Pause" ? "pause.fill" : "play.fill", action: play).disabled(busy || track.error != nil)
+        }
         Menu("Add to Playlist", systemImage: "music.note.list") {
             Button("New Playlist…", systemImage: "plus") { playlistName = ""; showNewPlaylist = true }
             if !library.playlists.isEmpty {
@@ -66,24 +83,39 @@ private struct SongActions<Extra: View>: ViewModifier {
         Button("Play Last", systemImage: "text.append") { enqueue(false) }
             .disabled(busy || track.error != nil)
         Divider()
+        SongNavigationItems(track: track)
+        Divider()
         Button("Get Info", systemImage: "info.circle") { showInfo = true }
         Button("Edit Details…", systemImage: "pencil") { showEditor = true }
-        Button(library.favoriteTrackIDs.contains(track.id) ? "Remove from Favourites" : "Favourite",
-               systemImage: library.favoriteTrackIDs.contains(track.id) ? "heart.fill" : "heart") {
+        if player != nil { Button("Edit Album Artwork…", systemImage: "photo") { showArtwork = true } }
+        Button(library.favoriteTrackIDs.contains(track.id) ? "Remove from Favourites" : "Add to Favourites",
+               systemImage: library.favoriteTrackIDs.contains(track.id) ? "star.slash" : "star") {
             Task { await library.toggleFavorite(track) }
         }
         Divider()
-        Button("Copy", systemImage: "doc.on.doc") {
-            do {
-                let url = try library.location(for: track).file
-                NSPasteboard.general.clearContents()
-                if !NSPasteboard.general.writeObjects([url as NSURL]) { actionError = "The file could not be copied to the clipboard." }
-            } catch { actionError = error.localizedDescription }
+        Menu("Copy", systemImage: "doc.on.doc") {
+            Button("Song Details") { copyText([track.title, track.artist, track.album].filter { !$0.isEmpty }.joined(separator: " — ")) }
+            Button("File Path") {
+                do { copyText(try library.location(for: track).file.path) }
+                catch { actionError = error.localizedDescription }
+            }
+            Button("File") {
+                do {
+                    let url = try library.location(for: track).file
+                    NSPasteboard.general.clearContents()
+                    if !NSPasteboard.general.writeObjects([url as NSURL]) { actionError = "The file could not be copied to the clipboard." }
+                } catch { actionError = error.localizedDescription }
+            }
         }
         Button("Show in Finder", systemImage: "folder") {
             do { NSWorkspace.shared.activateFileViewerSelecting([try library.location(for: track).file]) }
             catch { actionError = error.localizedDescription }
         }
+    }
+
+    private func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        if !NSPasteboard.general.setString(text, forType: .string) { actionError = "The text could not be copied." }
     }
 
     @ViewBuilder private var menuItems: some View {
@@ -95,13 +127,13 @@ private struct SongActions<Extra: View>: ViewModifier {
 }
 
 extension View {
-    @MainActor func songActions(library: LibraryModel, track: LibraryTrack, busy: Bool, enqueue: @escaping (Bool) -> Void) -> some View {
-        modifier(SongActions(library: library, track: track, busy: busy, enqueue: enqueue, extra: EmptyView()))
+    @MainActor func songActions(library: LibraryModel, track: LibraryTrack, busy: Bool, play: (() -> Void)? = nil, playLabel: String = "Play", showsButton: Bool = true, enqueue: @escaping (Bool) -> Void) -> some View {
+        modifier(SongActions(library: library, track: track, busy: busy, play: play, playLabel: playLabel, showsButton: showsButton, enqueue: enqueue, extra: EmptyView()))
     }
 
-    @MainActor func songActions<Extra: View>(library: LibraryModel, track: LibraryTrack, busy: Bool,
+    @MainActor func songActions<Extra: View>(library: LibraryModel, track: LibraryTrack, busy: Bool, play: (() -> Void)? = nil, playLabel: String = "Play", showsButton: Bool = true,
                                  enqueue: @escaping (Bool) -> Void, @ViewBuilder extra: () -> Extra) -> some View {
-        modifier(SongActions(library: library, track: track, busy: busy, enqueue: enqueue, extra: extra()))
+        modifier(SongActions(library: library, track: track, busy: busy, play: play, playLabel: playLabel, showsButton: showsButton, enqueue: enqueue, extra: extra()))
     }
 }
 
