@@ -314,6 +314,66 @@ extension LibraryTests {
         #expect(abs(track.duration - Double(native.frameCount) / native.source.sampleRate) < 0.000001)
     }
 
+    @Test(arguments: ["44100-16.wav", "96000-24.flac", "192000-24.m4a", "44100-16.mp3", "44100-16.aac.m4a", "96000-24.aiff", "96000-float.caf"])
+    func nativeInspectionSurvivesUnavailableBundledCodecs(name: String) throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("DecodingTests/Fixtures").appendingPathComponent(name)
+        let url = music.appendingPathComponent(name)
+        try FileManager.default.copyItem(at: source, to: url)
+        let cover = music.appendingPathComponent("front.png")
+        try FileManager.default.copyItem(at: Bundle.module.resourceURL!.appendingPathComponent("Fixtures/front.png"), to: cover)
+        let native = try NativeDecoder(url: url)
+        let unavailable = temporary.appendingPathComponent("UnavailableCodecs")
+        try FileManager.default.createDirectory(at: unavailable, withIntermediateDirectories: true)
+        let folder = LibraryFolder(path: music.path)
+        let file = ScanFile(url: url, relativePath: name, size: Int64(try Data(contentsOf: url).count),
+            modified: Date(), coverURL: cover, coverStamp: "cover")
+        for invalidLibrary in [false, true] {
+            if invalidLibrary {
+                try Data("Invalid dynamic library".utf8).write(to: unavailable.appendingPathComponent("libavformat.63.dylib"))
+            }
+            #expect(throws: (any Error).self) { try FFmpegDecoder(url: url, codecDirectory: unavailable) }
+            let track = MediaInspector(codecDirectory: unavailable, artworkDirectory: artwork)
+                .inspect(file: file, folder: folder, prior: nil)
+            #expect(track.error == nil, "\(name): \(track.error ?? "")")
+            #expect(track.codec == native.source.codec && track.bitDepth == native.source.bitDepth)
+            #expect(track.sampleRate == native.source.sampleRate && track.channels == native.source.channels)
+            #expect(track.isLossless == native.source.isLossless && track.isFloat == native.source.isFloat)
+            #expect(abs(track.duration - Double(native.frameCount) / native.source.sampleRate) < 0.000001)
+            #expect(track.artworkKey != nil)
+            #expect(track.title == url.deletingPathExtension().lastPathComponent)
+        }
+    }
+
+    @Test func scannerFallsBackToNativeAndRetriesPriorCodecErrors() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let fixtureRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("DecodingTests/Fixtures")
+        for name in ["44100-16.mp3", "96000-24.flac", "192000-24.m4a", "44100-16.wma"] {
+            try FileManager.default.copyItem(at: fixtureRoot.appendingPathComponent(name), to: music.appendingPathComponent(name))
+        }
+        try Data("Broken audio".utf8).write(to: music.appendingPathComponent("broken.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        let scanner = LibraryScanner(repository: repository, artworkDirectory: artwork,
+            codecDirectory: temporary.appendingPathComponent("MissingCodecs"))
+        let summary = try await scanner.scan(folder: folder, root: music)
+        #expect(summary.total == 5 && summary.failed == 2)
+        let tracks = try await repository.page().tracks
+        #expect(tracks.filter { $0.error == nil }.count == 3)
+        #expect(tracks.filter { $0.error != nil }.allSatisfy { $0.error?.contains("Additional codecs:") == true })
+        var prior = try #require(tracks.first { $0.relativePath == "44100-16.mp3" })
+        prior.error = "Previous bundled codec failure"
+        try await repository.saveTracks([prior])
+        let retried = try await scanner.scan(folder: folder, root: music)
+        #expect(retried.failed == 2)
+        #expect(try await repository.visibleTrack(id: prior.id)?.error == nil)
+    }
+
     @Test func metadataAcrossContainersAndArtworkCaching() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

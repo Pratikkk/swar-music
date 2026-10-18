@@ -51,9 +51,13 @@ and through Rescan. Changes arriving during a scan schedule another pass.
 
 ## Metadata and artwork
 
-Each changed file uses one bundled FFmpeg decoder inspection for source format,
-duration, tags, and embedded artwork. Native files no longer open a native decoder
-and then a second decoder for metadata. Playback retains its independent
+Each changed file first uses one bundled FFmpeg probe for source format, duration,
+tags, and embedded artwork. If that probe fails (including missing, invalid, or
+unloadable codec libraries), inspection tries the native decoder. A successful
+native fallback supplies audio facts and duration without a track error; metadata
+uses filename/folder defaults and external artwork when FFmpeg metadata is unavailable.
+A track is marked unreadable only if both probes fail, with both diagnostics retained.
+The healthy FFmpeg path still opens just one decoder. Playback retains its independent
 native-first selection. The FFmpeg bridge reads stream and container tags across
 ID3, MP4, Vorbis comments, and APE tags, avoiding a second tagging dependency.
 Stored metadata includes title, artist, album artist, album,
@@ -72,6 +76,14 @@ the native decoder for PCM WAV, FLAC, ALAC, AIFF, and floating-point CAF, includ
 24-bit/192 kHz audio. Existing tagged-container and artwork tests cover both native
 and bundled-only formats. This removes redundant decoder setup; no scan speedup
 percentage has been measured. Unchanged files still skip inspection entirely.
+
+Missing/invalid-library regressions cover WAV, FLAC, ALAC, MP3, AAC, AIFF, and CAF:
+native source facts/duration remain intact, external covers are cached, and no false
+track error is recorded. A scanner regression verifies retries clear a previously
+stored codec error while corrupt audio and bundled-only WMA remain erroneous.
+All 147 package tests pass, including the existing full tag/artwork checks with
+healthy bundled codecs. Fallback metadata uses defaults rather than attempting a
+second native tagging implementation.
 
 ## Playlists
 
