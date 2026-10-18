@@ -176,3 +176,30 @@ restoration, and folder cleanup. The signed Debug app was checked with the menu,
 Get Info, favourite toggling (then restored), and cancelling library removal. Copy
 and Finder use native APIs; no clipboard changes or file deletion were needed for
 that manual check.
+
+## Watcher callback lifetime
+
+The original context retain/release callbacks already gave FSEvents ownership of
+the callback box; `passUnretained` alone was not evidence of a use-after-free.
+[Apple documents stop → invalidate → release as the normal cleanup sequence](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/UsingtheFSEventsFramework/UsingtheFSEventsFramework.html).
+The following changes make application-side shutdown ordering explicit:
+
+- Each watcher uses its own serial utility queue. The context never references the
+  watcher or UI state directly.
+- Deinit clears the client action under a lock. A callback that already obtained
+  the action retains its captures through completion; later callbacks do no work.
+  Captures are released outside the lock to allow reentrant destruction.
+- Deinit asynchronously enqueues stop/invalidate/release on the callback queue,
+  capturing immutable stream state and a strong callback reference. Cleanup runs
+  behind the active callback, without blocking the UI or syncing onto the same
+  queue when the action destroys its own watcher.
+- Stream ownership is assigned only after Start succeeds. Creation/start failures
+  have their own single cleanup path and cannot also run watcher deinit cleanup.
+
+Already-enqueued MainActor work is still protected by LibraryModel's shutdown guard.
+Validation: 150 tests passed across 20 suites. Three lifecycle tests cover a blocked
+callback during watcher release, release from the callback itself, and capture
+release without events; these also passed with Address Sanitizer using Swift
+Testing (`swift test --sanitize address --disable-xctest --enable-swift-testing
+--filter FolderWatcherLifetimeTests`). No original use-after-free was reproduced.
+Universal release build 73 passed signing and bundled-codec checks.
