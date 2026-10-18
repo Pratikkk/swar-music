@@ -246,9 +246,23 @@ public final class LibraryModel {
         catch { errorMessage = error.localizedDescription; return nil }
     }
 
-    public func albums(search: String, scope: TrackSearchScope, sort: AlbumSortOrder = .artist, reversed: Bool = false) async throws -> [LibraryAlbumSummary] {
+    public func albums(search: String, scope: TrackSearchScope, sort: AlbumSortOrder = .artist, reversed: Bool = false,
+                       filter: AlbumBrowseFilter = .all, limit: Int = 200, offset: Int = 0) async throws -> [LibraryAlbumSummary] {
         guard let repository, !isShutDown else { return [] }
-        return try await repository.albums(search: search, searchScope: scope, sort: sort, reversed: reversed)
+        return try await repository.albums(search: search, searchScope: scope, sort: sort, reversed: reversed,
+                                           filter: filter, limit: limit, offset: offset)
+    }
+
+    public func albumPage(search: String, scope: TrackSearchScope, sort: AlbumSortOrder, reversed: Bool,
+                          filter: AlbumBrowseFilter, limit: Int = 200, offset: Int = 0) async throws -> AlbumBrowsePage? {
+        guard let repository, !isShutDown else { return nil }
+        return try await repository.albumPage(search: search, searchScope: scope, sort: sort, reversed: reversed,
+                                              filter: filter, limit: limit, offset: offset)
+    }
+
+    public func album(id: String) async throws -> LibraryAlbumSummary? {
+        guard let repository, !isShutDown else { return nil }
+        return try await repository.album(id: id)
     }
 
     public func tracks(in album: LibraryAlbumSummary) async -> [LibraryTrack] {

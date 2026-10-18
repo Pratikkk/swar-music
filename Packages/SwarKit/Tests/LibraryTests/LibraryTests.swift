@@ -460,6 +460,74 @@ extension LibraryTests {
         #expect(empty.recentAlbums.isEmpty && empty.favourites.isEmpty)
     }
 
+    @Test func albumPaginationFiltersBeforeLimitAndKeepsGlobalTotals() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let template = try #require(try await repository.page().tracks.first)
+        var tracks: [LibraryTrack] = []
+        for index in 0..<513 {
+            var first = template
+            if index != 0 { first.id = "page-\(index)"; first.relativePath = "page-\(index).wav" }
+            first.title = "Needle"; first.album = "Album \(index)"; first.albumArtist = "Artist \(index % 2)"
+            first.year = String(2020 + index % 5)
+            first.addedAt = Date(timeIntervalSince1970: Double(index))
+            first.artworkKey = index.isMultiple(of: 4) ? nil : "cover"
+            first.isLossless = true
+            var second = first
+            second.id = "second-page-\(index)"; second.relativePath = "second-page-\(index).wav"
+            second.title = "Other"; second.isLossless = !index.isMultiple(of: 3)
+            tracks += [first, second]
+        }
+        try await repository.saveTracks(tracks)
+        let first = try await repository.albumPage(sort: .title)
+        #expect(first.albums.count == 200)
+        #expect(first.totals.albumCount == 513 && first.totals.totalAlbumCount == 513 && first.totals.songCount == 1026)
+        #expect(first.albums.first?.title == "Album 0" && first.albums.last?.title == "Album 199")
+        let presentation = try await AlbumBrowseArranger().arrange(first.albums, recent: false, filter: .all, totals: first.totals)
+        #expect(presentation.albumCount == 513 && presentation.songCount == 1026)
+        #expect(presentation.sections[0].albums.count == 200)
+        let last = try await repository.albumPage(sort: .title, offset: 400)
+        #expect(last.albums.count == 113 && last.albums.last?.title == "Album 512")
+        #expect(last.totals == first.totals)
+        let beyond = try await repository.albumPage(sort: .title, offset: 900)
+        #expect(beyond.albums.isEmpty && beyond.totals == first.totals)
+        #expect(try await repository.albums(limit: 0, offset: -10).count == 1)
+        #expect(try await repository.albums(limit: .max).count == 500)
+
+        let lossless = try await repository.albumPage(search: "Need", searchScope: .title, sort: .title, filter: .lossless, limit: 7)
+        #expect(lossless.albums.count == 7 && lossless.albums.first?.title == "Album 1")
+        #expect(lossless.totals.albumCount == 342 && lossless.totals.totalAlbumCount == 513 && lossless.totals.songCount == 684)
+        #expect(lossless.albums.allSatisfy { $0.trackCount == 2 && $0.losslessTrackCount == 2 })
+        let missing = try await repository.albumPage(filter: .missingArtwork, limit: 3, offset: 2)
+        #expect(missing.albums.count == 3 && missing.albums.allSatisfy { $0.artworkKey == nil })
+        #expect(missing.totals.albumCount == 129 && missing.totals.songCount == 258)
+        let noMatch = try await repository.albumPage(search: "Unmatched", filter: .lossless)
+        #expect(noMatch.albums.isEmpty && noMatch.totals.albumCount == 0 && noMatch.totals.totalAlbumCount == 0)
+        let exact = try #require(try await repository.album(id: "Artist 0\u{1f}Album 512"))
+        #expect(exact.trackCount == 2 && !first.albums.contains(where: { $0.id == exact.id }))
+        #expect(try await repository.album(id: "unknown") == nil)
+
+        for sort in AlbumSortOrder.allCases {
+            var forward: [LibraryAlbumSummary] = [], backward: [LibraryAlbumSummary] = []
+            for offset in stride(from: 0, to: 513, by: 73) {
+                forward += try await repository.albums(sort: sort, limit: 73, offset: offset)
+                backward += try await repository.albums(sort: sort, reversed: true, limit: 73, offset: offset)
+            }
+            #expect(forward.count == 513 && Set(forward.map(\.id)).count == 513)
+            #expect(backward.map(\.id) == forward.reversed().map(\.id))
+        }
+        try await repository.removeTrackFromLibrary(trackID: tracks[1024].id)
+        try await repository.removeTrackFromLibrary(trackID: tracks[1025].id)
+        #expect(try await repository.album(id: exact.id) == nil)
+        let afterHide = try await repository.albumPage(limit: 1)
+        #expect(afterHide.totals.albumCount == 512 && afterHide.totals.songCount == 1024)
+    }
+
     @Test func albumSortingUsesSQLWithNaturalOrderAndStableReverse() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

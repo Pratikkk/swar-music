@@ -10,6 +10,17 @@ public enum AlbumBrowseFilter: String, CaseIterable, Identifiable, Sendable {
     public var id: Self { self }
 }
 
+public struct AlbumBrowseTotals: Sendable, Equatable {
+    public let albumCount: Int
+    public let totalAlbumCount: Int
+    public let songCount: Int
+}
+
+public struct AlbumBrowsePage: Sendable {
+    public let albums: [LibraryAlbumSummary]
+    public let totals: AlbumBrowseTotals
+}
+
 public struct AlbumBrowseSection: Identifiable, Sendable {
     public let id: String
     public let title: String
@@ -30,7 +41,7 @@ public struct AlbumBrowseSnapshot: Sendable {
 /// Preserves repository order while filtering and grouping off the UI actor.
 public actor AlbumBrowseArranger {
     public init() { }
-    public func arrange(_ source: [LibraryAlbumSummary], recent: Bool, filter: AlbumBrowseFilter, now: Date = Date(),
+    public func arrange(_ source: [LibraryAlbumSummary], recent: Bool, filter: AlbumBrowseFilter, totals: AlbumBrowseTotals? = nil, now: Date = Date(),
                         calendar: Calendar = .current) throws -> AlbumBrowseSnapshot {
         try Task.checkCancellation()
         let albums = source.filter { album in
@@ -59,7 +70,7 @@ public actor AlbumBrowseArranger {
                 }
             }
         } else { sections = [AlbumBrowseSection(id: "all", title: "Albums", albums: albums)] }
-        return AlbumBrowseSnapshot(sections: sections, albumCount: albums.count, totalAlbumCount: source.count,
-                                   songCount: albums.reduce(0) { $0 + $1.trackCount })
+        return AlbumBrowseSnapshot(sections: sections, albumCount: totals?.albumCount ?? albums.count, totalAlbumCount: totals?.totalAlbumCount ?? source.count,
+                                   songCount: totals?.songCount ?? albums.reduce(0) { $0 + $1.trackCount })
     }
 }

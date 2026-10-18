@@ -26,7 +26,7 @@ The browser provides:
 - Monthly Recently Added grouping and in-content clearance for the floating player.
 - Loading, retry, empty/search-empty, scan-progress, and library-error states.
 
-Only summaries are held for the collection. Tracks for a selected album or action
+Only loaded-page summaries are held for the collection. Tracks for a selected album or action
 are fetched on demand. Album reloads start immediately, without an artificial
 delay; cancelled and outdated results are discarded.
 Playback position updates do not trigger album metadata queries. The browser does
@@ -37,8 +37,9 @@ localized natural collation for titles and artists, aggregate year/date expressi
 and binary identity tie breakers. Reverse changes every ordering direction. Only
 enum-selected SQL expressions are interpolated; search values remain bound.
 Recently Added always requests newest-first order. Sort changes reload summaries;
-there is no second Swift sort or reverse pass. Filtering, counts, and calendar-month
-grouping remain on a dedicated serial actor. Results are retained until replacement
+there is no second Swift sort or reverse pass. Whole-album filters and total counts
+are computed in SQL before pagination; calendar-month grouping remains on a
+dedicated serial actor. Results are retained until replacement
 and cancelled results are ignored. Group lookup uses month keys instead of repeated
 section searches. Unchanged summaries do not trigger another arrangement. Direct
 Home/context-menu navigation reuses the active metadata load instead of starting
@@ -84,3 +85,35 @@ Playback stayed paused at its saved position and device volume was preserved.
 SQL sorting validation: 140 tests passed across 19 suites. Local universal build 66
 passed signature and bundled-codec checks. Native checks confirmed artist order,
 newest/oldest release-year order, and restoring the saved Artist preference.
+
+## Pagination
+
+Albums and Recently Added initially request 200 summaries using bound SQL LIMIT
+and OFFSET. Scrolling to the footer requests the next batch; overlapping requests
+are suppressed. The repository clamps limits to 1…500 and offsets to zero or
+higher. Filters run on complete aggregated albums before the page limit. Header
+album/song counts cover all matching albums, not just the loaded batch. Initial
+counts and rows share one database read; subsequent pages do not recount totals.
+
+Search, scope, sort, reverse, filter, and library revisions reset pagination.
+Existing cards stay visible while replacement results load; request keys and
+generations reject stale results. Additional-page failures preserve loaded cards
+and offer an inline retry. A library revision reloads from offset zero; duplicate
+card identities are suppressed if a scan changes rows before its revision arrives.
+Monthly sections merge across loaded pages. Going Back retains loaded pages and
+scroll position. Exact album lookup lets Home/context-menu navigation open an
+album outside the loaded pages without loading intervening summaries.
+
+Pagination regression tests use 513 two-song albums: complete/partial/empty pages,
+clamped limits/offsets, all sort modes and their reverse across boundaries,
+whole-album search/filter semantics, full totals, missing artwork, hidden albums,
+and exact lookup beyond the first page. Loaded cards accumulate as the user scrolls;
+this bounds initial loading, rather than imposing a fixed cap on all visited pages.
+
+Validation: 141 package tests passed in 19 suites. The 513-album pagination test
+also passed after adding presentation-total assertions. Universal local build 68
+passed signature and bundled-codec checks and was installed. Native checks on the
+13-album library covered full counts, Lossless, missing-artwork empty/reset states,
+Home-to-Ghar navigation outside an active filter, and Recently Added month grouping.
+Playback remained paused at its saved position. Multi-page boundaries are covered
+by automated repository tests; the native library fits within one 200-album page.

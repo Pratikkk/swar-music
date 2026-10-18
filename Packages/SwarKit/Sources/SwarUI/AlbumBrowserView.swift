@@ -22,22 +22,20 @@ struct AlbumBrowserView: View {
     @AppStorage("albumBrowseFilter") private var filter: AlbumBrowseFilter = .all
     @State private var arranger = AlbumBrowseArranger()
     @State private var presentation: AlbumBrowseSnapshot?
-    @State private var albumRevision = 0
     @State private var arranging = false
+    @State private var totals: AlbumBrowseTotals?
+    @State private var nextOffset = 0
+    @State private var hasMore = false
+    @State private var loadingMore = false
+    @State private var pageError: String?
+    @State private var detailAlbum: LibraryAlbumSummary?
+    private let pageSize = 200
     @State private var loadedKey: String?
     @State private var loadGeneration = UUID()
-    private struct ArrangementKey: Hashable {
-        let revision: Int
-        let recent: Bool
-        let filter: AlbumBrowseFilter
-    }
-    private var arrangementKey: ArrangementKey {
-        ArrangementKey(revision: albumRevision, recent: recent, filter: filter)
-    }
     @State private var actionInProgress = false
 
     private var refreshKey: String {
-        "\(library.isReady)-\(library.overviewRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)-\(library.searchScope)-\(library.search)-\(sortOrder)-\(reversed)-\(recent)"
+        "\(library.isReady)-\(library.overviewRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)-\(library.searchScope)-\(library.search)-\(sortOrder)-\(reversed)-\(recent)-\(filter)"
     }
     var body: some View {
         ZStack {
@@ -45,17 +43,16 @@ struct AlbumBrowserView: View {
             grid.opacity(selectedAlbum == nil ? 1 : 0)
                 .allowsHitTesting(selectedAlbum == nil).accessibilityHidden(selectedAlbum != nil)
             if let selectedAlbum {
-                if detailID == selectedAlbum, let album = albums.first(where: { $0.id == selectedAlbum }) {
+                if detailID == selectedAlbum, let album = detailAlbum {
                     detail(album)
                 } else { ProgressView("Opening album…") }
             }
         }
         .task(id: refreshKey) { await reload() }
-        .task(id: arrangementKey) { await arrange() }
         .task(id: "\(selectedAlbum ?? "")-\(refreshKey)-\(ready)") { await loadDetail() }
         .onChange(of: library.search) { selectedAlbum = nil }
         .onChange(of: library.searchScope) { selectedAlbum = nil }
-        .onChange(of: requestedAlbum) { openRequestedAlbum() }
+        .onChange(of: requestedAlbum, initial: true) { openRequestedAlbum() }
     }
 
     private var grid: some View {
@@ -142,6 +139,24 @@ struct AlbumBrowserView: View {
                                     }
                                 }
                             }
+                            if hasMore {
+                                HStack {
+                                    Spacer()
+                                    if let pageError {
+                                        VStack(spacing: 8) {
+                                            Text(pageError).font(.caption).foregroundStyle(.secondary)
+                                            Button("Try Again") { Task { await loadMore() } }
+                                        }
+                                    } else {
+                                        ProgressView().controlSize(.small)
+                                            .id("\(loadedKey ?? "")-\(nextOffset)-\(selectedAlbum == nil)")
+                                            // Finish this bounded request even if the footer scrolls away.
+                                            // Query generations still reject results after a reload.
+                                            .onAppear { Task { await loadMore() } }
+                                    }
+                                    Spacer()
+                                }.padding(.vertical, 12)
+                            }
                         }.padding(.horizontal, 28).padding(.top, 8).padding(.bottom, clearance + 24)
                             .id("album-grid-top")
                     }
@@ -156,24 +171,10 @@ struct AlbumBrowserView: View {
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func arrange() async {
-        guard ready else { return }
-        let key = arrangementKey
-        arranging = true
-        do {
-            let result = try await arranger.arrange(albums, recent: key.recent, filter: key.filter)
-            guard !Task.isCancelled, key == arrangementKey else { return }
-            presentation = result; arranging = false
-        } catch is CancellationError { }
-        catch { guard !Task.isCancelled else { return }; arranging = false; loadError = error.localizedDescription }
-    }
-
     private func openRequestedAlbum() {
         guard ready, loadedKey == refreshKey, let id = requestedAlbum else { return }
-        if albums.contains(where: { $0.id == id }) {
-            filter = .all
-            selectedAlbum = id
-        }
+        filter = .all
+        selectedAlbum = id
         requestedAlbum = nil
     }
 
@@ -181,26 +182,68 @@ struct AlbumBrowserView: View {
         guard library.isReady else { return }
         let key = refreshKey, generation = UUID()
         loadGeneration = generation
+        arranging = true; loadingMore = false; pageError = nil
+        defer { if generation == loadGeneration { arranging = false } }
         do {
-            let query = library.search, scope = library.searchScope
-            let result = try await library.albums(search: query, scope: scope,
-                sort: recent ? .recentlyAdded : sortOrder, reversed: recent ? false : reversed)
+            guard let page = try await library.albumPage(search: library.search, scope: library.searchScope,
+                sort: recent ? .recentlyAdded : sortOrder, reversed: recent ? false : reversed,
+                filter: filter, limit: pageSize) else { return }
+            let result = try await arranger.arrange(page.albums, recent: recent, filter: .all, totals: page.totals)
             guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }
-            if !ready || albums != result { albums = result; albumRevision += 1 }
+            albums = page.albums; totals = page.totals; presentation = result
+            nextOffset = page.albums.count; hasMore = nextOffset < page.totals.albumCount
             ready = true; loadError = nil; loadedKey = key
-            if let selectedAlbum, !result.contains(where: { $0.id == selectedAlbum }) { self.selectedAlbum = nil }
             openRequestedAlbum()
         } catch is CancellationError { }
-        catch { guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }; loadError = error.localizedDescription; ready = true; selectedAlbum = nil }
+        catch {
+            guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }
+            loadError = error.localizedDescription; ready = true
+        }
+    }
+
+    private func loadMore() async {
+        guard !loadingMore, hasMore, loadedKey == refreshKey, selectedAlbum == nil, let totals else { return }
+        let key = refreshKey, generation = loadGeneration, offset = nextOffset
+        loadingMore = true; pageError = nil
+        defer { if generation == loadGeneration { loadingMore = false } }
+        do {
+            let page = try await library.albums(search: library.search, scope: library.searchScope,
+                sort: recent ? .recentlyAdded : sortOrder, reversed: recent ? false : reversed,
+                filter: filter, limit: pageSize, offset: offset)
+            guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }
+            // A scan may change rows before its revision arrives. Avoid duplicate card IDs;
+            // the revision then resets pagination from a fresh database snapshot.
+            var seen = Set(albums.map(\.id))
+            let combined = albums + page.filter { seen.insert($0.id).inserted }
+            let result = try await arranger.arrange(combined, recent: recent, filter: .all, totals: totals)
+            guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }
+            albums = combined; presentation = result; nextOffset = offset + page.count
+            hasMore = !page.isEmpty && nextOffset < totals.albumCount
+        } catch is CancellationError { }
+        catch {
+            guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }
+            pageError = error.localizedDescription
+        }
     }
 
     private func loadDetail() async {
-        guard let id = selectedAlbum else { detailID = nil; return }
-        guard let album = albums.first(where: { $0.id == id }) else { return }
-        let tracks = await library.tracks(in: album)
-        guard !Task.isCancelled, selectedAlbum == id else { return }
-        if tracks.isEmpty { selectedAlbum = nil }
-        else { detailTracks = tracks; detailID = id }
+        guard let id = selectedAlbum else { detailID = nil; detailAlbum = nil; return }
+        guard library.isReady else { return }
+        do {
+            // Home and context-menu navigation may target an album outside loaded pages.
+            let album: LibraryAlbumSummary?
+            if let loaded = albums.first(where: { $0.id == id }) { album = loaded }
+            else { album = try await library.album(id: id) }
+            guard !Task.isCancelled, selectedAlbum == id else { return }
+            guard let album else { selectedAlbum = nil; return }
+            let tracks = await library.tracks(in: album)
+            guard !Task.isCancelled, selectedAlbum == id else { return }
+            if tracks.isEmpty { selectedAlbum = nil }
+            else { detailTracks = tracks; detailAlbum = album; detailID = id }
+        } catch {
+            guard !Task.isCancelled, selectedAlbum == id else { return }
+            loadError = error.localizedDescription; selectedAlbum = nil
+        }
     }
 
     private func detail(_ album: LibraryAlbumSummary) -> some View {

@@ -198,12 +198,49 @@ public actor LibraryRepository {
         }
     }
 
-    /// Search selects matching albums; metadata and counts always describe the full visible album.
+    /// Search and filters select complete visible albums before LIMIT/OFFSET.
     public func albums(search: String = "", searchScope: TrackSearchScope = .all,
-                       sort: AlbumSortOrder = .artist, reversed: Bool = false) throws -> [LibraryAlbumSummary] {
+                       sort: AlbumSortOrder = .artist, reversed: Bool = false,
+                       filter: AlbumBrowseFilter = .all, limit: Int = 200, offset: Int = 0) throws -> [LibraryAlbumSummary] {
         try Task.checkCancellation()
+        let query = albumQuery(search: search, scope: searchScope, sort: sort, reversed: reversed, filter: filter)
+        return try database.read { db in try fetchAlbums(db, query: query, limit: limit, offset: offset) }
+    }
+
+    /// Totals and the first (or requested) page share a database snapshot. Later
+    /// pages can use albums() to avoid calculating unchanged totals again.
+    public func albumPage(search: String = "", searchScope: TrackSearchScope = .all,
+                          sort: AlbumSortOrder = .artist, reversed: Bool = false,
+                          filter: AlbumBrowseFilter = .all, limit: Int = 200, offset: Int = 0) throws -> AlbumBrowsePage {
+        try Task.checkCancellation()
+        let query = albumQuery(search: search, scope: searchScope, sort: sort, reversed: reversed, filter: filter)
+        return try database.read { db in
+            let row = try Row.fetchOne(db, sql: query.common + " SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN " + query.filter + " THEN 1 ELSE 0 END), 0) AS matched, COALESCE(SUM(CASE WHEN " + query.filter + " THEN trackCount ELSE 0 END), 0) AS songs FROM albums", arguments: query.arguments)!
+            let totals = AlbumBrowseTotals(albumCount: row["matched"], totalAlbumCount: row["total"], songCount: row["songs"])
+            return try AlbumBrowsePage(albums: fetchAlbums(db, query: query, limit: limit, offset: offset), totals: totals)
+        }
+    }
+
+    /// Direct navigation is independent of loaded pages, search, and filters.
+    public func album(id: String) throws -> LibraryAlbumSummary? {
+        try Task.checkCancellation()
+        var query = albumQuery(search: "", scope: .all, sort: .artist, reversed: false, filter: .all)
+        query.filter = "albumArtist || char(31) || album = ?"
+        query.arguments += [id]
+        return try database.read { db in try fetchAlbums(db, query: query, limit: 1, offset: 0).first }
+    }
+
+    private struct AlbumQuery {
+        let common: String
+        var arguments: StatementArguments
+        var filter: String
+        let order: String
+    }
+
+    private func albumQuery(search: String, scope: TrackSearchScope, sort: AlbumSortOrder,
+                            reversed: Bool, filter: AlbumBrowseFilter) -> AlbumQuery {
         let query = TrackSearchQuery(search)
-        let pattern = query.expression(scope: searchScope)
+        let pattern = query.expression(scope: scope)
         // Only enum-selected expressions and fixed directions enter SQL. Search stays bound.
         let ascending = reversed ? " DESC" : " ASC"
         let descending = reversed ? " ASC" : " DESC"
@@ -216,18 +253,30 @@ public actor LibraryRepository {
         case .title: order = title + ", " + artist + ", " + tie
         case .artist: order = artist + ", " + title + ", " + tie
         case .year:
-            order = "CAST(COALESCE(substr(MIN(NULLIF(year, '')), 1, 4), '0') AS INTEGER)" + descending + ", " + artist + ", " + title + ", " + tie
+            order = "CAST(COALESCE(substr(year, 1, 4), '0') AS INTEGER)" + descending + ", " + artist + ", " + title + ", " + tie
         case .recentlyAdded:
-            order = "MAX(addedAt)" + descending + ", " + artist + ", " + title + ", " + tie
+            order = "addedAt" + descending + ", " + artist + ", " + title + ", " + tie
         }
-        return try database.read { db in
-            let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
-            let match = query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND (albumArtist, album) IN (SELECT albumArtist, album FROM tracks WHERE " + visible + " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?))"
-            let arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
-            let rows = try Row.fetchAll(db, sql: "SELECT albumArtist, album, MAX(artworkKey) AS artworkKey, COUNT(*) AS trackCount, SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) AS playableCount, SUM(CASE WHEN isLossless = 1 THEN 1 ELSE 0 END) AS losslessTrackCount, MIN(NULLIF(year, '')) AS year, MAX(addedAt) AS addedAt, SUM(CASE WHEN duration > 0 THEN duration ELSE 0 END) AS duration FROM tracks WHERE " + visible + match + " GROUP BY albumArtist, album ORDER BY " + order, arguments: arguments)
-            return rows.map { row in
-                LibraryAlbumSummary(title: row["album"], artist: row["albumArtist"], artworkKey: row["artworkKey"], trackCount: row["trackCount"], playableCount: row["playableCount"], year: row["year"], addedAt: row["addedAt"], duration: row["duration"], losslessTrackCount: row["losslessTrackCount"])
-            }
+        let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
+        let match = query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND (albumArtist, album) IN (SELECT albumArtist, album FROM tracks WHERE " + visible + " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?))"
+        let arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
+        let common = "WITH albums AS (SELECT albumArtist, album, MAX(artworkKey) AS artworkKey, COUNT(*) AS trackCount, SUM(CASE WHEN error IS NULL THEN 1 ELSE 0 END) AS playableCount, SUM(CASE WHEN isLossless = 1 THEN 1 ELSE 0 END) AS losslessTrackCount, MIN(NULLIF(year, '')) AS year, MAX(addedAt) AS addedAt, SUM(CASE WHEN duration > 0 THEN duration ELSE 0 END) AS duration FROM tracks WHERE " + visible + match + " GROUP BY albumArtist, album)"
+        let predicate: String
+        switch filter {
+        case .all: predicate = "1"
+        case .lossless: predicate = "trackCount > 0 AND losslessTrackCount = trackCount"
+        case .missingArtwork: predicate = "artworkKey IS NULL OR artworkKey = ''"
+        }
+        return AlbumQuery(common: common, arguments: arguments, filter: predicate, order: order)
+    }
+
+    private func fetchAlbums(_ db: Database, query: AlbumQuery, limit: Int, offset: Int) throws -> [LibraryAlbumSummary] {
+        try Task.checkCancellation()
+        var arguments = query.arguments
+        arguments += [max(1, min(500, limit)), max(0, offset)]
+        let rows = try Row.fetchAll(db, sql: query.common + " SELECT * FROM albums WHERE (" + query.filter + ") ORDER BY " + query.order + " LIMIT ? OFFSET ?", arguments: arguments)
+        return rows.map { row in
+            LibraryAlbumSummary(title: row["album"], artist: row["albumArtist"], artworkKey: row["artworkKey"], trackCount: row["trackCount"], playableCount: row["playableCount"], year: row["year"], addedAt: row["addedAt"], duration: row["duration"], losslessTrackCount: row["losslessTrackCount"])
         }
     }
 
