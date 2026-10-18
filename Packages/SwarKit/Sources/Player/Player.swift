@@ -20,6 +20,7 @@ public final class Player {
     public private(set) var isSeeking = false
     private var pendingSeek: Double?
     public private(set) var errorMessage: String?
+    @ObservationIgnored private var errorIsFromPlayback = false
     public private(set) var underrunFrames: UInt64 = 0
     public private(set) var formatInfo: FormatChipInfo?
     public private(set) var isRestoredSession = false
@@ -167,7 +168,7 @@ public final class Player {
                 title = entry.title; subtitle = entry.subtitle; artworkURL = entry.artworkURL
                 currentURL = entry.url; duration = saved.duration; position = saved.position
                 isRestoredSession = true
-                errorMessage = entry.error
+                setError(entry.error)
             }
             lastSavedSession = sessionSnapshot()
         } catch { sessionNotice = "Couldn’t restore the previous session: " + error.localizedDescription }
@@ -253,8 +254,9 @@ public final class Player {
                 standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle,
                                             artworkURL: artworkURL, artist: presentation?.artist, album: presentation?.album)
             }
-            errorMessage = playbackError
+            setError(nil)
             apply(snapshot)
+            if let playbackError { setError(playbackError, fromPlayback: true) }
             return true
         } catch {
             guard generation == revision, !isShutDown else { return false }
@@ -267,7 +269,7 @@ public final class Player {
             formatInfo = nil
             duration = 0; position = 0; isPlaying = false; underrunFrames = 0
             scopedAccess = nil
-            errorMessage = error.localizedDescription
+            setError(error.localizedDescription)
             return false
         }
     }
@@ -291,7 +293,7 @@ public final class Player {
                     apply(try await engine.seek(to: min(target, duration)))
                     apply(try await engine.togglePlayback())
                     queue[index].error = nil
-                } catch { errorMessage = error.localizedDescription }
+                } catch { setError(error.localizedDescription) }
             }
             if let errorMessage {
                 queue[index].error = errorMessage
@@ -328,7 +330,7 @@ public final class Player {
             do {
                 let snapshot = try await engine.seek(to: target)
                 guard !isShutDown else { return }
-                errorMessage = nil
+                setError(nil)
                 if !snapshot.didFinish { completionHandled = false }
                 if pendingSeek == nil { apply(snapshot) }
             } catch {
@@ -336,7 +338,7 @@ public final class Player {
                 let snapshot = await engine.snapshot()
                 guard !isShutDown else { return }
                 apply(snapshot)
-                errorMessage = error.localizedDescription
+                setError(error.localizedDescription, fromPlayback: true)
                 return
             }
         }
@@ -485,7 +487,7 @@ public final class Player {
         }
     }
 
-    public func reportImportError(_ error: any Error) { errorMessage = error.localizedDescription }
+    public func reportImportError(_ error: any Error) { setError(error.localizedDescription) }
 
     public func shutdown() {
         guard !isShutDown else { return }
@@ -528,12 +530,12 @@ public final class Player {
             let snapshot = try await action()
             guard generation == revision, !isShutDown else { return }
             if !snapshot.didFinish { completionHandled = false }
-            errorMessage = nil
+            setError(nil)
             apply(snapshot)
         }
         catch {
             apply(await engine.snapshot())
-            errorMessage = error.localizedDescription
+            setError(error.localizedDescription, fromPlayback: true)
         }
     }
 
@@ -545,8 +547,15 @@ public final class Player {
         if position != snapshot.position { position = snapshot.position }
         if isPlaying != snapshot.isPlaying { isPlaying = snapshot.isPlaying }
         if underrunFrames != snapshot.underrunFrames { underrunFrames = snapshot.underrunFrames }
-        // Import/open errors are owned by Player. Routine polling must not erase them.
-        if let error = snapshot.error, errorMessage != error { errorMessage = error }
+        // Healthy engine state clears playback failures, while file-picker/open
+        // failures remain visible until a successful user operation replaces them.
+        if let error = snapshot.error { setError(error, fromPlayback: true) }
+        else if errorIsFromPlayback { setError(nil) }
+    }
+
+    private func setError(_ message: String?, fromPlayback: Bool = false) {
+        errorIsFromPlayback = message != nil && fromPlayback
+        if errorMessage != message { errorMessage = message }
     }
 
     private func updateFormat(_ snapshot: PlaybackSnapshot) {

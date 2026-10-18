@@ -41,3 +41,21 @@ keeping the output unit running during a seek. Current playing seeks still stop 
 restart AUHAL. Format changes may require a real device-rate transition. WMA seeks
 still decode from the beginning for sample accuracy; a fast, accurate seek index is
 separate work. These changes do not introduce gapless playback or a bit-perfect claim.
+
+## Error recovery
+
+Player records whether the displayed error came from playback (snapshot, seek,
+play/pause, or starting an opened track) or from an import/open/restored-session
+failure. A healthy engine snapshot clears playback-owned errors. Routine polling
+does not erase file-picker/open errors, even when their text is identical to a
+previous playback error. Error ownership is tracked independently of the displayed
+string; unchanged text does not trigger redundant observable writes.
+
+A thrown playback-start error is published after applying its fallback snapshot,
+so that snapshot cannot immediately erase the new error. Subsequent healthy polling
+clears it. Queue-entry diagnostics retain their existing historical behavior.
+
+Regression tests first reproduced stale snapshot and failed-control errors. All
+145 package tests then passed, including recurrence/recovery, thrown seek and
+play/pause errors, visible startup failures, identical-text import errors, persistent
+open/picker errors, and the existing queue/session tests.
