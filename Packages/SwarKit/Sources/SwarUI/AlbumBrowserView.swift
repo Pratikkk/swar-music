@@ -364,14 +364,16 @@ private struct AlbumBrowserCard: View {
                     .focused($focus, equals: .play).opacity(hovered || focus != nil ? 1 : 0)
                     .accessibilityLabel("Play \(album.title)")
             }
-            Button(action: open) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(album.title).font(.system(size: 13, weight: .medium)).lineLimit(2).frame(height: 32, alignment: .topLeading)
-                    Text(album.artist).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                    Text([album.year, "\(album.trackCount) \(album.trackCount == 1 ? "song" : "songs")"].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain).focused($focus, equals: .title)
+            VStack(alignment: .leading, spacing: 3) {
+                Button(action: open) {
+                    Text(album.title).font(.system(size: 13, weight: .medium)).lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading).frame(height: 32, alignment: .topLeading)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).focused($focus, equals: .title)
+                AlbumArtistLink(artist: album.artist)
+                Text([album.year, "\(album.trackCount) \(album.trackCount == 1 ? "song" : "songs")"].compactMap { $0 }.joined(separator: " · "))
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }.frame(maxWidth: .infinity, alignment: .leading)
         }.onHover { hovered = $0 }
             .help("\(album.title)\n\(album.artist)\n\(album.trackCount) \(album.trackCount == 1 ? "song" : "songs")")
     }
@@ -412,22 +414,45 @@ private struct AlbumBrowserRow: View {
                     .focused($playFocused).opacity(hovered || playFocused ? 1 : 0)
                     .accessibilityLabel("Play \(album.title)")
             }
+            VStack(alignment: .leading, spacing: 3) {
+                Button(action: open) {
+                    Text(album.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("Open \(album.title)")
+                AlbumArtistLink(artist: album.artist)
+            }.frame(maxWidth: .infinity, alignment: .leading)
             Button(action: open) {
                 HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(album.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
-                        Text(album.artist).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
                     Text(album.year.flatMap { $0.isEmpty ? nil : $0 } ?? "—").lineLimit(1)
                         .frame(width: 46, alignment: .trailing)
                     Text(songCount).frame(width: 72, alignment: .trailing)
                     Text(duration).monospacedDigit().frame(width: 64, alignment: .trailing)
-                }.font(.system(size: 12)).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity).contentShape(Rectangle())
+                }.font(.system(size: 12)).foregroundStyle(.secondary).contentShape(Rectangle())
             }.buttonStyle(.plain)
-                .accessibilityLabel("\(album.title), \(album.artist), \(album.year ?? "Unknown year"), \(songCount), \(duration)")
+                .accessibilityLabel("\(album.title), \(album.year ?? "Unknown year"), \(songCount), \(duration)")
         }.padding(.vertical, 2).contentShape(Rectangle())
             .onHover { hovered = $0 }
             .help("\(album.title)\n\(album.artist)\n\(songCount) · \(duration)")
+    }
+}
+
+/// A separate button keeps artist navigation independent of album opening/playback.
+private struct AlbumArtistLink: View {
+    @Environment(\.libraryNavigation) private var navigation
+    @Environment(\.swarPalette) private var palette
+    let artist: String
+    @State private var hovered = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Button { navigation.go?(.artist(artist)) } label: {
+            Text(artist).font(.system(size: 12)).lineLimit(1)
+                .foregroundStyle(hovered || focused ? palette.accent : Color.secondary)
+                .underline(hovered || focused)
+        }.buttonStyle(.plain).focused($focused)
+            .onHover { hovered = $0 }
+            .disabled(navigation.go == nil || artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel("Browse artist \(artist)")
+            .help("Browse \(artist)")
     }
 }

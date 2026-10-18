@@ -140,3 +140,20 @@ context-menu actions, Lossless filtering, Back navigation, persistence after a
 relaunch, Recently Added month headers, and switching back to the artwork grid.
 The saved playback position remained paused. Native List focus can adjust the
 precise scroll offset on Back; loaded rows and the browsing area remain retained.
+
+## Artist navigation
+
+Artist names are independent buttons in both cards and list rows. They use the
+existing LibraryNavigation artist destination to open Artists with Artist-scoped
+search (including album artists, so compilations are supported). Hover or keyboard
+focus underlines the artist and uses the selected accent colour. Long names remain
+truncated with a full-name tooltip and accessible Browse Artist label. Empty names
+or an unavailable navigation handler disable the link. Artwork/title still open
+album details; the artist control is never nested inside an album-opening button.
+
+Validation: package Debug build and universal Release build 70 passed, including
+signature and bundled-codec runtime checks. Native list navigation from Ariana
+Grande opened Artists with Artist search and Dangerous Woman; grid navigation from
+Various Artists opened the complete 19-song Balgandharva compilation. All Fields,
+empty search, and list mode were restored. Playback remained paused at its saved
+position. This UI-only change reuses the existing tested navigation/search path.
