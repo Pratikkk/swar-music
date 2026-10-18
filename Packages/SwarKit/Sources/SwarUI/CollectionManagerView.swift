@@ -27,6 +27,7 @@ struct CollectionManagerView: View {
     @State private var showNewPlaylist = false
     @State private var playlistName = ""
     @State private var playlistTracks: [LibraryTrack] = []
+    @State private var loadGeneration = UUID()
 
     private var matchesContext: Bool {
         loadedFilter == filter && loadedSearch == library.search && loadedScope == library.searchScope
@@ -282,15 +283,20 @@ struct CollectionManagerView: View {
 
     private func load() async {
         guard library.isReady else { return }
+        let generation = UUID()
+        loadGeneration = generation
+        let requestedFilter = filter, requestedSearch = library.search, requestedScope = library.searchScope
+        let requestedLimit = limit
         do {
-            if page != nil { try await Task.sleep(for: .milliseconds(200)) }
-            let requestedFilter = filter, requestedSearch = library.search, requestedScope = library.searchScope
-            let result = try await library.collectionPage(filter: requestedFilter, search: requestedSearch, scope: requestedScope, limit: limit)
-            guard !Task.isCancelled else { return }
+            if page != nil, loadedSearch != requestedSearch { try await Task.sleep(for: .milliseconds(150)) }
+            let result = try await library.collectionPage(filter: requestedFilter, search: requestedSearch, scope: requestedScope, limit: requestedLimit)
+            guard !Task.isCancelled, loadGeneration == generation,
+                  requestedFilter == filter, requestedSearch == library.search,
+                  requestedScope == library.searchScope, requestedLimit == limit else { return }
             loadedFilter = requestedFilter; loadedSearch = requestedSearch; loadedScope = requestedScope
             page = result; error = nil; selected.formIntersection(Set(result.tracks.map(\.id)))
         } catch is CancellationError { }
-        catch { guard !Task.isCancelled else { return }; self.error = error.localizedDescription }
+        catch { guard !Task.isCancelled, loadGeneration == generation else { return }; self.error = error.localizedDescription }
     }
     private func manage(_ ids: Set<String>, restore: Bool) {
         guard !working, !ids.isEmpty else { return }

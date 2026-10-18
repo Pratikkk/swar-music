@@ -35,6 +35,14 @@ private enum SidebarSelection: Hashable {
     case playlist(String)
 }
 
+private struct SharedTrackPageRequest: Equatable {
+    let selection: SidebarSelection?
+    let search: String
+    let scope: TrackSearchScope
+    let sort: TrackSortOrder
+    let reversed: Bool
+}
+
 /// Local library browsing and the single-file playback surface.
 @MainActor
 public struct LibraryView: View {
@@ -54,6 +62,7 @@ public struct LibraryView: View {
     @State private var windowWidth: CGFloat = 900
     @State private var playerHeight: CGFloat = 56
     @State private var importingFolder = false
+    @State private var lastTrackSearch: String?
     @State private var library: LibraryModel
 
     @State private var showNewSmartPlaylist = false
@@ -95,30 +104,19 @@ public struct LibraryView: View {
                 await player.saveSessionIfNeeded()
             }
         }
-        .task(id: selection) {
-            library.favoritesOnly = selection == .section(.favorites)
-            library.sortOrder = showsSongSort ? songSortOrder : .album
-            library.reverseSort = showsSongSort && reverseSongSort
-            if case .section(let s) = selection {
-                library.recentFirst = s == .recentlyAdded || s == .home
-            } else {
-                library.recentFirst = false
+        .task(id: sharedTrackPageRequest) {
+            guard !Task.isCancelled else { return }
+            let request = sharedTrackPageRequest
+            library.favoritesOnly = request.selection == .section(.favorites)
+            library.sortOrder = request.sort
+            library.reverseSort = request.reversed
+            library.recentFirst = request.selection == .section(.recentlyAdded) || request.selection == .section(.home)
+            guard usesSharedTrackPage else { return }
+            if let previous = lastTrackSearch, previous != request.search {
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
             }
-            await library.reload(resetLimit: true)
-        }
-        .task(id: songSortOrder.rawValue + String(reverseSongSort)) {
-            guard showsSongSort else { return }
-            library.sortOrder = songSortOrder
-            library.reverseSort = reverseSongSort
-            await library.reload(resetLimit: true)
-        }
-        .task(id: library.searchScope) {
-            guard case .section = selection else { return }
-            await library.reload(resetLimit: true)
-        }
-        .task(id: library.search) {
-            guard case .section = selection else { return }
-            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            guard !Task.isCancelled, request == sharedTrackPageRequest else { return }
+            lastTrackSearch = request.search
             await library.reload(resetLimit: true)
         }
         .task(id: player.isPlaying) {
@@ -328,6 +326,22 @@ public struct LibraryView: View {
 
     private var showsSongSort: Bool {
         selection == .section(.songs) || selection == .section(.favorites)
+    }
+
+    private var sharedTrackPageRequest: SharedTrackPageRequest {
+        SharedTrackPageRequest(selection: selection, search: library.search, scope: library.searchScope,
+                               sort: showsSongSort ? songSortOrder : .album,
+                               reversed: showsSongSort && reverseSongSort)
+    }
+
+    // Albums, collection management and playlists own their database snapshots.
+    // Do not also fetch/sort an unused 500-song page for their search updates.
+    private var usesSharedTrackPage: Bool {
+        switch selection {
+        case .section(.albums), .section(.recentlyAdded), .section(.manage), .playlist: false
+        case .section(.home): !TrackSearchQuery(library.search).isEmpty
+        default: true
+        }
     }
 
     private var sectionHeader: some View {

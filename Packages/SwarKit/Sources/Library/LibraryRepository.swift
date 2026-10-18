@@ -166,6 +166,7 @@ public actor LibraryRepository {
     }
 
     public func page(search: String = "", limit: Int = 500, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all) throws -> LibraryPage {
+        try Task.checkCancellation()
         let query = TrackSearchQuery(search)
         let pattern = query.expression(scope: searchScope)
         return try database.read { db in
@@ -302,6 +303,7 @@ public actor LibraryRepository {
     }
 
     public func collectionPage(filter: CollectionFilter = .all, search: String = "", scope: TrackSearchScope = .all, limit: Int = 200) throws -> CollectionPage {
+        try Task.checkCancellation()
         let query = TrackSearchQuery(search)
         let pattern = query.expression(scope: scope)
         return try database.read { db in

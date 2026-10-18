@@ -2,6 +2,12 @@ import SwiftUI
 import Library
 import Player
 
+private struct PlaylistBrowseRequest: Equatable {
+    let revision: UInt64
+    let search: String
+    let scope: TrackSearchScope
+}
+
 @MainActor
 public struct PlaylistDetailView: View {
     @Environment(\.swarPalette) private var palette
@@ -18,18 +24,22 @@ public struct PlaylistDetailView: View {
     @State private var isLoading = true
     @State private var loadedPlaylistID: String?
     @State private var loadGeneration = UUID()
+    @State private var arranger = PlaylistBrowseArranger()
+    @State private var presentation: PlaylistBrowseSnapshot?
+    @State private var presentedRequest: PlaylistBrowseRequest?
+    @State private var itemsRevision: UInt64 = 0
 
-    private var visibleItems: [PlaylistTrackItem] {
-        let query = TrackSearchQuery(library.search)
-        return items.filter { query.matches($0.track, scope: library.searchScope) }
+    private var request: PlaylistBrowseRequest {
+        PlaylistBrowseRequest(revision: itemsRevision, search: library.search, scope: library.searchScope)
     }
+    private var visibleRows: [PlaylistBrowseRow] { presentation?.rows ?? [] }
     private var isFiltering: Bool { !TrackSearchQuery(library.search).isEmpty }
-    private var playableTracks: [LibraryTrack] { visibleItems.map(\.track).filter { $0.error == nil } }
-    private var canPlay: Bool { !isLoading && loadedPlaylistID == playlist.id && !playableTracks.isEmpty }
+    private var playableTracks: [LibraryTrack] { presentation?.playableTracks ?? [] }
+    private var matchesRequest: Bool { presentedRequest == request }
+    private var canPlay: Bool { !isLoading && matchesRequest && loadedPlaylistID == playlist.id && !playableTracks.isEmpty }
 
     private var durationDescription: String {
-        let minutes = Int(items.reduce(0) { $0 + max(0, $1.track.duration) }) / 60
-        return minutes >= 60 ? "\(minutes / 60) hr \(minutes % 60) min" : "\(minutes) min"
+        presentation?.durationDescription ?? "0 min"
     }
 
     public init(
@@ -80,7 +90,7 @@ public struct PlaylistDetailView: View {
                                 } label: {
                                     actionButton("Play", symbol: "play.fill")
                                 }
-                                .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay))
+                                .buttonStyle(PlaybackButtonStyle(unavailable: playableTracks.isEmpty))
                                 .disabled(player.isBusy || !canPlay)
                                 .accessibilityLabel("Play playlist in order")
 
@@ -89,7 +99,7 @@ public struct PlaylistDetailView: View {
                                 } label: {
                                     actionButton("Shuffle", symbol: "shuffle")
                                 }
-                                .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay))
+                                .buttonStyle(PlaybackButtonStyle(unavailable: playableTracks.isEmpty))
                                 .disabled(player.isBusy || !canPlay)
                                 .accessibilityLabel("Shuffle playlist")
 
@@ -118,7 +128,7 @@ public struct PlaylistDetailView: View {
                     if let loadError {
                         ContentUnavailableView { Label("Couldn’t Load Playlist", systemImage: "exclamationmark.triangle") }
                             description: { Text(loadError) } actions: { Button("Try Again") { Task { await reloadItems() } } }
-                    } else if isLoading && items.isEmpty {
+                    } else if (isLoading && items.isEmpty) || presentation == nil || (visibleRows.isEmpty && !matchesRequest) {
                         ProgressView("Loading playlist…")
                             .frame(maxWidth: .infinity).padding(.top, 40)
                     } else if items.isEmpty {
@@ -128,32 +138,33 @@ public struct PlaylistDetailView: View {
                             Text(playlist.isSmart ? "No songs match these rules. Edit the rules to change this playlist." : "Add songs from your library by right-clicking any track and choosing Add to Playlist.")
                         }
                         .padding(.top, 40)
-                    } else if visibleItems.isEmpty {
+                    } else if visibleRows.isEmpty {
                         ContentUnavailableView("No Matching Songs", systemImage: "magnifyingglass",
                             description: Text("Try different words or choose All Fields from the search icon."))
                     } else {
                         if isFiltering {
-                            Text("\(visibleItems.count) of \(items.count) \(items.count == 1 ? "song matches" : "songs match")")
+                            Text("\(visibleRows.count) of \(items.count) \(items.count == 1 ? "song matches" : "songs match")")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
+                            ForEach(visibleRows) { row in
+                                let item = row.item
                                 PlaylistSongRow(
                                     item: item,
-                                    index: (items.firstIndex(where: { $0.id == item.id }) ?? index) + 1,
+                                    index: row.number,
                                     current: isCurrent(item.track),
                                     playing: isCurrent(item.track) && player.isPlaying,
                                     compact: compact,
-                                    alternate: index.isMultiple(of: 2),
-                                    isFirst: isFiltering || index == 0,
+                                    alternate: row.alternate,
+                                    isFirst: isFiltering || row.number == 1,
                                     smart: playlist.isSmart,
-                                    isLast: isFiltering || index == items.count - 1,
-                                    busy: player.isBusy,
+                                    isLast: isFiltering || row.number == items.count,
+                                    busy: player.isBusy || !matchesRequest,
                                     library: library,
                                     play: { playItem(item) },
                                     enqueue: { enqueueTrack(item.track, next: $0) },
-                                    moveUp: { move(from: index, to: index - 1) },
-                                    moveDown: { move(from: index, to: index + 1) },
+                                    moveUp: { move(from: row.number - 1, to: row.number - 2) },
+                                    moveDown: { move(from: row.number - 1, to: row.number) },
                                     remove: { removeItem(item) }
                                 )
                             }
@@ -170,8 +181,21 @@ public struct PlaylistDetailView: View {
         .sheet(isPresented: $showRules) {
             SmartPlaylistEditorView(library: library, playlist: playlist) { _ in }
         }
-        .task(id: [playlist.id, playlist.smartRulesJSON ?? "", String(library.trackActionsRevision), playlist.isSmart ? "\(library.overviewRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)" : ""]) {
+        .task(id: [playlist.id, String(playlist.updatedAt.timeIntervalSince1970), playlist.smartRulesJSON ?? "", String(library.trackActionsRevision), "\(library.lastScanAt?.timeIntervalSince1970 ?? 0)", playlist.isSmart ? String(library.overviewRevision) : ""]) {
             await reloadItems()
+        }
+        .task(id: request) {
+            let requested = request
+            let source = items
+            do {
+                if let previous = presentedRequest, previous.search != requested.search {
+                    try await Task.sleep(for: .milliseconds(150))
+                }
+                let result = try await arranger.arrange(source, search: requested.search, scope: requested.scope)
+                guard !Task.isCancelled, requested == request else { return }
+                presentation = result; presentedRequest = requested
+            } catch is CancellationError { }
+            catch { /* Keep the displayed snapshot if preparation is cancelled. */ }
         }
         .task(id: playlist.isSmart) {
             guard playlist.isSmart else { return }
@@ -184,7 +208,7 @@ public struct PlaylistDetailView: View {
 
     @ViewBuilder
     private func playlistArtwork(size: CGFloat) -> some View {
-        let firstCover = items.compactMap(\.track.artworkKey).first
+        let firstCover = presentation?.artworkKey
         ZStack {
             if let firstCover, let url = library.artworkURL(firstCover) {
                 CoverArt(url: url, title: playlist.name, cornerRadius: 10)
@@ -221,15 +245,17 @@ public struct PlaylistDetailView: View {
         let playlistID = playlist.id
         let generation = UUID()
         loadGeneration = generation
-        if loadedPlaylistID != playlistID { items = [] }
+        if loadedPlaylistID != playlistID, !items.isEmpty { items = []; itemsRevision &+= 1 }
         isLoading = true
         do {
             let result = try await library.playlistItems(for: playlistID)
             guard !Task.isCancelled, loadGeneration == generation else { return }
-            items = result; loadError = nil; loadedPlaylistID = playlistID; isLoading = false
+            if items != result { items = result; itemsRevision &+= 1 }
+            loadError = nil; loadedPlaylistID = playlistID; isLoading = false
         } catch {
             guard !Task.isCancelled, loadGeneration == generation else { return }
-            items = []; loadError = error.localizedDescription; isLoading = false
+            if !items.isEmpty { items = []; itemsRevision &+= 1 }
+            loadError = error.localizedDescription; isLoading = false
         }
     }
 
@@ -251,10 +277,11 @@ public struct PlaylistDetailView: View {
                 await player.togglePlayback()
                 return
             }
-            let playable = visibleItems.filter { $0.track.error == nil }
+            guard canPlay else { return }
+            let playable = visibleRows.filter { $0.item.track.error == nil }
             guard let index = playable.firstIndex(where: { $0.id == item.id }) else { return }
             do {
-                let entries = try playable.map { try entry($0.track) }
+                let entries = try playable.map { try entry($0.item.track) }
                 await player.play(entries, startingAt: index)
             } catch {
                 player.reportImportError(error)
@@ -264,10 +291,11 @@ public struct PlaylistDetailView: View {
 
     private func playPlaylist(shuffle: Bool) {
         Task {
-            let playable = visibleItems.filter { $0.track.error == nil }
+            guard canPlay else { return }
+            let playable = playableTracks
             guard !playable.isEmpty else { return }
             do {
-                let entries = try playable.map { try entry($0.track) }
+                let entries = try playable.map(entry)
                 await player.play(entries, startingAt: 0, shuffle: shuffle)
             } catch {
                 player.reportImportError(error)
@@ -277,7 +305,8 @@ public struct PlaylistDetailView: View {
 
     private func enqueuePlaylist(next: Bool) {
         do {
-            let entries = try visibleItems.filter { $0.track.error == nil }.map { try entry($0.track) }
+            guard canPlay else { return }
+            let entries = try playableTracks.map(entry)
             for entry in next ? Array(entries.reversed()) : entries {
                 player.enqueue(entry, playNext: next)
             }
@@ -345,7 +374,7 @@ private struct PlaylistSongRow: View {
                     .foregroundStyle(current ? Color.accentColor : .secondary)
                     .frame(width: 24)
 
-                    CoverArt(url: library.artworkURL(item.track.artworkKey), title: item.track.title, cornerRadius: 4)
+                    CoverArt(url: library.artworkURL(item.track.artworkKey), title: item.track.title, cornerRadius: 4, maximumPixelSize: 128)
                         .frame(width: 36, height: 36)
 
                     VStack(alignment: .leading, spacing: 3) {

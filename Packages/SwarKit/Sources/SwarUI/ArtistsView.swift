@@ -7,20 +7,6 @@ private enum ArtistSelection: Hashable {
     case artist(String)
 }
 
-private struct ArtistCollection: Identifiable {
-    var id: String { name }
-    let name: String
-    let albums: [ArtistAlbum]
-    let tracks: [LibraryTrack]
-    let artworkKey: String?
-}
-
-private struct ArtistAlbum: Identifiable {
-    var id: String { title }
-    let title: String
-    let tracks: [LibraryTrack]
-}
-
 /// Album artists keep compilations together; individual performers remain on song rows.
 @MainActor
 struct ArtistsView: View {
@@ -34,27 +20,10 @@ struct ArtistsView: View {
     @State private var selection: ArtistSelection? = .all
     @FocusState private var artistListFocused: Bool
 
-    @State private var artists: [ArtistCollection] = []
+    @State private var artists: [ArtistBrowseCollection] = []
+    @State private var arranger = ArtistBrowseArranger()
 
-    private func rebuildArtists(_ tracks: [LibraryTrack]) {
-        artists = Dictionary(grouping: tracks, by: { $0.albumArtist.isEmpty ? $0.artist : $0.albumArtist })
-            .map { name, tracks in
-                let albums = Dictionary(grouping: tracks, by: \.album).map { title, tracks in
-                    ArtistAlbum(title: title, tracks: tracks.sorted {
-                        if $0.discNumber != $1.discNumber { return $0.discNumber < $1.discNumber }
-                        if $0.trackNumber != $1.trackNumber { return $0.trackNumber < $1.trackNumber }
-                        return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-                    })
-                }.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-                let ordered = albums.flatMap(\.tracks)
-                return ArtistCollection(name: name, albums: albums, tracks: ordered,
-                    artworkKey: ordered.first(where: { $0.artworkKey != nil })?.artworkKey)
-            }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        if case .artist(let name) = selection, !artists.contains(where: { $0.name == name }) { selection = .all }
-    }
-
-    private var visibleArtists: [ArtistCollection] {
+    private var visibleArtists: [ArtistBrowseCollection] {
         if case .artist(let name) = selection { return artists.filter { $0.name == name } }
         return artists
     }
@@ -80,7 +49,15 @@ struct ArtistsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onChange(of: library.tracks, initial: true) { _, tracks in rebuildArtists(tracks) }
+        .task(id: library.tracks) {
+            do {
+                let result = try await arranger.arrange(library.tracks)
+                guard !Task.isCancelled else { return }
+                artists = result
+                if case .artist(let name) = selection, !result.contains(where: { $0.name == name }) { selection = .all }
+            } catch is CancellationError { }
+            catch { /* Preparation has no fallible I/O; retain the displayed snapshot. */ }
+        }
     }
 
     private var artistList: some View {
@@ -144,7 +121,7 @@ struct ArtistsView: View {
         }
     }
 
-    private func artistSection(_ artist: ArtistCollection, compact: Bool) -> some View {
+    private func artistSection(_ artist: ArtistBrowseCollection, compact: Bool) -> some View {
         LazyVStack(alignment: .leading, spacing: 24) {
             HStack(spacing: 10) {
                 Text(artist.name).font(.system(size: compact ? 21 : 24, weight: .bold))
@@ -160,7 +137,7 @@ struct ArtistsView: View {
         }
     }
 
-    @ViewBuilder private func albumSection(_ album: ArtistAlbum, compact: Bool) -> some View {
+    @ViewBuilder private func albumSection(_ album: ArtistBrowseAlbum, compact: Bool) -> some View {
         if compact {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 16) {
@@ -184,9 +161,9 @@ struct ArtistsView: View {
         }
     }
 
-    private func artwork(_ album: ArtistAlbum, size: CGFloat) -> some View {
+    private func artwork(_ album: ArtistBrowseAlbum, size: CGFloat) -> some View {
         Button { start(album.tracks, shuffle: false) } label: {
-            CoverArt(url: library.artworkURL(album.tracks.compactMap(\.artworkKey).first), title: album.title, cornerRadius: 4)
+            CoverArt(url: library.artworkURL(album.artworkKey), title: album.title, cornerRadius: 4)
                 .frame(width: size, height: size)
                 .overlay(alignment: .bottomTrailing) {
                     Image(systemName: "play.fill").font(.system(size: 12, weight: .semibold))
@@ -199,7 +176,7 @@ struct ArtistsView: View {
         .accessibilityLabel("Play \(album.title)").help("Play \(album.title)")
     }
 
-    private func albumHeading(_ album: ArtistAlbum) -> some View {
+    private func albumHeading(_ album: ArtistBrowseAlbum) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
                 Text(album.title).font(.headline).lineLimit(2).help(album.title)
@@ -221,15 +198,16 @@ struct ArtistsView: View {
         }
     }
 
-    private func songs(_ album: ArtistAlbum) -> some View {
+    private func songs(_ album: ArtistBrowseAlbum) -> some View {
         LazyVStack(spacing: 0) {
             Divider()
-            ForEach(Array(album.tracks.enumerated()), id: \.element.id) { index, track in
-                if index > 0, track.discNumber != album.tracks[index - 1].discNumber {
+            ForEach(album.songs) { song in
+                let track = song.track
+                if song.startsDisc {
                     Text("Disc \(max(1, track.discNumber))").font(.caption.bold())
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
                 }
-                AlbumSongRow(track: track, library: library, fallbackNumber: index + 1,
+                AlbumSongRow(track: track, library: library, fallbackNumber: song.number,
                              current: isCurrent(track), playing: isCurrent(track) && player.isPlaying,
                              compact: true, alternate: false, busy: player.isBusy,
                              play: {
@@ -241,9 +219,8 @@ struct ArtistsView: View {
         }
     }
 
-    private func summary(_ album: ArtistAlbum) -> some View {
-        let minutes = Int(ceil(album.tracks.reduce(0) { $0 + max(0, $1.duration) } / 60))
-        return Text("\(album.tracks.count) \(album.tracks.count == 1 ? "song" : "songs"), \(minutes) min")
+    private func summary(_ album: ArtistBrowseAlbum) -> some View {
+        return Text("\(album.tracks.count) \(album.tracks.count == 1 ? "song" : "songs"), \(album.minutes) min")
             .font(.caption).foregroundStyle(.secondary)
     }
 

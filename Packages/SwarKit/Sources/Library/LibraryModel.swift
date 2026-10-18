@@ -144,7 +144,7 @@ public final class LibraryModel {
     }
 
     public func reload(resetLimit: Bool = false) async {
-        guard !isShutDown, let repository else { return }
+        guard !isShutDown, !Task.isCancelled, let repository else { return }
         if resetLimit { pageLimit = 500 }
         refreshRevision += 1
         let revision = refreshRevision
@@ -165,7 +165,8 @@ public final class LibraryModel {
             if favoriteTrackIDs != preferences.favorites { favoriteTrackIDs = preferences.favorites }
             if hiddenTrackCount != preferences.hiddenCount { hiddenTrackCount = preferences.hiddenCount }
             if overviewChanged { overviewRevision += 1 }
-        } catch { errorMessage = error.localizedDescription }
+        } catch is CancellationError { }
+        catch { errorMessage = error.localizedDescription }
     }
 
     public func collectionPage(filter: CollectionFilter, search: String, scope: TrackSearchScope, limit: Int) async throws -> CollectionPage {

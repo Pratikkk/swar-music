@@ -131,7 +131,7 @@ struct HomeView: View {
                     ForEach(tracks) { track in
                         Button { Task { await play([track]) } } label: {
                             HStack(spacing: 12) {
-                                CoverArt(url: library.artworkURL(track.artworkKey), title: track.title, cornerRadius: 8)
+                                CoverArt(url: library.artworkURL(track.artworkKey), title: track.title, cornerRadius: 8, maximumPixelSize: 128)
                                     .frame(width: 48, height: 48)
                                     .overlay { Image(systemName: "play.fill").font(.system(size: 12)).foregroundStyle(.white).padding(7).background(.black.opacity(0.45), in: Circle()) }
                                 VStack(alignment: .leading, spacing: 3) {

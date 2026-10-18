@@ -34,7 +34,7 @@ public struct TrackSearchQuery: Sendable {
         terms = Array(Self.words(String(text.prefix(512))).prefix(20))
     }
 
-    private static func words(_ text: String) -> [String] {
+    fileprivate static func words(_ text: String) -> [String] {
         let characters = CharacterSet.alphanumerics.union(.nonBaseCharacters)
         return text.folding(options: .caseInsensitive, locale: Locale(identifier: "en_US_POSIX"))
             .components(separatedBy: characters.inverted).filter { !$0.isEmpty }.map { word in
@@ -75,5 +75,44 @@ public struct TrackSearchQuery: Sendable {
         }
         let words = fields.flatMap(Self.words)
         return terms.allSatisfy { term in words.contains { $0.hasPrefix(term) } }
+    }
+
+    public func matches(_ document: TrackSearchDocument, scope: TrackSearchScope = .all) -> Bool {
+        if isEmpty { return true }
+        guard !terms.isEmpty else { return false }
+        return document.matches(terms: terms, scope: scope)
+    }
+}
+
+/// Reuses Unicode tokenization across playlist queries. Each distinct word is
+/// stored once per song, with a compact mask identifying its searchable fields.
+public struct TrackSearchDocument: Sendable {
+    private struct Word: Sendable {
+        let value: String
+        let fields: UInt8
+    }
+    private let words: [Word]
+
+    public init(_ track: LibraryTrack) {
+        let fields = [track.title, track.artist, track.albumArtist, track.album, track.genre, track.year ?? "", track.relativePath]
+        var indexed: [String: UInt8] = [:]
+        for (index, field) in fields.enumerated() {
+            for word in TrackSearchQuery.words(field) { indexed[word, default: 0] |= 1 << index }
+        }
+        words = indexed.map { Word(value: $0.key, fields: $0.value) }
+    }
+
+    fileprivate func matches(terms: [String], scope: TrackSearchScope) -> Bool {
+        let mask: UInt8
+        switch scope {
+        case .all: mask = 0x7f
+        case .title: mask = 1
+        case .artist: mask = 2 | 4
+        case .album: mask = 8
+        case .genre: mask = 16
+        case .year: mask = 32
+        case .file: mask = 64
+        }
+        return terms.allSatisfy { term in words.contains { $0.fields & mask != 0 && $0.value.hasPrefix(term) } }
     }
 }
