@@ -11,6 +11,7 @@ struct ToolbarPlayer: View {
     @State private var showQueue = false
     @State private var showActivity = false
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.swarPalette) private var palette
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,8 +62,14 @@ struct ToolbarPlayer: View {
                     .accessibilityLabel("Previous Track").disabled(!player.canGoPrevious || player.isBusy)
                 Button { Task { await player.togglePlayback() } } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2).frame(width: 26, height: 32)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .offset(x: player.isPlaying ? 0 : 1)
+                        .frame(width: 38, height: 38)
+                        .background(palette.buttonFill, in: Circle())
+                        .contentShape(Circle())
                 }.accessibilityLabel(player.isPlaying ? "Pause" : (player.isRestoredSession ? "Resume" : "Play"))
+                    .buttonStyle(PlaybackButtonStyle(unavailable: !player.canTogglePlayback))
                     .disabled(!player.canTogglePlayback || player.isBusy)
                 Button { Task { await player.next() } } label: {
                     Image(systemName: "forward.fill").frame(width: 24, height: 32)
