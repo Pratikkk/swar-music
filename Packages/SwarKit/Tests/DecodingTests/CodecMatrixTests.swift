@@ -178,4 +178,29 @@ struct CodecMatrixTests {
             _ = try readAll(decoder)
         }
     }
+
+    @Test func alacWithStaleAACDelayPreservesSamplesAndReachesEOF() throws {
+        let url = directory.appendingPathComponent("alac-stale-aac-delay.m4a")
+        // Core Audio applies the stale AAC priming tag to ALAC. Reject that
+        // path at open, rather than discovering the mismatch at track end.
+        #expect(throws: AudioFailure.self) { try NativeDecoder(url: url) }
+        let decoder = try DecoderFactory.open(url: url, codecDirectory: codecs)
+        #expect(decoder is FFmpegDecoder)
+        let expected = try Data(contentsOf: directory.appendingPathComponent("44100-16.pcm"))
+        let decoded = try readAll(decoder)
+        #expect(decoded == expected, "Encoder-delay tags must not remove real lossless samples")
+        let stride = Int(decoder.pcmFormat.mBytesPerFrame)
+        #expect(decoder.frameCount == Int64(expected.count / stride))
+
+        let tailFrames = 17
+        try decoder.seek(to: decoder.frameCount - Int64(tailFrames))
+        var tail = Data(count: 4096 * stride)
+        let count = try tail.withUnsafeMutableBytes { try decoder.read(into: $0.baseAddress!, frames: 4096) }
+        #expect(count == UInt32(tailFrames))
+        #expect(tail.prefix(tailFrames * stride) == expected.suffix(tailFrames * stride))
+        for _ in 0..<2 {
+            let eof = try tail.withUnsafeMutableBytes { try decoder.read(into: $0.baseAddress!, frames: 4096) }
+            #expect(eof == 0)
+        }
+    }
 }

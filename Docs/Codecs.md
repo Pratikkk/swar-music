@@ -113,3 +113,31 @@ verification used a locally signed sandboxed build, checked its entitlements and
 nested signatures, then opened an Opus fixture through its file picker in the
 decode-only preview. Broader physical playback, hot-plug, and sleep/wake testing
 remain outstanding.
+
+## ALAC files with obsolete encoder-delay tags
+
+Some ALAC transcodes retain an AAC `iTunSMPB` tag with nonzero priming samples.
+ALAC has no encoder delay, but Core Audio applies that tag, discards real audio,
+and can reach EOF before its reported frame count. This previously stopped an
+album with “The lossless file ended before its declared duration.”
+
+NativeDecoder now detects nonzero ALAC priming and lets DecoderFactory select
+the bundled decoder. The bridge disables automatic skip-sample trimming for
+ALAC so stale AAC delay data cannot remove its PCM. Ordinary native ALAC and AAC
+playback retain their existing paths. Strict early-EOF and decode-error checks
+remain enabled; no duration tolerance or silence padding is added.
+
+`alac-stale-aac-delay.m4a` is generated from the original quiet-tone
+`44100-16.m4a` fixture by adding only an iTunes freeform metadata atom. Its audio
+must still match `44100-16.pcm` exactly. The fixture generator reproduces it.
+The regression checks decoder selection, every PCM byte, duration, a tail seek,
+and repeated EOF reads. Existing truncation and queue-completion tests also pass.
+
+Validation: all 157 tests in 21 suites passed. A separate local decode-only check
+confirmed all three affected library tracks reach their stream-declared lengths
+and seek to their final samples; one complete PCM checksum matched an independent
+FFmpeg decode. No library audio or tags were edited, and no private tracks are
+included in the repository.
+Universal build 78 passed signing and bundled-codec runtime checks and was
+installed. Resuming the previously failing track near its end in the native app
+advanced to the next queued ALAC track without an error; playback was then paused.

@@ -143,6 +143,10 @@ SwarFFDecoder *swar_ff_open(const char *path, const char *library, char *error, 
     if (result < 0) { fail(d, error, size, "Read codec parameters", result); goto failure; }
     // Decode errors must be surfaced instead of silently concealing damaged audio.
     d->codec->err_recognition = AV_EF_CRCCHECK | AV_EF_EXPLODE;
+    // ALAC has no encoder priming. A stale AAC iTunSMPB tag can make the
+    // demuxer attach skip-sample metadata even to lossless ALAC packets.
+    // Keep those samples rather than allowing automatic decoder trimming.
+    if (codec->id == AV_CODEC_ID_ALAC) d->codec->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
     d->codec->thread_count = 1;
     result = A(avcodec_open2)(d->codec, codec, NULL);
     if (result < 0) { fail(d, error, size, "Open codec", result); goto failure; }

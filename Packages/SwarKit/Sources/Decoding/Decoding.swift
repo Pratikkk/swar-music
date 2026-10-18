@@ -113,6 +113,18 @@ public final class NativeDecoder: AudioDecoding {
             size = UInt32(MemoryLayout.size(ofValue: audioFile))
             var bitRate: UInt32 = 0
             if ExtAudioFileGetProperty(opened, kExtAudioFileProperty_AudioFile, &size, &audioFile) == noErr, let audioFile {
+                if original.mFormatID == kAudioFormatAppleLossless {
+                    var table = AudioFilePacketTableInfo()
+                    size = UInt32(MemoryLayout.size(ofValue: table))
+                    if AudioFileGetProperty(audioFile, kAudioFilePropertyPacketTableInfo, &size, &table) == noErr,
+                       table.mPrimingFrames > 0 {
+                        // ALAC has no encoder delay. Transcodes sometimes retain AAC
+                        // iTunSMPB tags; Core Audio trims real samples using that delay
+                        // and then reports EOF before FileLengthFrames. Let the factory
+                        // use the bundled decoder, which uses the ALAC stream timeline.
+                        throw AudioFailure("This ALAC file needs the bundled decoder to ignore inconsistent encoder-delay metadata.")
+                    }
+                }
                 size = UInt32(MemoryLayout.size(ofValue: bitRate))
                 _ = AudioFileGetProperty(audioFile, kAudioFilePropertyBitRate, &size, &bitRate)
             }
