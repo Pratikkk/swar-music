@@ -15,6 +15,10 @@ The browser provides:
   mixed-format albums remain intact in All Albums. Missing Artwork uses the
   indexed artwork key. Counts reflect complete albums after filtering.
 
+- Saved grid/list toggle (`albumViewMode`), shared by Albums and Recently Added.
+  Native List rows show 40-point artwork, title, artist, year, song count, and
+  total duration. Artwork retains an overlaid Play button; rows open album details
+  and share grid context-menu actions. The artwork-size slider appears in grid mode.
 - Artwork-size slider, saved between launches, with responsive grid columns.
 - Two-line titles, artist, release year, and song counts.
 - Title, artist, release-year (newest first), and recently-added sorting, plus
@@ -117,3 +121,22 @@ passed signature and bundled-codec checks and was installed. Native checks on th
 Home-to-Ghar navigation outside an active filter, and Recently Added month grouping.
 Playback remained paused at its saved position. Multi-page boundaries are covered
 by automated repository tests; the native library fits within one 200-album page.
+
+## Grid and list modes
+
+Switching view mode changes only presentation: loaded pages, full totals, sorting,
+search, filters, and the paging footer are shared. It does not issue another album
+metadata query. The active browser stays mounted beneath album details so Back
+retains its scroll position. List rows use 128-pixel cover thumbnails through the
+existing bounded cache, truncate long metadata, and respect compact/comfortable
+spacing. Unknown year or duration displays a dash; duration conversion guards
+nonfinite and out-of-range values. Recently Added retains monthly section headers
+in both modes. A bottom spacer keeps rows clear of the floating playback bar.
+
+Validation: 141 package tests passed. Universal local build 69 passed signing and
+bundled-codec verification and was installed. Native checks covered the dense list
+layout (including 19-song/hour-length metadata), opening Dangerous Woman and Paap,
+context-menu actions, Lossless filtering, Back navigation, persistence after a
+relaunch, Recently Added month headers, and switching back to the artwork grid.
+The saved playback position remained paused. Native List focus can adjust the
+precise scroll offset on Back; loaded rows and the browsing area remain retained.

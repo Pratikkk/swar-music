@@ -2,6 +2,8 @@ import SwiftUI
 import Library
 import Player
 
+private enum AlbumViewMode: String { case grid, list }
+
 @MainActor
 struct AlbumBrowserView: View {
     @Environment(\.swarDensity) private var density
@@ -13,6 +15,7 @@ struct AlbumBrowserView: View {
     @Binding var sortOrder: AlbumSortOrder
     @Binding var reversed: Bool
     @Environment(\.floatingPlayerClearance) private var clearance
+    @AppStorage("albumViewMode") private var viewMode: AlbumViewMode = .grid
     @AppStorage("albumCoverSize") private var coverSize = 160.0
     @State private var albums: [LibraryAlbumSummary] = []
     @State private var detailTracks: [LibraryTrack] = []
@@ -39,8 +42,8 @@ struct AlbumBrowserView: View {
     }
     var body: some View {
         ZStack {
-            // Keep the grid mounted to preserve its scroll position when returning from details.
-            grid.opacity(selectedAlbum == nil ? 1 : 0)
+            // Keep the browser mounted to preserve its scroll position when returning from details.
+            browser.opacity(selectedAlbum == nil ? 1 : 0)
                 .allowsHitTesting(selectedAlbum == nil).accessibilityHidden(selectedAlbum != nil)
             if let selectedAlbum {
                 if detailID == selectedAlbum, let album = detailAlbum {
@@ -55,7 +58,7 @@ struct AlbumBrowserView: View {
         .onChange(of: requestedAlbum, initial: true) { openRequestedAlbum() }
     }
 
-    private var grid: some View {
+    private var browser: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -77,12 +80,19 @@ struct AlbumBrowserView: View {
                     } label: { Label(sortOrder.rawValue, systemImage: "arrow.up.arrow.down") }
                     .fixedSize().accessibilityLabel("Sort albums")
                 }
-                HStack(spacing: 8) {
-                    Image(systemName: "square.grid.3x3").foregroundStyle(.secondary)
-                    Slider(value: $coverSize, in: 120...220, step: 20).frame(width: 90)
-                        .accessibilityLabel("Album artwork size").help("Adjust album artwork size")
-                    Image(systemName: "square.grid.2x2").foregroundStyle(.secondary)
+                if viewMode == .grid {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.grid.3x3").foregroundStyle(.secondary)
+                        Slider(value: $coverSize, in: 120...220, step: 20).frame(width: 90)
+                            .accessibilityLabel("Album artwork size").help("Adjust album artwork size")
+                        Image(systemName: "square.grid.2x2").foregroundStyle(.secondary)
+                    }
                 }
+                Picker("Album view", selection: $viewMode) {
+                    Image(systemName: "square.grid.2x2").tag(AlbumViewMode.grid).accessibilityLabel("Grid view")
+                    Image(systemName: "list.bullet").tag(AlbumViewMode.list).accessibilityLabel("List view")
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 76)
+                    .help("Switch between grid and list")
             }.padding(.horizontal, 28).padding(.vertical, 16)
             Picker("Filter albums", selection: $filter) {
                 ForEach(AlbumBrowseFilter.allCases) { Text($0.rawValue).tag($0) }
@@ -123,7 +133,15 @@ struct AlbumBrowserView: View {
                     else { SettingsLink { Text("Music Folder Settings…") } }
                 }
             } else {
-                ScrollViewReader { proxy in
+                albumCollection
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var albumCollection: some View {
+        ScrollViewReader { proxy in
+            Group {
+                if viewMode == .grid {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 20) {
                             ForEach(presentation?.sections ?? []) { section in
@@ -133,42 +151,69 @@ struct AlbumBrowserView: View {
                                         AlbumBrowserCard(album: album, artworkURL: library.artworkURL(album.artworkKey),
                                             busy: player.isBusy || actionInProgress,
                                             maximumPixels: coverSize <= 140 ? 256 : coverSize >= 200 ? 512 : 384,
-                                            open: { selectedAlbum = album.id },
-                                            play: { perform(album) })
+                                            open: { selectedAlbum = album.id }, play: { perform(album) })
                                             .albumActions(library: library, player: player, album: album).id(album.id)
                                     }
                                 }
                             }
-                            if hasMore {
-                                HStack {
-                                    Spacer()
-                                    if let pageError {
-                                        VStack(spacing: 8) {
-                                            Text(pageError).font(.caption).foregroundStyle(.secondary)
-                                            Button("Try Again") { Task { await loadMore() } }
-                                        }
-                                    } else {
-                                        ProgressView().controlSize(.small)
-                                            .id("\(loadedKey ?? "")-\(nextOffset)-\(selectedAlbum == nil)")
-                                            // Finish this bounded request even if the footer scrolls away.
-                                            // Query generations still reject results after a reload.
-                                            .onAppear { Task { await loadMore() } }
-                                    }
-                                    Spacer()
-                                }.padding(.vertical, 12)
-                            }
+                            pageFooter
                         }.padding(.horizontal, 28).padding(.top, 8).padding(.bottom, clearance + 24)
-                            .id("album-grid-top")
+                            .id("album-browser-top")
                     }
-                    .onChange(of: library.search) { proxy.scrollTo("album-grid-top", anchor: .top) }
-                    .onChange(of: library.searchScope) { proxy.scrollTo("album-grid-top", anchor: .top) }
-                    .onChange(of: recent) { proxy.scrollTo("album-grid-top", anchor: .top) }
-                    .onChange(of: sortOrder) { proxy.scrollTo("album-grid-top", anchor: .top) }
-                    .onChange(of: reversed) { proxy.scrollTo("album-grid-top", anchor: .top) }
-                    .onChange(of: filter) { proxy.scrollTo("album-grid-top", anchor: .top) }
+                } else {
+                    List {
+                        Color.clear.frame(height: 0).id("album-browser-top")
+                            .listRowSeparator(.hidden).listRowInsets(EdgeInsets())
+                        ForEach(presentation?.sections ?? []) { section in
+                            Section {
+                                ForEach(section.albums) { album in
+                                    AlbumBrowserRow(album: album, artworkURL: library.artworkURL(album.artworkKey),
+                                        busy: player.isBusy || actionInProgress,
+                                        open: { selectedAlbum = album.id }, play: { perform(album) })
+                                        .albumActions(library: library, player: player, album: album)
+                                        .listRowInsets(EdgeInsets(top: density == .compact ? 4 : 6, leading: 28, bottom: density == .compact ? 4 : 6, trailing: 28))
+                                        .listRowBackground(Color.clear).id(album.id)
+                                }
+                            } header: {
+                                if recent { Text(section.title).font(.system(size: 17, weight: .semibold)) }
+                            }
+                        }
+                        pageFooter.listRowSeparator(.hidden).listRowBackground(Color.clear)
+                        Color.clear.frame(height: clearance + 24)
+                            .listRowSeparator(.hidden).listRowBackground(Color.clear)
+                    }.listStyle(.plain).scrollContentBackground(.hidden)
+                        .environment(\.defaultMinListRowHeight, 0)
+                        .accessibilityLabel("Album list")
                 }
             }
-        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onChange(of: library.search) { proxy.scrollTo("album-browser-top", anchor: .top) }
+            .onChange(of: library.searchScope) { proxy.scrollTo("album-browser-top", anchor: .top) }
+            .onChange(of: recent) { proxy.scrollTo("album-browser-top", anchor: .top) }
+            .onChange(of: sortOrder) { proxy.scrollTo("album-browser-top", anchor: .top) }
+            .onChange(of: reversed) { proxy.scrollTo("album-browser-top", anchor: .top) }
+            .onChange(of: filter) { proxy.scrollTo("album-browser-top", anchor: .top) }
+        }
+    }
+
+    @ViewBuilder private var pageFooter: some View {
+        if hasMore {
+            HStack {
+                Spacer()
+                if let pageError {
+                    VStack(spacing: 8) {
+                        Text(pageError).font(.caption).foregroundStyle(.secondary)
+                        Button("Try Again") { Task { await loadMore() } }
+                    }
+                } else {
+                    ProgressView().controlSize(.small)
+                        .id("\(loadedKey ?? "")-\(nextOffset)-\(selectedAlbum == nil)")
+                        // Finish this bounded request even if the footer scrolls away.
+                        // Query generations still reject results after a reload.
+                        .onAppear { Task { await loadMore() } }
+                }
+                Spacer()
+            }.padding(.vertical, 12)
+        }
     }
 
     private func openRequestedAlbum() {
@@ -329,5 +374,60 @@ private struct AlbumBrowserCard: View {
             }.buttonStyle(.plain).focused($focus, equals: .title)
         }.onHover { hovered = $0 }
             .help("\(album.title)\n\(album.artist)\n\(album.trackCount) \(album.trackCount == 1 ? "song" : "songs")")
+    }
+}
+
+private struct AlbumBrowserRow: View {
+    @Environment(\.swarPalette) private var palette
+    let album: LibraryAlbumSummary
+    let artworkURL: URL?
+    let busy: Bool
+    let open: () -> Void
+    let play: () -> Void
+    @State private var hovered = false
+    @FocusState private var playFocused: Bool
+
+    private var songCount: String { "\(album.trackCount) \(album.trackCount == 1 ? "song" : "songs")" }
+    private var duration: String {
+        guard album.duration.isFinite, album.duration > 0, album.duration < Double(Int.max) else { return "—" }
+        let seconds = Int(album.duration)
+        return seconds >= 3600
+            ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Button(action: open) {
+                    CoverArt(url: artworkURL, title: album.title, cornerRadius: 5, maximumPixelSize: 128)
+                        .frame(width: 40, height: 40)
+                }.buttonStyle(.plain).accessibilityLabel("Open \(album.title), \(album.artist)")
+                Button(action: play) {
+                    Image(systemName: "play.fill").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white).frame(width: 26, height: 26)
+                        .background(palette.buttonFill, in: Circle())
+                }.buttonStyle(PlaybackButtonStyle(unavailable: album.playableCount == 0))
+                    .disabled(busy || album.playableCount == 0)
+                    .focused($playFocused).opacity(hovered || playFocused ? 1 : 0)
+                    .accessibilityLabel("Play \(album.title)")
+            }
+            Button(action: open) {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(album.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+                        Text(album.artist).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Text(album.year.flatMap { $0.isEmpty ? nil : $0 } ?? "—").lineLimit(1)
+                        .frame(width: 46, alignment: .trailing)
+                    Text(songCount).frame(width: 72, alignment: .trailing)
+                    Text(duration).monospacedDigit().frame(width: 64, alignment: .trailing)
+                }.font(.system(size: 12)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+                .accessibilityLabel("\(album.title), \(album.artist), \(album.year ?? "Unknown year"), \(songCount), \(duration)")
+        }.padding(.vertical, 2).contentShape(Rectangle())
+            .onHover { hovered = $0 }
+            .help("\(album.title)\n\(album.artist)\n\(songCount) · \(duration)")
     }
 }
