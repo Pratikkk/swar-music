@@ -7,6 +7,7 @@ struct VolumeControl: View {
     var expanded = false
     @State private var dragging = false
     @State private var value: Double = 0
+    @State private var editingDeviceID: UInt32?
 
     private var help: String {
         if let error = player.volumeError { return error }
@@ -21,10 +22,22 @@ struct VolumeControl: View {
                 .font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
             Slider(value: Binding(
                 get: { dragging ? value : (player.outputVolume.level ?? 0) },
-                set: { newValue in value = newValue; Task { await player.setVolume(to: newValue) } }
+                set: { newValue in
+                    value = newValue
+                    // Keyboard/accessibility adjustments may not start a drag.
+                    if !dragging { commit(newValue, deviceID: player.outputVolume.deviceID) }
+                }
             ), in: 0...1, onEditingChanged: { editing in
-                if editing { value = player.outputVolume.level ?? 0 }
-                dragging = editing
+                if editing {
+                    value = player.outputVolume.level ?? 0
+                    editingDeviceID = player.outputVolume.deviceID
+                    dragging = true
+                } else if dragging {
+                    let device = editingDeviceID
+                    dragging = false
+                    editingDeviceID = nil
+                    if let device { commit(value, deviceID: device) }
+                }
             })
             .controlSize(.small)
             .disabled(!player.outputVolume.canSet)
@@ -38,6 +51,21 @@ struct VolumeControl: View {
         }
         .frame(width: expanded ? 180 : 100)
         .help(help)
-        .onChange(of: player.outputVolume.deviceID) { dragging = false }
+        .onChange(of: player.outputVolume.deviceID) { cancelDrag() }
+        .onChange(of: player.canSetOutputVolume) { if !player.canSetOutputVolume { cancelDrag() } }
+        .onDisappear { cancelDrag() }
+    }
+
+    private func cancelDrag() {
+        dragging = false
+        editingDeviceID = nil
+    }
+
+    private func commit(_ level: Double, deviceID: UInt32) {
+        Task {
+            // Do not apply an old device's draft to a newly selected output.
+            guard player.outputVolume.deviceID == deviceID, player.canSetOutputVolume else { return }
+            await player.setVolume(to: level)
+        }
     }
 }

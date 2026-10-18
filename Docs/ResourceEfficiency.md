@@ -92,3 +92,24 @@ Verification:
 These checks validate the work removed and playback behavior. They do not establish
 a percentage reduction in CPU, memory, or battery consumption; no controlled
 before/after resource benchmark was performed.
+
+## Volume slider commits
+
+Both floating and expanded players share VolumeControl. Pointer dragging updates
+only the slider's local draft; its editing-end callback sends the final value to
+Player once per completed drag. Keyboard/accessibility changes that do not emit
+editing callbacks still commit immediately. Existing Player coalescing remains as
+a safeguard for those adjustments and other callers; no delay or timer is added.
+
+A drag remembers its output device and is cancelled if the device changes, controls
+become unavailable, or the view disappears. The asynchronous commit checks the
+device identity and control availability again before calling Player.setVolume,
+so an old draft cannot change a newly selected output. This remains device-wide
+HAL volume; the PCM path is untouched.
+
+Validation: package Debug and universal Release build 74 passed, including signing
+and bundled-codec checks. Five existing volume-related tests passed. Native
+accessibility Increment/Decrement changed the output from 50% to 60% and restored
+50%; the paused playback position was preserved. Pointer automation did not move
+either the volume slider or the unchanged seek slider, so pointer-drag verification
+was inconclusive; no measured HAL write-count reduction is claimed.
