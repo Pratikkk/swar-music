@@ -11,6 +11,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
     case albums = "Albums"
     case songs = "Songs"
     case favorites = "Favourites"
+    case listening = "Listening"
     case genres = "Genres"
     case manage = "Manage Library"
 
@@ -24,6 +25,7 @@ private enum LibrarySection: String, CaseIterable, Identifiable {
         case .albums: "square.stack"
         case .songs: "music.note"
         case .favorites: "star"
+        case .listening: "clock.arrow.circlepath"
         case .genres: "guitars"
         case .manage: "tray.full"
         }
@@ -89,6 +91,9 @@ public struct LibraryView: View {
             nowPlaying: { showNowPlaying = true })
         .task { await library.start() }
         .task {
+            player.onQualifiedListen = { [weak library] url, date in
+                Task { await library?.recordListen(at: url, date: date) }
+            }
             player.enableSystemMediaControls()
             await player.restoreSession()
         }
@@ -303,9 +308,12 @@ public struct LibraryView: View {
                     openNowPlaying: { showNowPlaying = true },
                     openFavourites: { selection = .section(.favorites) },
                     openRecent: { selection = .section(.recentlyAdded) },
+                    openListening: { selection = .section(.listening) },
                     browseAlbum: { album in
                         navigate(.album(artist: album.artist, title: album.title))
                     }, addFolder: openFolderPicker)
+            } else if selection == .section(.listening) {
+                ListeningHistoryView(library: library, player: player)
             } else if selection == .section(.manage) {
                 CollectionManagerView(library: library, player: player, addFolder: openFolderPicker)
             } else if selection == .section(.albums) || selection == .section(.recentlyAdded) {
@@ -348,7 +356,7 @@ public struct LibraryView: View {
     // Do not also fetch/sort an unused 500-song page for their search updates.
     private var usesSharedTrackPage: Bool {
         switch selection {
-        case .section(.albums), .section(.recentlyAdded), .section(.manage), .playlist: false
+        case .section(.albums), .section(.recentlyAdded), .section(.manage), .section(.listening), .playlist: false
         case .section(.home): !TrackSearchQuery(library.search).isEmpty
         default: true
         }

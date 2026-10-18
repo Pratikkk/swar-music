@@ -262,6 +262,27 @@ public final class LibraryModel {
 
     public func dismissError() { errorMessage = nil }
 
+    public private(set) var listeningRevision = 0
+
+    public func recordListen(at url: URL, date: Date = Date()) async {
+        guard let repository, let track = await track(at: url) else { return }
+        do {
+            try await repository.recordListen(trackID: track.id, at: date)
+            listeningRevision += 1
+        } catch { errorMessage = "Couldn’t save listening history: " + error.localizedDescription }
+    }
+
+    public func listening(_ mode: ListeningMode, limit: Int = 100) async throws -> ListeningOverview {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        return try await repository.listening(mode, limit: limit, search: search, scope: searchScope)
+    }
+
+    public func clearListeningHistory() async throws {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        try await repository.clearListeningHistory()
+        listeningRevision += 1
+    }
+
     public func overview() async -> LibraryOverview? {
         guard let repository, !isShutDown else { return nil }
         do { return try await repository.overview() }

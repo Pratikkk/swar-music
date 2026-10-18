@@ -9,6 +9,43 @@ import Testing
 
 @MainActor
 struct QueueTests {
+    @Test func qualifiedListeningRecordsOncePerPlaybackAndResetsOnRepeat() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        var now = 0.0
+        player.listeningTime = { now }
+        var recorded: [URL] = []
+        player.onQualifiedListen = { url, _ in recorded.append(url) }
+        let song = entry("one")
+        await player.play([song])
+        for second in 1...4 {
+            now = Double(second); engine.progress(to: now)
+            await player.refresh()
+        }
+        #expect(recorded.isEmpty)
+        await player.togglePlayback()
+        now = 100
+        await player.togglePlayback()
+        #expect(recorded.isEmpty)
+        await player.seek(to: 8)
+        #expect(recorded.isEmpty)
+        now = 101; engine.progress(to: 9)
+        await player.refresh()
+        #expect(recorded == [song.url])
+        now = 102; engine.progress(to: 9.5)
+        await player.refresh()
+        #expect(recorded.count == 1)
+        player.setRepeatMode(.one)
+        engine.finish()
+        await player.refresh()
+        for second in 1...5 {
+            now = 102 + Double(second); engine.progress(to: Double(second))
+            await player.refresh()
+        }
+        #expect(recorded == [song.url, song.url])
+        player.shutdown()
+    }
+
     @Test func libraryArtworkUpdatesAllQueueCopiesWithoutRestartingPlayback() async throws {
         let engine = QueueTestEngine()
         let player = Player(engine: engine)
@@ -767,6 +804,9 @@ private final class QueueTestEngine: PlaybackDriving, @unchecked Sendable {
     private var history: [URL] = []
     var opened: [URL] { lock.withLock { history } }
     func fail(_ url: URL) { lock.withLock { _ = failures.insert(url) } }
+    func progress(to position: Double) {
+        lock.withLock { value = PlaybackSnapshot(duration: 10, position: position, isPlaying: value.isPlaying) }
+    }
     func finish() { lock.withLock { value = PlaybackSnapshot(duration: 10, position: 10, didFinish: true) } }
     func open(_ url: URL) async throws -> PlaybackSnapshot {
         if let gate { await gate.block() }

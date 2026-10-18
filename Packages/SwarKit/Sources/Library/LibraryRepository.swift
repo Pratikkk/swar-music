@@ -117,6 +117,17 @@ public actor LibraryRepository {
         migrator.registerMigration("library-smart-playlists-v8") { db in
             try db.alter(table: "playlists") { $0.add(column: "smartRulesJSON", .text) }
         }
+        migrator.registerMigration("library-listening-v9") { db in
+            try db.execute(sql: """
+                CREATE TABLE track_listening (
+                    trackID TEXT PRIMARY KEY NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+                    playCount INTEGER NOT NULL DEFAULT 0,
+                    lastPlayed DOUBLE NOT NULL
+                );
+                CREATE INDEX listening_recent ON track_listening(lastPlayed DESC);
+                CREATE INDEX listening_popular ON track_listening(playCount DESC, lastPlayed DESC);
+                """)
+        }
         try migrator.migrate(database)
     }
 

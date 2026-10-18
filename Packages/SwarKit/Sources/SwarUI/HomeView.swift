@@ -12,6 +12,7 @@ struct HomeView: View {
     let openNowPlaying: () -> Void
     let openFavourites: () -> Void
     let openRecent: () -> Void
+    let openListening: () -> Void
     let browseAlbum: (LibraryAlbumSummary) -> Void
     let addFolder: () -> Void
     @Environment(\.floatingPlayerClearance) private var clearance
@@ -36,6 +37,13 @@ struct HomeView: View {
                         metric(overview.losslessCount, title: "lossless", symbol: "waveform")
                     }
                     if player.canTogglePlayback { continueListening }
+                    Button(action: openListening) {
+                        HStack {
+                            Label("Listening history", systemImage: "clock.arrow.circlepath")
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption)
+                        }.padding(16).background(SwarTheme.surface, in: RoundedRectangle(cornerRadius: 14))
+                    }.buttonStyle(.plain)
                     if overview.trackCount == 0 {
                         ContentUnavailableView {
                             Label("Your library starts with a folder", systemImage: "folder.badge.plus")

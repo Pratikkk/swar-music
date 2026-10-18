@@ -34,6 +34,10 @@ public final class Player {
     private var describedOutput: OutputDescription?
     @ObservationIgnored private var mediaControls: SystemMediaControls?
 
+    @ObservationIgnored public var onQualifiedListen: ((URL, Date) -> Void)?
+    @ObservationIgnored private var listenCounter = ListenCounter()
+    @ObservationIgnored var listeningTime: () -> Double = { ProcessInfo.processInfo.systemUptime }
+
     @ObservationIgnored private var activeArtworkChange: LibraryArtworkChange?
 
     public func updateLibraryArtwork(_ changes: [LibraryArtworkChange]) {
@@ -220,6 +224,7 @@ public final class Player {
         generation += 1
         let revision = generation
         completionHandled = false
+        listenCounter = ListenCounter()
         isRestoredSession = false
         // Keep the displayed song intact while opening. Clearing its identity
         // here makes album highlights and format chips disappear until open ends.
@@ -319,6 +324,7 @@ public final class Player {
             return
         }
         guard !isBusy || isSeeking else { return }
+        listenCounter.interrupt()
         let target = max(0, min(seconds, duration))
         pendingSeek = target
         position = target
@@ -561,6 +567,12 @@ public final class Player {
     }
 
     private func apply(_ snapshot: PlaybackSnapshot) {
+        if snapshot.error != nil { listenCounter.interrupt() }
+        if listenCounter.sample(time: listeningTime(), position: snapshot.position,
+                                duration: snapshot.duration, playing: snapshot.isPlaying && snapshot.error == nil),
+           let currentURL {
+            onQualifiedListen?(currentURL, Date())
+        }
         if volumeDeviceID != snapshot.output?.id { pendingVolume = nil }
         volumeDeviceID = snapshot.output?.id
         updateFormat(snapshot)
