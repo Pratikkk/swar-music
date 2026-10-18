@@ -61,10 +61,13 @@ struct VolumeTests {
         await player.refreshVolume()
         let first = Task { await player.setVolume(to: 0.2) }
         await controller.waitUntilWriting()
+        #expect(player.isSettingOutputVolume)
         await player.setVolume(to: 0.3)
         await player.setVolume(to: 0.8)
+        #expect(player.isSettingOutputVolume)
         await controller.release()
         await first.value
+        #expect(!player.isSettingOutputVolume)
         #expect(await controller.levels == [0.2, 0.8])
         #expect(player.outputVolume.level == 0.8)
     }

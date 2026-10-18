@@ -67,6 +67,9 @@ public final class Player {
     public var currentArtist: String? { currentMediaEntry?.artist }
     public var currentAlbum: String? { currentMediaEntry?.album }
 
+    /// Remains true until the hardware queue has drained coalesced requests.
+    public var isSettingOutputVolume: Bool { settingVolume }
+
     public var canSetOutputVolume: Bool {
         !isBusy && !isShutDown && outputVolume.canSet && (volumeDeviceID == nil || volumeDeviceID == outputVolume.deviceID)
     }

@@ -113,3 +113,31 @@ accessibility Increment/Decrement changed the output from 50% to 60% and restore
 50%; the paused playback position was preserved. Pointer automation did not move
 either the volume slider or the unchanged seek slider, so pointer-drag verification
 was inconclusive; no measured HAL write-count reduction is claimed.
+
+## Stable volume presentation after release
+
+Build 74 switched the slider's getter back to the old HAL snapshot at drag end,
+before the asynchronous write completed. It also reseeded the local value when
+editing began, which could overwrite an initial binding update from native input.
+VolumeControl now always binds to VolumeSliderState's local value. It retains the
+chosen level while the latest request is queued or being written, then adopts the
+confirmed hardware value (including device quantization). Idle external changes
+still synchronize normally. Help and accessibility values use the same preview.
+
+Each request has an identity and output device. Older completions cannot overwrite
+a newer edit; entering another drag invalidates a not-yet-submitted request without
+resetting the thumb. Device changes, unavailable controls, disappearance, and
+rejected writes restore the appropriate actual level. Player exposes its existing
+volume-write status so a coalesced call returning early cannot prematurely end the
+preview. The signal remains true until the hardware queue has drained; no new
+polling or timer is introduced. Pointer drags still commit on editing end.
+
+Validation: 156 tests passed in 21 suites. Six new presentation tests cover delayed
+confirmation, stale snapshots, quantized confirmation, binding-before-edit ordering,
+coalesced/older completions, a new drag during a write, device changes, cancellation,
+external changes, and rejected writes. A further focused run passed 11 volume tests,
+including checks that Player's writing status spans all coalesced writes. Universal
+build 75 passed signature and bundled-codec checks and was installed. Floating and
+expanded controls rendered and native accessibility adjustments worked; the saved
+paused position remained intact. The delayed-hardware handoff is covered by state
+regressions rather than a measured pointer animation/FPS test.
