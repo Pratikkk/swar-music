@@ -163,31 +163,13 @@ struct HomeView: View {
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 200), spacing: density.gridGap, alignment: .top)], alignment: .leading, spacing: density.gridGap) {
                 ForEach(albums) { album in
-                    VStack(alignment: .leading, spacing: 6) {
-                        ZStack(alignment: .bottomTrailing) {
-                            Button { browseAlbum(album) } label: {
-                                CoverArt(url: library.artworkURL(album.artworkKey), title: album.title, cornerRadius: 12)
-                            }.buttonStyle(.plain).accessibilityLabel("Browse album " + album.title)
-                            Button {
-                                Task {
-                                    let tracks = await library.tracks(in: album)
-                                    guard !Task.isCancelled else { return }
-                                    await play(tracks)
-                                }
-                            } label: {
-                                Image(systemName: "play.fill").font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.white).frame(width: 32, height: 32)
-                                    .background(palette.buttonFill, in: Circle())
-                            }.buttonStyle(PlaybackButtonStyle(unavailable: album.playableCount == 0))
-                                .disabled(player.isBusy || album.playableCount == 0)
-                                .padding(8).accessibilityLabel("Play album " + album.title)
+                    HomeAlbumCard(album: album, artworkURL: library.artworkURL(album.artworkKey),
+                                  busy: player.isBusy, browse: { browseAlbum(album) }) {
+                        Task {
+                            let tracks = await library.tracks(in: album)
+                            guard !Task.isCancelled else { return }
+                            await play(tracks)
                         }
-                        Button { browseAlbum(album) } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(album.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                                Text(album.artist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                            }.frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(.plain).help("\(album.title)\n\(album.artist) · \(album.trackCount) \(album.trackCount == 1 ? "track" : "tracks")")
                     }.albumActions(library: library, player: player, album: album)
                 }
             }
@@ -234,5 +216,47 @@ struct HomeView: View {
             guard !entries.isEmpty else { return }
             await player.play(entries, startingAt: 0)
         } catch { player.reportImportError(error) }
+    }
+}
+
+/// Hover state stays local to each album, avoiding Home-wide updates as the pointer moves.
+@MainActor
+private struct HomeAlbumCard: View {
+    @Environment(\.swarPalette) private var palette
+    let album: LibraryAlbumSummary
+    let artworkURL: URL?
+    let busy: Bool
+    let browse: () -> Void
+    let play: () -> Void
+    @State private var hovered = false
+    @FocusState private var focus: CardFocus?
+    private enum CardFocus: Hashable { case artwork, play, details }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .bottomTrailing) {
+                Button(action: browse) {
+                    CoverArt(url: artworkURL, title: album.title, cornerRadius: 12)
+                }.buttonStyle(.plain).focused($focus, equals: .artwork)
+                    .accessibilityLabel("Browse album " + album.title)
+                Button(action: play) {
+                    Image(systemName: "play.fill").font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white).frame(width: 32, height: 32)
+                        .background(palette.buttonFill, in: Circle())
+                }.buttonStyle(PlaybackButtonStyle(unavailable: album.playableCount == 0))
+                    .disabled(busy || album.playableCount == 0)
+                    .padding(8).focused($focus, equals: .play)
+                    .opacity(hovered || focus != nil ? 1 : 0)
+                    .allowsHitTesting(hovered || focus != nil)
+                    .accessibilityLabel("Play album " + album.title)
+            }
+            Button(action: browse) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(album.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    Text(album.artist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain).focused($focus, equals: .details).help("\(album.title)\n\(album.artist) · \(album.trackCount) \(album.trackCount == 1 ? "track" : "tracks")")
+        }
+        .onHover { hovered = $0 }
     }
 }
