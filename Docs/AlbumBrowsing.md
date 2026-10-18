@@ -27,7 +27,8 @@ The browser provides:
 - Loading, retry, empty/search-empty, scan-progress, and library-error states.
 
 Only summaries are held for the collection. Tracks for a selected album or action
-are fetched on demand. Search queries debounce and discard cancelled results.
+are fetched on demand. Album reloads start immediately, without an artificial
+delay; cancelled and outdated results are discarded.
 Playback position updates do not trigger album metadata queries. The browser does
 not introduce polling timers or load every song into view state.
 

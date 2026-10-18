@@ -183,8 +183,6 @@ struct AlbumBrowserView: View {
         loadGeneration = generation
         do {
             let query = library.search, scope = library.searchScope
-            // The existing root debounces song queries; this browser owns its independent metadata query.
-            if ready { try await Task.sleep(for: .milliseconds(200)) }
             let result = try await library.albums(search: query, scope: scope,
                 sort: recent ? .recentlyAdded : sortOrder, reversed: recent ? false : reversed)
             guard !Task.isCancelled, key == refreshKey, generation == loadGeneration else { return }
