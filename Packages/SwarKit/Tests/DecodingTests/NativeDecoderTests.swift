@@ -51,13 +51,13 @@ struct NativeDecoderTests {
         #expect(frame == expected.subdata(in: 30..<36))
     }
 
-    @Test func alac24Bit96kHzRoundTripPreservesEverySample() throws {
+    @Test(arguments: ["m4a", "caf"]) func alac24Bit96kHzRoundTripPreservesEverySample(_ ext: String) throws {
         let (directory, input, expected) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
-        let output = directory.appendingPathComponent("lossless.m4a")
+        let output = directory.appendingPathComponent("lossless." + ext)
         let converter = Process()
         converter.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
-        converter.arguments = [input.path, output.path, "-d", "alac", "-f", "m4af"]
+        converter.arguments = [input.path, output.path, "-d", "alac", "-f", ext == "caf" ? "caff" : "m4af"]
         try converter.run()
         converter.waitUntilExit()
         try #require(converter.terminationStatus == 0)

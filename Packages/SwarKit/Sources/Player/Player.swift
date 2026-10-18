@@ -323,6 +323,8 @@ public final class Player {
         pendingSeek = target
         position = target
         guard !isSeeking else { return }
+        let startedPlaying = isPlaying
+        var finished = false
         generation += 1
         isSeeking = true
         isBusy = true
@@ -331,11 +333,20 @@ public final class Player {
         while let target = pendingSeek, !isShutDown {
             pendingSeek = nil
             do {
-                let snapshot = try await engine.seek(to: target)
+                var snapshot = try await engine.seek(to: target)
                 guard !isShutDown else { return }
+                // A superseded seek may have stopped exactly at EOF. Preserve
+                // playback intent if the latest request moves back into the song.
+                if pendingSeek == nil, startedPlaying, !snapshot.isPlaying, !snapshot.didFinish, snapshot.error == nil {
+                    snapshot = try await engine.togglePlayback()
+                    guard !isShutDown else { return }
+                }
                 setError(nil)
                 if !snapshot.didFinish { completionHandled = false }
-                if pendingSeek == nil { apply(snapshot) }
+                if pendingSeek == nil {
+                    apply(snapshot)
+                    finished = snapshot.didFinish && snapshot.error == nil
+                }
             } catch {
                 pendingSeek = nil
                 let snapshot = await engine.snapshot()
@@ -344,6 +355,13 @@ public final class Player {
                 setError(error.localizedDescription, fromPlayback: true)
                 return
             }
+        }
+        if finished, !isShutDown, !completionHandled {
+            // Completion cannot depend on the playing-only UI polling task:
+            // an EOF seek has already stopped it. Release the seek lock first.
+            isSeeking = false; isBusy = false
+            completionHandled = true
+            await advanceAfterCompletion()
         }
     }
 

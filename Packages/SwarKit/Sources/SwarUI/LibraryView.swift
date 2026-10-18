@@ -92,6 +92,16 @@ public struct LibraryView: View {
             player.enableSystemMediaControls()
             await player.restoreSession()
         }
+        .task(id: "\(library.isReady)-\(player.isRestoredSession)") {
+            guard library.isReady else { return }
+            // Older saved queues can still point at migrated custom-art cache URLs.
+            let changes = player.queue.compactMap { entry -> LibraryArtworkChange? in
+                guard let old = entry.artworkURL, old.lastPathComponent.hasPrefix("custom-"),
+                      let durable = library.artworkURL(old.lastPathComponent), durable != old else { return nil }
+                return LibraryArtworkChange(fileURL: entry.url, artworkURL: durable)
+            }
+            if !changes.isEmpty { player.updateLibraryArtwork(changes) }
+        }
         .task {
             while !Task.isCancelled {
                 await player.refreshVolume()

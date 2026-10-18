@@ -27,14 +27,17 @@ public struct LibraryScanner: Sendable {
     }()
     private let repository: LibraryRepository
     private let inspector: any MediaInspecting
-    public init(repository: LibraryRepository, artworkDirectory: URL, codecDirectory: URL? = nil) {
+    private let customArtworkDirectory: URL?
+    public init(repository: LibraryRepository, artworkDirectory: URL, codecDirectory: URL? = nil, customArtworkDirectory: URL? = nil) {
         self.repository = repository
+        self.customArtworkDirectory = customArtworkDirectory
         inspector = MediaInspector(codecDirectory: codecDirectory, artworkDirectory: artworkDirectory)
     }
 
     init(repository: LibraryRepository, inspector: any MediaInspecting) {
         self.repository = repository
         self.inspector = inspector
+        customArtworkDirectory = nil
     }
 
     // Keep fingerprint I/O and task-group coordination off the caller's actor,
@@ -59,7 +62,10 @@ public struct LibraryScanner: Sendable {
             if let old = prior[file.relativePath], old.fileSize == file.size,
                old.modifiedAt.timeIntervalSince1970 == file.modified.timeIntervalSince1970,
                old.coverStamp == file.coverStamp, old.error == nil,
-               old.artworkKey.map({ FileManager.default.fileExists(atPath: inspector.artworkDirectory.appendingPathComponent($0).path) }) ?? true { continue }
+               old.artworkKey.map({ key in
+                   let directory = key.hasPrefix("custom-") ? customArtworkDirectory ?? inspector.artworkDirectory : inspector.artworkDirectory
+                   return FileManager.default.fileExists(atPath: directory.appendingPathComponent(key).path)
+               }) ?? true { continue }
             pending.append(file)
         }
         let unchanged = files.count - pending.count

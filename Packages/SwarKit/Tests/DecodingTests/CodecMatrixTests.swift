@@ -203,4 +203,32 @@ struct CodecMatrixTests {
             #expect(eof == 0)
         }
     }
+
+    @Test(arguments: ["alac-edit-list.m4a", "alac-edit-list-stale-delay.m4a"])
+    func alacTimelineEditsPreserveOnlyTheIntendedSamples(_ filename: String) throws {
+        let url = directory.appendingPathComponent(filename)
+        #expect(throws: AudioFailure.self) { try NativeDecoder(url: url) }
+        let decoder = try DecoderFactory.open(url: url, codecDirectory: codecs)
+        #expect(decoder is FFmpegDecoder)
+        let original = try Data(contentsOf: directory.appendingPathComponent("44100-16.pcm"))
+        let expected = original.subdata(in: (2205 * 4)..<(8192 * 4))
+        #expect(decoder.frameCount == 5987)
+        #expect(try readAll(decoder) == expected)
+        for target: Int64 in [0, 1, 1890, 1891, 4000, 5970, 5987] {
+            try decoder.seek(to: target)
+            let tail = try readAll(decoder)
+            #expect(tail == expected.dropFirst(Int(target) * 4), "Seek \(target) in \(filename)")
+        }
+    }
+
+    @Test func alacTrailingEditStopsAtItsDeclaredBoundary() throws {
+        let url = directory.appendingPathComponent("alac-trailing-edit.m4a")
+        #expect(throws: AudioFailure.self) { try NativeDecoder(url: url) }
+        let decoder = try DecoderFactory.open(url: url, codecDirectory: codecs)
+        let original = try Data(contentsOf: directory.appendingPathComponent("44100-16.pcm"))
+        #expect(decoder.frameCount == 4410)
+        #expect(try readAll(decoder) == original.prefix(4410 * 4))
+        try decoder.seek(to: 4400)
+        #expect(try readAll(decoder) == original.subdata(in: (4400 * 4)..<(4410 * 4)))
+    }
 }

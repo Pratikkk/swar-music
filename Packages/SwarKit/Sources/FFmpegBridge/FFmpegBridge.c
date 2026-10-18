@@ -145,7 +145,8 @@ SwarFFDecoder *swar_ff_open(const char *path, const char *library, char *error, 
     d->codec->err_recognition = AV_EF_CRCCHECK | AV_EF_EXPLODE;
     // ALAC has no encoder priming. A stale AAC iTunSMPB tag can make the
     // demuxer attach skip-sample metadata even to lossless ALAC packets.
-    // Keep those samples rather than allowing automatic decoder trimming.
+    // Keep those samples rather than allowing automatic decoder trimming. The
+    // read path applies actual timeline edits from timestamps, not AAC tags.
     if (codec->id == AV_CODEC_ID_ALAC) d->codec->flags2 |= AV_CODEC_FLAG2_SKIP_MANUAL;
     d->codec->thread_count = 1;
     result = A(avcodec_open2)(d->codec, codec, NULL);
@@ -224,6 +225,7 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
     int planar = A(av_sample_fmt_is_planar)(d->sample_format);
     uint8_t *dest = output;
     while (*read < requested) {
+        if (d->codec->codec_id == AV_CODEC_ID_ALAC && d->delivered >= d->info.frame_count) return 0;
         if (d->offset >= d->frame->nb_samples) {
             int result = next_frame(d, error, size);
             if (result <= 0) {
@@ -236,6 +238,20 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
         if (d->frame->format != d->sample_format || d->frame->sample_rate != d->info.sample_rate ||
             d->frame->ch_layout.nb_channels != channels) {
             snprintf(error, size, "Audio format changed inside the stream"); return -1;
+        }
+        if (d->codec->codec_id == AV_CODEC_ID_ALAC && d->frame->best_effort_timestamp != AV_NOPTS_VALUE) {
+            AVStream *stream = d->format->streams[d->stream];
+            int64_t start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
+            int64_t frame_start = A(av_rescale_q)(d->frame->best_effort_timestamp - start,
+                stream->time_base, (AVRational){1, (int)d->info.sample_rate});
+            // MP4 edit lists can exclude the beginning of an ALAC packet. Its
+            // negative timestamp is authoritative; stale iTunSMPB delay is not.
+            if (frame_start < 0) {
+                if (frame_start <= -(int64_t)d->frame->nb_samples) {
+                    d->offset = d->frame->nb_samples; continue;
+                }
+                if (d->offset < -frame_start) d->offset = (int)-frame_start;
+            }
         }
         if (d->seek_target >= 0) {
             AVStream *stream = d->format->streams[d->stream];
@@ -251,6 +267,8 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
         }
         int count = d->frame->nb_samples - d->offset;
         if ((uint32_t)count > requested - *read) count = (int)(requested - *read);
+        if (d->codec->codec_id == AV_CODEC_ID_ALAC && count > d->info.frame_count - d->delivered)
+            count = (int)(d->info.frame_count - d->delivered);
         for (int frame = 0; frame < count; ++frame) {
             for (int channel = 0; channel < channels; ++channel) {
                 const uint8_t *src = planar ? d->frame->extended_data[channel] + (size_t)(d->offset + frame) * storage :

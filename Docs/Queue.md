@@ -88,3 +88,22 @@ the new controls have not been manually checked with VoiceOver.
 
 Queue persistence is described in [session restoration](Sessions.md). Media keys and
 gapless handoff remain future work.
+
+## Seeking to the end (build 80)
+
+A playing seek that lands exactly at the final frame publishes completion
+immediately. Player handles that completion after releasing its seek lock,
+without waiting for its playing-only refresh task. Albums advance, Repeat One
+restarts the current entry, Repeat All wraps, and the last entry with Repeat Off
+stops. A paused seek to the end remains paused. A newer seek superseding an EOF
+request stays on the current track and preserves the original playback intent.
+
+Queue regressions cover each policy and duplicate-completion protection. An
+opt-in real-output test feeds silence at the device's existing nominal rate and
+checks immediate completion plus paused-seek behavior; it passed locally. It
+makes no volume changes and is excluded from normal runs:
+
+```sh
+SWAR_TEST_SILENT_OUTPUT=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  swift test --package-path Packages/SwarKit --filter HardwarePlaybackTests.exactEndSeekPublishesCompletionWithoutAnotherPump
+```

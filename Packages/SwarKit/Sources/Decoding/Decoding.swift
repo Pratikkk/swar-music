@@ -128,6 +128,10 @@ public final class NativeDecoder: AudioDecoding {
                 size = UInt32(MemoryLayout.size(ofValue: bitRate))
                 _ = AudioFileGetProperty(audioFile, kAudioFilePropertyBitRate, &size, &bitRate)
             }
+            if original.mFormatID == kAudioFormatAppleLossless,
+               try MP4Timeline.requiresBundledDecoder(url: url, frames: length, sampleRate: original.mSampleRate) {
+                throw AudioFailure("This ALAC file needs the bundled decoder to preserve its MP4 timeline edits.")
+            }
             source = SourceFormat(codec: codec, sampleRate: original.mSampleRate,
                                   bitDepth: lossless ? bits : nil, channels: Int(original.mChannelsPerFrame),
                                   isLossless: lossless, isFloat: floating, bitRate: bitRate > 0 ? bitRate : nil)

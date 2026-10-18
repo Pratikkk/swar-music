@@ -27,6 +27,7 @@ public final class LibraryModel {
     public var reverseSort = false
     public private(set) var pageLimit = 500
     public private(set) var artworkDirectory: URL?
+    private var customArtworkDirectory: URL?
     private var repository: LibraryRepository?
     private var scopes: [String: FolderAccess] = [:]
     private var watchers: [String: FolderWatcher] = [:]
@@ -54,6 +55,22 @@ public final class LibraryModel {
                 .appendingPathComponent("Swar/Artwork", isDirectory: true)
             try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
             artworkDirectory = cache
+            let custom = support.appendingPathComponent("CustomArtwork", isDirectory: true)
+            customArtworkDirectory = custom
+            try await Task.detached(priority: .utility) {
+                try FileManager.default.createDirectory(at: custom, withIntermediateDirectories: true)
+                if FileManager.default.fileExists(atPath: cache.path) {
+                    for url in try FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: [.isRegularFileKey], options: .skipsHiddenFiles)
+                        where url.lastPathComponent.hasPrefix("custom-") && url.pathExtension == "png" {
+                        let target = custom.appendingPathComponent(url.lastPathComponent)
+                        if try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true,
+                           !FileManager.default.fileExists(atPath: target.path) {
+                            // Keep the old copy for saved queues referring to the cache URL.
+                            try Data(contentsOf: url, options: .mappedIfSafe).write(to: target, options: .atomic)
+                        }
+                    }
+                }
+            }.value
             repository = try await Task.detached(priority: .utility) {
                 try LibraryRepository(path: support.appendingPathComponent("Library.sqlite").path)
             }.value
@@ -70,7 +87,10 @@ public final class LibraryModel {
         guard let repository else { errorMessage = "The library database is not ready."; return }
         do {
             let canonical = url.resolvingSymlinksInPath().standardizedFileURL
-            guard !folders.contains(where: { Self.overlaps($0.path, canonical.path) }) else {
+            guard !folders.contains(where: {
+                let path = scopes[$0.id]?.url.resolvingSymlinksInPath().standardizedFileURL.path ?? $0.path
+                return Self.overlaps(path, canonical.path)
+            }) else {
                 throw LibraryFailure("This folder overlaps a folder already in your library.")
             }
             let access = FolderAccess(url)
@@ -124,7 +144,8 @@ public final class LibraryModel {
                 guard let scope = scopes[folder.id] else { continue }
                 defer { withExtendedLifetime(scope) {} }
                 do {
-                    let scanner = LibraryScanner(repository: repository, artworkDirectory: artworkDirectory, codecDirectory: codecDirectory)
+                    let scanner = LibraryScanner(repository: repository, artworkDirectory: artworkDirectory, codecDirectory: codecDirectory,
+                                                 customArtworkDirectory: customArtworkDirectory)
                     _ = try await scanner.scan(folder: folder, root: scope.url) { [weak self] update in
                         await self?.updateProgress(update)
                     }
@@ -175,7 +196,7 @@ public final class LibraryModel {
     }
 
     public func importArtwork(_ url: URL) async throws -> String {
-        guard let artworkDirectory else { throw LibraryFailure("The artwork cache is not ready.") }
+        guard let artworkDirectory = customArtworkDirectory else { throw LibraryFailure("The artwork library is not ready.") }
         let task = Task.detached(priority: .userInitiated) {
             let access = url.startAccessingSecurityScopedResource()
             defer { if access { url.stopAccessingSecurityScopedResource() } }
@@ -396,7 +417,12 @@ public final class LibraryModel {
             return []
         }
     }
-    public func artworkURL(_ key: String?) -> URL? { key.flatMap { artworkDirectory?.appendingPathComponent($0) } }
+    public func artworkURL(_ key: String?) -> URL? {
+        key.flatMap { key in
+            let directory = key.hasPrefix("custom-") ? customArtworkDirectory ?? artworkDirectory : artworkDirectory
+            return directory?.appendingPathComponent(key)
+        }
+    }
 
     /// Resolve a playing file against connected library roots, not the visible page.
     public func track(at url: URL) async -> LibraryTrack? {
@@ -433,8 +459,12 @@ public final class LibraryModel {
                 var stale = false
                 let url = try URL(resolvingBookmarkData: folder.bookmark, options: [.withSecurityScope, .withoutUI], relativeTo: nil, bookmarkDataIsStale: &stale)
                 let access = FolderAccess(url)
+                let path = url.resolvingSymlinksInPath().standardizedFileURL.path
                 if stale {
                     folder.bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+                }
+                if stale || folder.path != path {
+                    folder.path = path
                     try await repository.saveFolder(folder)
                 }
                 scopes[folder.id] = access
@@ -468,7 +498,9 @@ public final class LibraryModel {
     }
 
     private static func overlaps(_ first: String, _ second: String) -> Bool {
-        first == second || first.hasPrefix(second + "/") || second.hasPrefix(first + "/")
+        let firstPrefix = first.hasSuffix("/") ? first : first + "/"
+        let secondPrefix = second.hasSuffix("/") ? second : second + "/"
+        return first == second || first.hasPrefix(secondPrefix) || second.hasPrefix(firstPrefix)
     }
 }
 

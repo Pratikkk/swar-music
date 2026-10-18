@@ -266,6 +266,7 @@ private final class OutputSession {
         didFinish = false
         try prime()
         if resume && target < decoder.frameCount { try play() }
+        else if resume && target == decoder.frameCount { didFinish = true }
     }
 
     func pump() throws {

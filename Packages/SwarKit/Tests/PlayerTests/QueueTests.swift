@@ -617,6 +617,55 @@ struct QueueTests {
         #expect(engine.opened.count == 1)
     }
 
+    @Test func playingSeekToEndAdvancesImmediatelyAndHonoursRepeat() async {
+        for mode: RepeatMode in [.off, .one, .all] {
+            let engine = QueueTestEngine()
+            let player = Player(engine: engine)
+            let entries = [entry("one"), entry("two")]
+            await player.play(entries)
+            player.setRepeatMode(mode)
+            await player.seek(to: 10)
+            #expect(player.currentEntryID == (mode == .one ? entries[0].id : entries[1].id))
+            #expect(player.isPlaying && !player.isSeeking && !player.isBusy)
+            #expect(engine.opened.count == 2)
+            await player.refresh()
+            #expect(engine.opened.count == 2, "EOF must not be handled twice")
+            player.shutdown()
+        }
+    }
+
+    @Test func seekingToLastTrackEndStopsOrWrapsWithoutPolling() async {
+        for mode: RepeatMode in [.off, .all] {
+            let engine = QueueTestEngine()
+            let player = Player(engine: engine)
+            let entries = [entry("one"), entry("two")]
+            await player.play(entries, startingAt: 1)
+            player.setRepeatMode(mode)
+            await player.seek(to: 10)
+            #expect(player.currentEntryID == (mode == .all ? entries[0].id : entries[1].id))
+            #expect(player.isPlaying == (mode == .all))
+            #expect(player.errorMessage == nil)
+            player.shutdown()
+        }
+    }
+
+    @Test func supersededEndSeekDoesNotAdvanceAndKeepsPlaying() async {
+        let gate = OpenGate()
+        let engine = QueueTestEngine(seekGate: gate)
+        let player = Player(engine: engine)
+        let entries = [entry("one"), entry("two")]
+        await player.play(entries)
+        let seeking = Task { await player.seek(to: 10) }
+        await gate.waitUntilBlocked()
+        await player.seek(to: 4)
+        await gate.release()
+        await seeking.value
+        #expect(player.currentEntryID == entries[0].id)
+        #expect(player.position == 4 && player.isPlaying && engine.opened.count == 1)
+        #expect(engine.sought == [10, 4])
+        player.shutdown()
+    }
+
     @Test func playNextReorderAndRemovalPreserveCurrentTrackAndDuplicates() async {
         let player = Player(engine: QueueTestEngine())
         let entries = [entry("one"), entry("two"), entry("three")]
@@ -742,7 +791,8 @@ private final class QueueTestEngine: PlaybackDriving, @unchecked Sendable {
         if first, let seekGate { await seekGate.block() }
         return try lock.withLock {
             if seekFailure { seekFailure = false; throw CocoaError(.fileReadCorruptFile) }
-            value = PlaybackSnapshot(duration: 10, position: seconds, isPlaying: value.isPlaying)
+            let completed = value.isPlaying && seconds >= 10
+            value = PlaybackSnapshot(duration: 10, position: seconds, isPlaying: value.isPlaying && !completed, didFinish: completed)
             return value
         }
     }

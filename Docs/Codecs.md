@@ -141,3 +141,28 @@ included in the repository.
 Universal build 78 passed signing and bundled-codec runtime checks and was
 installed. Resuming the previously failing track near its end in the native app
 advanced to the next queued ALAC track without an error; playback was then paused.
+
+## ALAC timeline edits (build 80)
+
+The bridge now applies ALAC timeline boundaries explicitly: negative frame
+timestamps exclude an intentionally trimmed beginning, and the stream's declared
+sample count bounds the end. Stale AAC skip-sample tags remain ignored. This
+preserves an MP4 edit list even when the same file also carries stale `iTunSMPB`
+metadata, without modifying samples or adding silence.
+
+A bounded MP4 timing reader directs ALAC files with nontrivial edits to the
+bundled path, because Core Audio may ignore those edits. It reads box headers and
+small timing records, skips media payloads, handles 32/64-bit timing fields and
+box sizes, and rejects malformed sizes. Ordinary native ALAC (including CAF)
+retains its existing path. The generated leading/trailing-edit fixtures use only
+original test tones; tests compare every output byte and multiple seeks against
+the intended PCM slice. Only floor/ceiling rounding to adjacent movie ticks is accepted for ordinary
+native ALAC. A sample-exact one-sample trim still selects the bundled decoder.
+
+Build 80 validation: 174 tests passed across 24 suites. A separate real-output
+silence test verified immediate EOF-seek completion. Decode-only checks of the
+three previously affected library tracks still matched their full sample counts;
+one complete PCM checksum matched the independent reference. The universal app
+passed bundled-codec decode/seek/EOF and signature checks and was installed. Native
+startup restored 33 songs/13 albums, the paused position and hardware volume. No
+production audio files or embedded tags were edited by these checks.

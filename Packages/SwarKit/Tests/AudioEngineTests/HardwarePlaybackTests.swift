@@ -4,6 +4,37 @@ import Foundation
 import Testing
 
 struct HardwarePlaybackTests {
+    // Explicitly opt in; the render path receives silence only. The device's
+    // current rate is used and normal engine teardown restores its configuration.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["SWAR_TEST_SILENT_OUTPUT"] == "1"))
+    func exactEndSeekPublishesCompletionWithoutAnotherPump() async throws {
+        let rate = try defaultOutputRate()
+        try #require(rate >= 1 && rate <= 384000 && rate.rounded() == rate)
+        let samples = UInt32(rate) * 2
+        var wav = Data()
+        func u16(_ value: UInt16) { var value = value.littleEndian; withUnsafeBytes(of: &value) { wav.append(contentsOf: $0) } }
+        func u32(_ value: UInt32) { var value = value.littleEndian; withUnsafeBytes(of: &value) { wav.append(contentsOf: $0) } }
+        wav.append(contentsOf: "RIFF".utf8); u32(36 + samples * 4)
+        wav.append(contentsOf: "WAVEfmt ".utf8); u32(16)
+        u16(1); u16(2); u32(UInt32(rate)); u32(UInt32(rate) * 4); u16(4); u16(16)
+        wav.append(contentsOf: "data".utf8); u32(samples * 4)
+        wav.append(Data(count: Int(samples) * 4))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+        try wav.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let engine = AudioPlaybackEngine()
+        defer { engine.shutdown() }
+        let opened = try await engine.open(url)
+        let playing = try await engine.togglePlayback()
+        #expect(playing.isPlaying)
+        let ended = try await engine.seek(to: opened.duration)
+        #expect(ended.didFinish && !ended.isPlaying && ended.position == opened.duration && ended.error == nil)
+        let atStart = try await engine.seek(to: 0)
+        #expect(!atStart.didFinish && !atStart.isPlaying)
+        let pausedEnd = try await engine.seek(to: opened.duration)
+        #expect(!pausedEnd.didFinish && !pausedEnd.isPlaying)
+    }
+
     // Opt in with a quiet ALAC fixture. This test changes the default output rate
     // and emits audio. It is deliberately excluded from ordinary test runs.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["SWAR_TEST_AUDIO_FILE"] != nil))

@@ -9,8 +9,8 @@ selections apply only to selected songs. Cancel does not change stored artwork.
 
 Choose Image uses the native file picker. Images must be regular files no larger
 than 20 MB and readable by ImageIO. Decoding, orientation correction and PNG
-thumbnail generation run off the main actor; custom covers are cached at up to
-1024 pixels under content-derived names. Existing scan thumbnails retain their
+thumbnail generation run off the main actor; custom covers are stored persistently
+at up to 1024 pixels under content-derived names. Existing scan thumbnails retain their
 384-pixel size. No image is downloaded and no audio file or embedded tag is changed.
 
 Migration library-artwork-v7 adds independent per-track artwork overrides. Applying
@@ -40,3 +40,19 @@ open completes. Session persistence picks up updated queue artwork normally.
   selection, and cancelling. The actual library retained zero artwork overrides.
 - The pre-existing source-file EOF error seen during testing was not changed by
   this feature. No new physical audio-device testing was required or claimed.
+
+## Durable imported artwork (build 80)
+
+Imported covers now live in `Application Support/Swar/CustomArtwork`; generated
+source-cover previews remain in `Caches/Swar/Artwork`. Library keys still identify
+the same content, so no database schema change is required. Startup atomically
+copies existing `custom-*.png` assets into persistent storage without overwriting
+an existing durable asset or deleting the legacy cache copy. Restored queue URLs
+are redirected to the durable copy once library/session restoration completes.
+The scanner checks the durable location before deciding a custom-art track needs
+reinspection. Cache cleanup and rescanning cannot erase the imported cover.
+
+Regressions verify cache purge, rescanning, app restart, legacy migration,
+preservation of old queue URLs, source-image preservation and repeated migration.
+Covers purged before upgrading cannot be reconstructed from the old key alone;
+those need to be selected again. This does not embed artwork into music files.

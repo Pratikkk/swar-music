@@ -203,3 +203,13 @@ release without events; these also passed with Address Sanitizer using Swift
 Testing (`swift test --sanitize address --disable-xctest --enable-swift-testing
 --filter FolderWatcherLifetimeTests`). No original use-after-free was reproduced.
 Universal release build 73 passed signing and bundled-codec checks.
+
+## Renamed folder restoration (build 80)
+
+Folder restoration persists the bookmark's resolved canonical path even when the
+bookmark itself is not stale. Overlap detection uses connected canonical roots,
+including correct root-directory prefix handling. Folder and track IDs remain
+stable: renaming a watched folder and reopening Swar preserves favourites, edits
+and playlist membership, while adding its new location again is rejected. The
+regression uses a real temporary-folder rename and bookmark restoration. Existing
+duplicate roots are not automatically merged or deleted by this change.

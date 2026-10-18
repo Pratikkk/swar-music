@@ -24,8 +24,8 @@ def encode(source, filename, options):
     subprocess.run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-i", str(source), *options, str(path)], check=True)
     return path
 
-def with_stale_aac_delay(data):
-    """Retain the ALAC packets, adding an obsolete AAC iTunSMPB freeform tag."""
+def edit_mp4_fixture(data, *, stale_aac_delay=False, edit_duration_seconds=None):
+    """Retain original ALAC packets while changing only metadata/timing atoms."""
     def atom(kind, body):
         return struct.pack('>I4s', len(body) + 8, kind) + body
 
@@ -33,19 +33,27 @@ def with_stale_aac_delay(data):
     tag = atom(b'----', atom(b'mean', b'\0' * 4 + b'com.apple.iTunes') +
                atom(b'name', b'\0' * 4 + b'iTunSMPB') + atom(b'data', b'\0\0\0\1' + b'\0' * 4 + value))
 
+    movie_rate = None
+
     def rewrite(container):
+        nonlocal movie_rate
         output = bytearray()
         offset = 0
         while offset < len(container):
             size, kind = struct.unpack_from('>I4s', container, offset)
             assert 8 <= size <= len(container) - offset
             body = container[offset + 8:offset + size]
-            if kind in (b'moov', b'udta'):
+            if kind == b'mvhd':
+                movie_rate = struct.unpack_from('>I', body, 20 if body[0] == 1 else 12)[0]
+            if kind in (b'moov', b'udta', b'trak', b'edts'):
                 body = rewrite(body)
             elif kind == b'meta':
                 body = body[:4] + rewrite(body[4:])
-            elif kind == b'ilst':
+            elif kind == b'ilst' and stale_aac_delay:
                 body += tag
+            elif kind == b'elst' and edit_duration_seconds is not None:
+                assert body[0] == 0 and struct.unpack_from('>I', body, 4)[0] == 1
+                body = body[:8] + struct.pack('>I', round(edit_duration_seconds * movie_rate)) + body[12:]
             output += atom(kind, body)
             offset += size
         return output
@@ -113,5 +121,12 @@ manifest.append(dict(file='96000-float.wv', codec='WavPack', rate=96000, bits=32
 manifest_path = args.directory / 'manifest.json'
 manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
 (args.directory / 'alac-stale-aac-delay.m4a').write_bytes(
-    with_stale_aac_delay((args.directory / '44100-16.m4a').read_bytes()))
-print(f"Generated {len(manifest)} codec fixtures and reference hashes in {args.directory}")
+    edit_mp4_fixture((args.directory / '44100-16.m4a').read_bytes(), stale_aac_delay=True))
+edited = args.directory / 'alac-edit-list.m4a'
+subprocess.run([args.ffmpeg, '-hide_banner', '-loglevel', 'error', '-y', '-ss', '0.05',
+                '-i', str(args.directory / '44100-16.m4a'), '-t', '0.1', '-map', '0:a:0',
+                '-c', 'copy', str(edited)], check=True)
+(args.directory / 'alac-edit-list-stale-delay.m4a').write_bytes(edit_mp4_fixture(edited.read_bytes(), stale_aac_delay=True))
+(args.directory / 'alac-trailing-edit.m4a').write_bytes(
+    edit_mp4_fixture((args.directory / '44100-16.m4a').read_bytes(), edit_duration_seconds=0.1))
+print(f"Generated {len(manifest)} matrix fixtures, ALAC timing regressions and reference hashes in {args.directory}")
