@@ -371,8 +371,6 @@ public struct LibraryView: View {
                 }.buttonStyle(.plain).foregroundStyle(.secondary)
                     .accessibilityLabel("Back to albums").help("Back to albums")
             }
-            Text(sectionTitle).font(.system(size: 13, weight: .semibold))
-                .lineLimit(1).foregroundStyle(.secondary)
             Spacer(minLength: 12)
             Menu {
                 if case .section(.albums) = selection {
