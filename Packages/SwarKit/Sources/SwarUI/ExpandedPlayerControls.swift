@@ -7,6 +7,7 @@ struct ExpandedPlayerControls: View {
     @Environment(\.swarPalette) private var palette
     let player: Player
     @State private var seek = SeekSliderState()
+    @AppStorage("waveformSeekBar") private var waveformEnabled = true
 
     private var displayedPosition: Double { seek.displayedPosition(player.position) }
 
@@ -17,7 +18,8 @@ struct ExpandedPlayerControls: View {
                     Text(time(displayedPosition)).frame(width: 46, alignment: .leading)
                     Spacer()
                     Text("Seek to " + time(seek.value)).foregroundStyle(palette.accent)
-                        .opacity(seek.dragging ? 1 : 0).accessibilityHidden(!seek.dragging)
+                        .opacity(seek.dragging && !waveformEnabled ? 1 : 0)
+                        .accessibilityHidden(!seek.dragging || waveformEnabled)
                     Spacer()
                     Text("−" + time(ceil(max(0, player.duration - displayedPosition))))
                         .frame(width: 46, alignment: .trailing)
@@ -62,7 +64,7 @@ struct ExpandedPlayerControls: View {
             }
         }
         .frame(maxWidth: 460)
-        .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 20)
+        .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 20)
         .frame(maxWidth: .infinity)
 
     }

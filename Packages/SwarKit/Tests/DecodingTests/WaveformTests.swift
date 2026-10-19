@@ -41,6 +41,25 @@ struct WaveformTests {
         #expect(peaks[0] == 0 && peaks[1] == 0 && peaks[2] == 0.25 && peaks[3] == 0.75)
     }
 
+    @Test func energyEnvelopeDistinguishesSustainedAudioFromEqualPeaks() throws {
+        let frames: [UInt64] = (0..<512).flatMap { bucket in
+            bucket < 256 ? [0x7fff] + Array(repeating: 0, count: 7) : Array(repeating: 0x7fff, count: 8)
+        }
+        let data = encoded(frames, bytes: 2)
+        let peaks = try WaveformAnalysis.peaks(decoder: WaveformFixture(data: data, bits: 16, channels: 1))
+        let energy = try WaveformAnalysis.envelope(decoder: WaveformFixture(data: data, bits: 16, channels: 1))
+        #expect(peaks.allSatisfy { $0 > 0.99 })
+        #expect(energy.count == 512 && energy.allSatisfy { $0.isFinite && (0...1).contains($0) })
+        #expect(energy[0] > 0.3 && energy[256] > energy[0] * 1.8)
+    }
+
+    @Test func energyEnvelopePreservesStereoEnergyAndSilence() throws {
+        let frames: [UInt64] = (0..<4096).flatMap { $0 < 2048 ? [UInt64(0), 0] : [UInt64(0x4000), 0xc000] }
+        let energy = try WaveformAnalysis.envelope(decoder: WaveformFixture(data: encoded(frames, bytes: 2), bits: 16, channels: 2))
+        #expect(energy.prefix(256).allSatisfy { $0 == 0 })
+        #expect(energy.suffix(256).allSatisfy { abs($0 - 0.5) < 0.00001 })
+    }
+
     @Test func analysisHonoursBudgetCancellationAndUnsupportedLayouts() async throws {
         let decoder = WaveformFixture(data: Data(repeating: 0, count: 1024), bits: 16, channels: 1)
         #expect(throws: (any Error).self) { try WaveformAnalysis.peaks(decoder: decoder, timeLimit: 0) }

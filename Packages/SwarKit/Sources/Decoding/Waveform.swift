@@ -7,6 +7,15 @@ public enum WaveformAnalysis {
     public static let bucketCount = 512
 
     public static func peaks(decoder: any AudioDecoding, timeLimit: TimeInterval = 8) throws -> [Float] {
+        try analyze(decoder: decoder, timeLimit: timeLimit, energyWeighted: false)
+    }
+
+    /// RMS describes sustained energy; a smaller peak contribution retains short transients.
+    public static func envelope(decoder: any AudioDecoding, timeLimit: TimeInterval = 8) throws -> [Float] {
+        try analyze(decoder: decoder, timeLimit: timeLimit, energyWeighted: true)
+    }
+
+    private static func analyze(decoder: any AudioDecoding, timeLimit: TimeInterval, energyWeighted: Bool) throws -> [Float] {
         let format = decoder.pcmFormat
         let channels = Int(format.mChannelsPerFrame)
         let frameBytes = Int(format.mBytesPerFrame)
@@ -26,6 +35,8 @@ public enum WaveformAnalysis {
         defer { buffer.deallocate() }
         let started = ProcessInfo.processInfo.systemUptime
         var peaks = [Float](repeating: 0, count: bucketCount)
+        var energy = [Double](repeating: 0, count: bucketCount)
+        var counts = [Int](repeating: 0, count: bucketCount)
         var position: Int64 = 0
         while position < decoder.frameCount {
             try Task.checkCancellation()
@@ -37,6 +48,7 @@ public enum WaveformAnalysis {
             let bytes = buffer.assumingMemoryBound(to: UInt8.self)
             for frame in 0..<Int(frames) {
                 var peak: Float = 0
+                var frameEnergy = 0.0
                 for channel in 0..<channels {
                     let offset = frame * frameBytes + channel * sampleBytes
                     var raw: UInt64 = 0
@@ -55,14 +67,29 @@ public enum WaveformAnalysis {
                         let value = signed ? (raw >= range / 2 ? Int64(raw) - Int64(range) : Int64(raw)) : Int64(raw) - half
                         sample = Double(value) / Double(half)
                     }
-                    if sample.isFinite { peak = max(peak, Float(min(1, abs(sample)))) }
+                    if sample.isFinite {
+                        let amplitude = min(1, abs(sample))
+                        peak = max(peak, Float(amplitude))
+                        if energyWeighted { frameEnergy += amplitude * amplitude }
+                    }
                 }
                 let bucket = min(bucketCount - 1, Int(Double(position + Int64(frame)) / Double(decoder.frameCount) * Double(bucketCount)))
                 peaks[bucket] = max(peaks[bucket], peak)
+                if energyWeighted {
+                    energy[bucket] += frameEnergy / Double(channels)
+                    counts[bucket] += 1
+                }
             }
             position += Int64(frames)
         }
         guard position > 0 else { throw AudioFailure("No audio was available for a waveform.") }
+        if energyWeighted {
+            return peaks.indices.map { index in
+                guard counts[index] > 0 else { return 0 }
+                let rms = sqrt(energy[index] / Double(counts[index]))
+                return Float(min(1, 0.82 * rms + 0.18 * Double(peaks[index])))
+            }
+        }
         return peaks
     }
 }
@@ -74,7 +101,7 @@ public actor WaveformStore {
         let size: Int
         let modified: Double
         var filename: String {
-            SHA256.hash(data: Data("waveform-v1|\(path)|\(size)|\(modified)".utf8)).map { String(format: "%02x", $0) }.joined() + ".json"
+            SHA256.hash(data: Data("waveform-v2-energy|\(path)|\(size)|\(modified)".utf8)).map { String(format: "%02x", $0) }.joined() + ".json"
         }
     }
     private struct Job {
@@ -112,7 +139,7 @@ public actor WaveformStore {
                 try Task.checkCancellation()
                 if let directory, let cached = Self.readCache(directory.appendingPathComponent(key.filename)) { return cached }
                 let decoder = try DecoderFactory.open(url: url, codecDirectory: codecDirectory)
-                let result = try WaveformAnalysis.peaks(decoder: decoder)
+                let result = try WaveformAnalysis.envelope(decoder: decoder)
                 try Task.checkCancellation()
                 guard try Self.key(url: url, root: accessRoot) == key else { throw AudioFailure("The song changed during waveform analysis.") }
                 if let directory { Self.writeCache(result, key: key, directory: directory) }

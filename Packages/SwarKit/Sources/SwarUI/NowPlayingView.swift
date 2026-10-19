@@ -122,7 +122,7 @@ private struct NowPlayingArtwork: View {
                             if let info = player.formatInfo { FormatChip(info: info) }
                         }.frame(height: 28)
                     }
-                    status.frame(height: 26)
+                    ZStack { status }.frame(height: 26)
                 }
                 .frame(maxWidth: 440)
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: player.currentURL)
@@ -172,9 +172,6 @@ private struct NowPlayingArtwork: View {
         } else if player.underrunFrames > 0 {
             Label("Buffer underruns: \(player.underrunFrames) frames", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
-        } else if !player.isPlaying {
-            Text(player.isRestoredSession ? "Ready to resume" : (player.currentURL == nil ? "Local music, ready when you are" : "Paused"))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
 }

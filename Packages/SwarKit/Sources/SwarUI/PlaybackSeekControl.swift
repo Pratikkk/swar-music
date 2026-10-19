@@ -27,7 +27,10 @@ struct PlaybackSeekControl: View {
             if waveformEnabled {
                 WaveformSeekSurface(samples: waveformURL == player.currentURL ? samples : [],
                     progress: player.duration > 0 ? state.displayedPosition(player.position) / player.duration : 0,
-                    mini: mini, changed: { fraction in
+                    duration: player.duration,
+                    mini: mini,
+                    isDragging: state.dragging,
+                    changed: { fraction in
                         if !state.dragging {
                             state.begin()
                             player.beginScrubbing()

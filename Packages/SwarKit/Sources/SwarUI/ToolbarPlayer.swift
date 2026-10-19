@@ -142,10 +142,10 @@ private struct FloatingPlayerSeekBar: View {
                 .accessibilityLabel("Elapsed time")
                 .accessibilityValue(time(displayedPosition))
             PlaybackSeekControl(player: player, state: $seek, mini: true)
-            Text("−" + time(max(0, player.duration - displayedPosition)))
+            Text("−" + time(ceil(max(0, player.duration - displayedPosition))))
                 .frame(width: player.duration >= 3600 ? 56 : 42, alignment: .leading)
                 .accessibilityLabel("Remaining time")
-                .accessibilityValue(time(max(0, player.duration - displayedPosition)))
+                .accessibilityValue(time(ceil(max(0, player.duration - displayedPosition))))
         }
         .font(.system(size: 9, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
     }
