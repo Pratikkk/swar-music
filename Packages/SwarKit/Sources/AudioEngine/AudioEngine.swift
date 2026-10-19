@@ -337,7 +337,7 @@ private final class EngineState: @unchecked Sendable {
         guard pumping != shouldPump else { return }
         pumping = shouldPump
         if shouldPump {
-            timer?.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(2))
+            timer?.schedule(deadline: .now(), repeating: .milliseconds(40), leeway: .milliseconds(10))
         } else {
             // Keep the source balanced and reusable, without waking while idle.
             timer?.schedule(deadline: .distantFuture)

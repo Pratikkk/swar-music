@@ -15,21 +15,27 @@ struct WaveformSeekSurface: View {
     var body: some View {
         let accent = palette.accent
         GeometryReader { geometry in
-            Canvas { context, size in
-                let path = Self.path(samples: samples, size: size)
-                context.fill(path, with: .color(.secondary.opacity(0.32)))
-                context.clip(to: Path(CGRect(x: 0, y: 0, width: size.width * max(0, min(1, progress)), height: size.height)))
-                context.fill(path, with: .color(accent))
+            let width = geometry.size.width
+            let clampedProgress = max(0, min(1, progress))
+            ZStack(alignment: .leading) {
+                WaveformBars(samples: samples)
+                    .foregroundStyle(.secondary.opacity(0.32))
+                WaveformBars(samples: samples)
+                    .foregroundStyle(accent)
+                    .mask(alignment: .leading) {
+                        Rectangle()
+                            .frame(width: width * clampedProgress)
+                    }
             }
             .overlay(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 1).fill(accent)
-                    .frame(width: 2).offset(x: max(0, min(geometry.size.width - 2, geometry.size.width * progress)))
+                    .frame(width: 2).offset(x: max(0, min(width - 2, width * clampedProgress)))
                     .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { value in focused = true; changed(Self.fraction(value.location.x, width: geometry.size.width)) }
-                .onEnded { value in ended(Self.fraction(value.location.x, width: geometry.size.width)) })
+                .onChanged { value in focused = true; changed(Self.fraction(value.location.x, width: width)) }
+                .onEnded { value in ended(Self.fraction(value.location.x, width: width)) })
         }
         .frame(height: mini ? 16 : 40)
         .focusable().focused($focused).focusEffectDisabled()
@@ -43,7 +49,7 @@ struct WaveformSeekSurface: View {
         return max(0, min(1, Double(x / width)))
     }
 
-    nonisolated private static func path(samples: [Float], size: CGSize) -> Path {
+    nonisolated static func path(samples: [Float], size: CGSize) -> Path {
         guard !samples.isEmpty else {
             return Path(roundedRect: CGRect(x: 0, y: size.height / 2 - 1, width: size.width, height: 2), cornerRadius: 1)
         }
@@ -60,5 +66,13 @@ struct WaveformSeekSurface: View {
                                           width: max(1, width - 1), height: height), cornerSize: CGSize(width: 1, height: 1))
         }
         return path
+    }
+}
+
+private struct WaveformBars: Shape {
+    let samples: [Float]
+
+    func path(in rect: CGRect) -> Path {
+        WaveformSeekSurface.path(samples: samples, size: rect.size)
     }
 }
