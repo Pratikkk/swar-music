@@ -15,14 +15,16 @@ public struct PlaybackSnapshot: Sendable {
     public let didFinish: Bool
     public let playbackToken: UUID?
     public let continuationID: UUID?
+    public let needsOutputRecovery: Bool
 
     public init(source: SourceFormat? = nil, output: OutputDescription? = nil,
                 duration: Double = 0, position: Double = 0, isPlaying: Bool = false,
-                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil) {
+                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil, needsOutputRecovery: Bool = false) {
         self.source = source; self.output = output; self.duration = duration
         self.position = position; self.isPlaying = isPlaying
         self.underrunFrames = underrunFrames; self.error = error; self.didFinish = didFinish
         self.playbackToken = playbackToken; self.continuationID = continuationID
+        self.needsOutputRecovery = needsOutputRecovery
     }
 }
 
@@ -35,10 +37,21 @@ public protocol PlaybackDriving: Sendable {
     func snapshot() async -> PlaybackSnapshot
     func shutdown()
     func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async
+    func suspendOutput() async -> PlaybackSnapshot
+    func recoverOutput(_ deviceID: UInt32?, resume: Bool) async throws -> PlaybackSnapshot
     func selectOutput(_ deviceID: UInt32?, pause: Bool) async throws -> PlaybackSnapshot
 }
 
 public extension PlaybackDriving {
+    func suspendOutput() async -> PlaybackSnapshot {
+        let state = await snapshot()
+        return state.isPlaying ? ((try? await togglePlayback()) ?? state) : state
+    }
+    func recoverOutput(_ deviceID: UInt32?, resume: Bool) async throws -> PlaybackSnapshot {
+        var state = try await selectOutput(deviceID, pause: !resume)
+        if resume, !state.isPlaying, state.duration > 0 { state = try await togglePlayback() }
+        return state
+    }
     func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async {}
     func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot { try await open(url) }
     func selectOutput(_ deviceID: UInt32?, pause: Bool) async throws -> PlaybackSnapshot { await snapshot() }
@@ -85,7 +98,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         do {
             state.session = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: state.deviceID)
             state.url = url
-            state.error = nil
+            state.error = nil; state.needsRecovery = false
             return state.snapshot()
         } catch {
             state.closeSession()
@@ -99,11 +112,12 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
             do {
                 if session.isPlaying { try session.pause() }
                 else { try session.play() }
-                state.error = nil
+                state.error = nil; state.needsRecovery = false
                 return state.snapshot()
             } catch {
                 try? session.pause()
                 state.error = error.localizedDescription
+                state.needsRecovery = error is OutputRecoveryFailure
                 throw error
             }
         }
@@ -114,17 +128,42 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
             guard seconds.isFinite, let session = state.session else { throw AudioFailure("No seekable file is open.") }
             do {
                 try session.seek(seconds)
-                state.error = nil
+                state.error = nil; state.needsRecovery = false
                 return state.snapshot()
             } catch {
                 try? session.pause()
                 state.error = error.localizedDescription
+                state.needsRecovery = error is OutputRecoveryFailure
                 throw error
             }
         }
     }
 
     public func selectOutput(_ deviceID: UInt32?, pause: Bool = false) async throws -> PlaybackSnapshot {
+        try await switchOutput(deviceID, pause: pause, force: false, resumeOverride: nil)
+    }
+
+    public func recoverOutput(_ deviceID: UInt32?, resume: Bool) async throws -> PlaybackSnapshot {
+        try await switchOutput(deviceID, pause: !resume, force: true, resumeOverride: resume)
+    }
+
+    public func suspendOutput() async -> PlaybackSnapshot {
+        (try? await perform { state in
+            if let session = state.session { try? session.pause() }
+            let saved = state.snapshot()
+            let recovery = state.session.map { session in
+                let audible = session.pcm.audible
+                return (url: audible.segment.url, position: audible.position,
+                        entryID: audible.segment.entryID, token: audible.segment.token)
+            } ?? state.routeRecovery
+            state.closeSession()
+            state.routeRecovery = recovery
+            return PlaybackSnapshot(source: saved.source, duration: saved.duration, position: saved.position,
+                playbackToken: saved.playbackToken, continuationID: saved.continuationID)
+        }) ?? PlaybackSnapshot()
+    }
+
+    private func switchOutput(_ deviceID: UInt32?, pause: Bool, force: Bool, resumeOverride: Bool?) async throws -> PlaybackSnapshot {
         try await perform { state in
             _ = state.snapshot()
             guard let session = state.session else {
@@ -134,23 +173,25 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                         let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), url: recovery.url, deviceID: deviceID, entryID: recovery.entryID, token: recovery.token)
                         state.session = replacement; state.url = recovery.url
                         try replacement.seek(recovery.position)
-                        state.routeRecovery = nil; state.error = nil
+                        if resumeOverride == true { try replacement.play() }
+                        state.routeRecovery = nil; state.error = nil; state.needsRecovery = false
                     } catch {
-                        state.closeSession(); state.routeRecovery = recovery
+                        state.closeSession(); state.routeRecovery = recovery; state.needsRecovery = true
                         throw error
                     }
                 }
                 return state.snapshot()
             }
-            if session.device.id == deviceID, session.outputStatus.error == nil, state.error == nil {
-                state.error = nil
+            if !force, session.device.id == deviceID, session.outputStatus.error == nil, state.error == nil {
+                state.error = nil; state.needsRecovery = false
                 if pause { try session.pause() }
                 state.deviceID = deviceID
                 return state.snapshot()
             }
             let previous = state.deviceID
-            let resume = session.isPlaying && !pause
-            try session.pause()
+            let resume = (resumeOverride ?? session.isPlaying) && !pause
+            // A vanished driver can reject Stop; disposal must still allow rebuilding.
+            try? session.pause()
             let audible = session.pcm.audible
             let url = audible.segment.url
             let playbackToken = audible.segment.token
@@ -169,6 +210,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 state.closeSession()
                 // Best-effort rollback retains the song and position on an incompatible output.
                 do {
+                    guard !force else { throw failure }
                     let old = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: previous, entryID: entryID, token: playbackToken)
                     state.session = old; state.url = url
                     try old.seek(position)
@@ -177,6 +219,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 if state.session == nil {
                     state.routeRecovery = (url, position, entryID, playbackToken)
                     state.error = failure.localizedDescription
+                    state.needsRecovery = true
                 }
                 throw failure
             }
@@ -245,6 +288,7 @@ private final class EngineState: @unchecked Sendable {
     var url: URL?
     var routeRecovery: (url: URL, position: Double, entryID: UUID?, token: UUID)?
     var error: String?
+    var needsRecovery = false
     private var timer: DispatchSourceTimer?
     private var pumping = false
 
@@ -258,6 +302,7 @@ private final class EngineState: @unchecked Sendable {
             catch {
                 try? session.pause()
                 self.error = error.localizedDescription
+                self.needsRecovery = error is OutputRecoveryFailure
                 engineLog.error("Playback stopped: \(error.localizedDescription, privacy: .public)")
             }
         }
@@ -287,10 +332,11 @@ private final class EngineState: @unchecked Sendable {
                                 isPlaying: session?.isPlaying ?? false,
                                 underrunFrames: session.flatMap { $0.ring.map(swar_ring_underruns) } ?? 0,
                                 error: error, didFinish: session?.didFinish ?? false,
-                                playbackToken: audible?.segment.token, continuationID: audible?.segment.entryID)
+                                playbackToken: audible?.segment.token, continuationID: audible?.segment.entryID,
+                                needsOutputRecovery: needsRecovery || session?.outputStatus.error != nil)
     }
 
-    func closeSession() { preparer.invalidate(); preparation = UUID(); session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil }
+    func closeSession() { preparer.invalidate(); preparation = UUID(); session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil; needsRecovery = false }
     func close() { timer?.cancel(); timer = nil; pumping = false; closeSession() }
 }
 
@@ -348,14 +394,16 @@ private final class OutputSession {
         if position >= duration { try seek(0) }
         try prime()
         didFinish = false
-        try checkAudio(AudioOutputUnitStart(unit), "Start AUHAL")
+        do { try checkAudio(AudioOutputUnitStart(unit), "Start AUHAL") }
+        catch { throw OutputRecoveryFailure(message: error.localizedDescription) }
         isPlaying = true
         deviceMonitor?.setActive(true)
     }
 
     func pause() throws {
         guard let unit else { return }
-        try checkAudio(AudioOutputUnitStop(unit), "Pause AUHAL")
+        do { try checkAudio(AudioOutputUnitStop(unit), "Pause AUHAL") }
+        catch { throw OutputRecoveryFailure(message: error.localizedDescription) }
         isPlaying = false
         deviceMonitor?.setActive(false)
     }
@@ -372,7 +420,7 @@ private final class OutputSession {
     }
 
     func pump() throws {
-        if let error = outputStatus.error { throw AudioFailure(error) }
+        if let error = outputStatus.error { throw OutputRecoveryFailure(message: error) }
         try pcm.fill()
         if let failure = pcm.failure { throw AudioFailure(failure) }
         if pcm.eof, let ring, swar_ring_readable(ring) == 0 {

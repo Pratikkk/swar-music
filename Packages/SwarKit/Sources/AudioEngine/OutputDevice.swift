@@ -85,14 +85,15 @@ final class OutputDevice {
     }
 
     func validate(rate: Double) throws {
-        try Self.validate(id: id, rate: rate)
+        do { try Self.validate(id: id, rate: rate) }
+        catch { throw OutputRecoveryFailure(message: error.localizedDescription) }
     }
 
     private static func validate(id: AudioDeviceID, rate: Double) throws {
         let alive = try Self.value(id, kAudioDevicePropertyDeviceIsAlive, initial: UInt32(0))
-        guard alive != 0 else { throw AudioFailure("The output device disconnected. Choose another output in Swar.") }
+        guard alive != 0 else { throw AudioFailure("The output device disconnected.") }
         let actual = try Self.value(id, kAudioDevicePropertyNominalSampleRate, initial: Double(0))
-        guard actual == rate else { throw AudioFailure("The output sample rate changed outside Swar. Reopen the file to configure playback again.") }
+        guard actual == rate else { throw AudioFailure("The output sample rate changed. Reconnecting the audio output.") }
     }
 
     func description() throws -> OutputDescription {

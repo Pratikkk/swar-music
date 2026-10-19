@@ -31,11 +31,25 @@ public final class Player {
     public private(set) var audioOutputs = AudioOutputs()
     public private(set) var preferredOutputUID: String?
     public private(set) var outputNotice: String?
+    public private(set) var isSystemSleeping = false
+    public var canRetryOutput: Bool { !isBusy && !isSystemSleeping && !isShutDown && currentURL != nil }
+    private var outputRecoveryNeeded = false
+    @ObservationIgnored private var recoverySeekPosition: Double?
+    @ObservationIgnored private var recoveryPolicy = OutputRecoveryPolicy()
+    @ObservationIgnored private var playbackIntent = false
+    @ObservationIgnored private var sleepWasPlaying = false
+    @ObservationIgnored private var sleepOutputUID: String?
+    @ObservationIgnored private var wakeRecoveryPending = false
+    @ObservationIgnored private var hadSessionBeforeSleep = false
+    @ObservationIgnored private var lifecycle: SystemPlaybackLifecycle?
+    @ObservationIgnored var recoveryTime: () -> Double = { ProcessInfo.processInfo.systemUptime }
+
     @ObservationIgnored private let outputsReader: any AudioOutputsReading
     @ObservationIgnored private let outputPreferences: UserDefaults
     @ObservationIgnored private var lastOutputCheck = -Double.infinity
     @ObservationIgnored private var checkingOutputs = false
     @ObservationIgnored private var routedOutputID: UInt32?
+    @ObservationIgnored private var routedOutputUID: String?
     @ObservationIgnored private var failedAutomaticRoute: UInt32?
     public var preferredOutputUnavailable: Bool {
         preferredOutputUID.map { uid in !audioOutputs.devices.contains { $0.uid == uid } } ?? false
@@ -79,6 +93,9 @@ public final class Player {
         let controls = SystemMediaControls(player: self, output: MacNowPlayingOutput())
         mediaControls = controls
         controls.start()
+        let lifecycle = SystemPlaybackLifecycle(player: self)
+        self.lifecycle = lifecycle
+        lifecycle.start()
     }
 
     var currentMediaEntry: QueueEntry? {
@@ -93,7 +110,7 @@ public final class Player {
     public var isSettingOutputVolume: Bool { settingVolume }
 
     public var canSetOutputVolume: Bool {
-        !isBusy && !isShutDown && outputVolume.canSet && (volumeDeviceID == nil || volumeDeviceID == outputVolume.deviceID)
+        !isBusy && !isShutDown && !isSystemSleeping && !outputRecoveryNeeded && outputVolume.canSet && (volumeDeviceID == nil || volumeDeviceID == outputVolume.deviceID)
     }
 
     public private(set) var queue: [QueueEntry] = [] { didSet { scheduleGapless() } }
@@ -149,7 +166,7 @@ public final class Player {
 
     public var currentQueueIndex: Int? { queue.firstIndex { $0.id == currentEntryID } }
     public var canGoNext: Bool { currentQueueIndex.map { $0 + 1 < queue.count || (repeatMode == .all && !queue.isEmpty) } ?? !queue.isEmpty }
-    public var canTogglePlayback: Bool { duration > 0 || isRestoredSession || (currentEntryID == nil && !queue.isEmpty) }
+    public var canTogglePlayback: Bool { !isSystemSleeping && (duration > 0 || isRestoredSession || (currentEntryID == nil && !queue.isEmpty)) }
     public var canGoPrevious: Bool { currentQueueIndex.map { $0 > 0 || position > 0 } ?? false }
     public var upcomingEntries: [QueueEntry] {
         guard let index = currentQueueIndex else { return queue }
@@ -180,7 +197,7 @@ public final class Player {
     }
 
     private func scheduleGapless() {
-        guard !isBusy, !isRestoredSession, !isShutDown, let playbackToken else { return }
+        guard !isBusy, !isRestoredSession, !isShutDown, !isSystemSleeping, !outputRecoveryNeeded, let playbackToken else { return }
         let plan = GaplessPlan(token: playbackToken, next: nextContinuation())
         guard gaplessPlan != plan else { return }
         gaplessPlan = plan
@@ -241,6 +258,7 @@ public final class Player {
     }
 
     private func pauseForSleepTimer() async {
+        playbackIntent = false; sleepWasPlaying = false
         // A deadline may arrive during an open or seek. Wait for that operation,
         // allowing cancellation/replacement to withdraw the pending pause.
         while isBusy && !isShutDown {
@@ -257,7 +275,7 @@ public final class Player {
     }
 
     public func refreshVolume() async {
-        guard !isShutDown, !settingVolume else { return }
+        guard !isShutDown, !settingVolume, !isSystemSleeping else { return }
         await refreshOutputs()
         guard !isShutDown, !isBusy else { return }
         let revision = generation
@@ -268,58 +286,155 @@ public final class Player {
     }
 
     public func refreshOutputs(force: Bool = false) async {
-        guard !isShutDown, !checkingOutputs,
-              force || ProcessInfo.processInfo.systemUptime - lastOutputCheck >= 2 else { return }
+        guard !isShutDown, !isSystemSleeping, !checkingOutputs,
+              force || recoveryTime() - lastOutputCheck >= 2 else { return }
         checkingOutputs = true
         defer { checkingOutputs = false }
-        lastOutputCheck = ProcessInfo.processInfo.systemUptime
+        lastOutputCheck = recoveryTime()
         do {
             let outputs = try await outputsReader.snapshot()
-            guard !isShutDown else { return }
-            if audioOutputs != outputs { audioOutputs = outputs; failedAutomaticRoute = nil }
+            guard !isShutDown, !isSystemSleeping else { return }
+            if audioOutputs != outputs {
+                audioOutputs = outputs; failedAutomaticRoute = nil
+                recoveryPolicy = OutputRecoveryPolicy()
+            }
             guard !isBusy else { return }
-            if !outputs.devices.isEmpty, outputNotice == "No audio output is available." || outputNotice?.hasPrefix("Couldn’t list audio outputs:") == true { outputNotice = nil }
-            let lostActive = routedOutputID.map { id in !outputs.devices.contains { $0.id == id } } ?? false
+            let lostActive = routedOutputID.map { id in
+                !outputs.devices.contains { $0.id == id && (routedOutputUID == nil || $0.uid == routedOutputUID) }
+            } ?? false
             guard let target = outputs.resolve(preferredOutputUID) else {
-                if lostActive, isPlaying { await control { try await self.engine.togglePlayback() } }
+                if lostActive, !outputRecoveryNeeded || isPlaying {
+                    playbackIntent = false
+                    isBusy = true
+                    let saved = await engine.suspendOutput()
+                    if !isShutDown {
+                        if saved.duration > 0 { apply(saved) } else { isPlaying = false }
+                        outputRecoveryNeeded = currentURL != nil && !isRestoredSession
+                    }
+                    isBusy = false
+                }
                 outputNotice = "No audio output is available."
                 return
             }
-            guard target.id != routedOutputID, target.id != failedAutomaticRoute else { return }
-            await routeOutput(target.id, pause: lostActive)
-            if outputNotice != nil { failedAutomaticRoute = target.id }
-            else if lostActive { outputNotice = "Output disconnected. Playback paused." }
+            if lostActive && !wakeRecoveryPending { playbackIntent = false }
+            if lostActive, target.id == routedOutputID { outputRecoveryNeeded = true }
+            if wakeRecoveryPending {
+                playbackIntent = playbackIntent && target.uid == sleepOutputUID
+            }
+            if outputRecoveryNeeded {
+                guard recoveryPolicy.allowsAttempt(at: recoveryTime()) else {
+                    if recoveryPolicy.exhausted {
+                        playbackIntent = false
+                        outputNotice = "Output keeps failing. Choose an output or try again."
+                    }
+                    return
+                }
+                await routeOutput(target.id, pause: !playbackIntent, recover: true)
+                if lostActive, !outputRecoveryNeeded, !isPlaying, outputNotice == nil {
+                    outputNotice = "Output disconnected. Playback paused."
+                }
+            } else if target.id != routedOutputID, target.id != failedAutomaticRoute {
+                await routeOutput(target.id, pause: lostActive)
+                if outputNotice != nil { failedAutomaticRoute = target.id }
+                else if lostActive { outputNotice = "Output disconnected. Playback paused." }
+            } else if outputNotice == "No audio output is available." || outputNotice?.hasPrefix("Couldn’t list audio outputs:") == true {
+                outputNotice = nil
+            }
         } catch { outputNotice = "Couldn’t list audio outputs: " + error.localizedDescription }
     }
 
+    public func retryOutputRecovery() async {
+        guard canRetryOutput else { return }
+        outputRecoveryNeeded = true; recoveryPolicy = OutputRecoveryPolicy()
+        failedAutomaticRoute = nil
+        playbackIntent = isPlaying
+        await refreshOutputs(force: true)
+    }
+
+    public func systemWillSleep() async {
+        guard !isShutDown, !isSystemSleeping else { return }
+        isSystemSleeping = true
+        gaplessTask?.cancel(); gaplessPlan = nil
+        while isBusy && !isShutDown {
+            do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+        }
+        guard !Task.isCancelled, !isShutDown else { return }
+        sleepWasPlaying = isPlaying || (outputRecoveryNeeded && playbackIntent)
+        sleepOutputUID = routedOutputUID
+        hadSessionBeforeSleep = currentURL != nil && !isRestoredSession
+        isBusy = true; generation += 1; pendingVolume = nil; listenCounter.interrupt()
+        let saved = await engine.suspendOutput()
+        if !isShutDown {
+            if saved.duration > 0, !isRestoredSession { apply(saved) }
+            isPlaying = false
+            outputRecoveryNeeded = hadSessionBeforeSleep
+        }
+        isBusy = false
+        await saveSessionIfNeeded()
+    }
+
+    public func systemDidWake() async {
+        guard !isShutDown, isSystemSleeping else { return }
+        isSystemSleeping = false
+        guard hadSessionBeforeSleep else { await refreshOutputs(force: true); return }
+        wakeRecoveryPending = true
+        playbackIntent = sleepWasPlaying && (sleepTimer.deadline.map { $0 > Date() } ?? true)
+        outputRecoveryNeeded = true; recoveryPolicy = OutputRecoveryPolicy()
+        failedAutomaticRoute = nil
+        await refreshOutputs(force: true)
+    }
+
     public func selectOutput(uid: String?) async {
-        guard !isBusy, !isShutDown else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
+        playbackIntent = isPlaying; wakeRecoveryPending = false
+        recoveryPolicy = OutputRecoveryPolicy()
         do {
             let outputs = try await outputsReader.snapshot()
-            guard !isBusy, !isShutDown else { return }
+            guard !isBusy, !isShutDown, !isSystemSleeping else { return }
             if audioOutputs != outputs { audioOutputs = outputs }
         } catch { outputNotice = "Couldn’t list audio outputs: " + error.localizedDescription; return }
         guard uid == nil || audioOutputs.devices.contains(where: { $0.uid == uid }) else {
             outputNotice = "This output is no longer available."; return
         }
         guard let target = audioOutputs.resolve(uid) else { outputNotice = "No audio output is available."; return }
-        await routeOutput(target.id, pause: false)
+        await routeOutput(target.id, pause: false, recover: outputRecoveryNeeded)
         guard outputNotice == nil, !isShutDown else { return }
         preferredOutputUID = uid
         outputPreferences.set(uid, forKey: "preferredOutputUID")
         failedAutomaticRoute = nil
     }
 
-    private func routeOutput(_ id: UInt32, pause: Bool) async {
-        guard !isBusy, !isShutDown else { return }
+    private func routeOutput(_ id: UInt32, pause: Bool, recover: Bool = false) async {
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         isBusy = true; generation += 1
         pendingVolume = nil
         listenCounter.interrupt()
+        let requestedUID = audioOutputs.devices.first { $0.id == id }?.uid
+        if recover { recoveryPolicy.attempted() }
         defer { gaplessPlan = nil; isBusy = false }
         do {
-            let snapshot = try await engine.selectOutput(id, pause: pause)
+            var snapshot: PlaybackSnapshot
+            var resumeWasCancelled = false
+            if recover {
+                // Rebuild paused, then recheck intent and identity before starting audio.
+                snapshot = try await engine.recoverOutput(id, resume: false)
+                if let target = recoverySeekPosition, snapshot.duration > 0 {
+                    snapshot = try await engine.seek(to: target)
+                    recoverySeekPosition = nil
+                }
+                if playbackIntent, !pause, !isShutDown, !isSystemSleeping, snapshot.duration > 0 {
+                    let latest = try? await outputsReader.snapshot()
+                    let sameDevice = latest?.devices.contains { $0.id == id && $0.uid == requestedUID } == true
+                    if sameDevice, playbackIntent, !isShutDown, !isSystemSleeping,
+                       sleepTimer.deadline.map({ $0 > Date() }) ?? true {
+                        snapshot = try await engine.togglePlayback()
+                    } else { playbackIntent = false; resumeWasCancelled = true }
+                }
+            } else { snapshot = try await engine.selectOutput(id, pause: pause) }
             guard !isShutDown else { return }
-            routedOutputID = id; outputNotice = nil
+            routedOutputID = id; routedOutputUID = audioOutputs.devices.first { $0.id == id }?.uid
+            outputNotice = resumeWasCancelled ? "Output changed. Playback paused." : nil
+            outputRecoveryNeeded = false; wakeRecoveryPending = false; recoveryPolicy.succeeded()
             if !isRestoredSession, currentURL != nil { apply(snapshot) }
             volumeDeviceID = id
             outputVolume = await volumeController.snapshot(deviceID: id)
@@ -327,10 +442,16 @@ public final class Player {
             guard !isShutDown else { return }
             if !isRestoredSession, currentURL != nil {
                 let snapshot = await engine.snapshot()
+                if snapshot.needsOutputRecovery { outputRecoveryNeeded = true }
                 if snapshot.duration > 0 { apply(snapshot) }
                 else { isPlaying = false } // Retain song/position for output recovery.
             }
-            outputNotice = error.localizedDescription
+            if recover {
+                outputRecoveryNeeded = true
+                recoveryPolicy.failed(at: recoveryTime())
+                if recoveryPolicy.exhausted { playbackIntent = false }
+                outputNotice = recoveryPolicy.exhausted ? "Couldn’t reconnect. Choose an output or try again." : "Reconnecting output… " + error.localizedDescription
+            } else { outputNotice = error.localizedDescription }
         }
     }
 
@@ -406,7 +527,7 @@ public final class Player {
     }
 
     public func open(_ url: URL, accessRoot: URL? = nil, displayTitle: String? = nil) async {
-        guard !isBusy, !isShutDown else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         isBusy = true
         defer { isBusy = false }
         queueRemovals = []
@@ -422,6 +543,8 @@ public final class Player {
     private func load(_ url: URL, accessRoot: URL?, displayTitle: String?, entry: QueueEntry? = nil,
                       startPlayback: Bool = false) async -> Bool {
         gaplessTask?.cancel(); gaplessPlan = nil; playbackToken = nil
+        outputRecoveryNeeded = false; wakeRecoveryPending = false; recoveryPolicy = OutputRecoveryPolicy()
+        playbackIntent = startPlayback; recoverySeekPosition = nil
         generation += 1
         let revision = generation
         completionHandled = false
@@ -439,6 +562,7 @@ public final class Player {
             let target = audioOutputs.resolve(preferredOutputUID)?.id
             var snapshot = try await engine.open(url, outputDeviceID: target)
             routedOutputID = snapshot.output?.id ?? target
+            routedOutputUID = audioOutputs.devices.first { $0.id == routedOutputID }?.uid
             guard generation == revision, !isShutDown else { return false }
             let presentation = entry == nil && snapshot.source != nil
                 ? await Task.detached(priority: .utility) { TrackPresentation.read(url: url) }.value : nil
@@ -490,6 +614,13 @@ public final class Player {
     }
 
     public func togglePlayback() async {
+        guard !isSystemSleeping, !isBusy, !isShutDown else { return }
+        playbackIntent = !isPlaying; wakeRecoveryPending = false
+        if outputRecoveryNeeded, !isPlaying, !isRestoredSession {
+            recoveryPolicy = OutputRecoveryPolicy()
+            await refreshOutputs(force: true)
+            return
+        }
         if !isBusy, !isShutDown, duration == 0, currentEntryID == nil, !queue.isEmpty {
             await next()
             return
@@ -506,6 +637,7 @@ public final class Player {
             if errorMessage == nil {
                 do {
                     apply(try await engine.seek(to: min(target, duration)))
+                    playbackIntent = true
                     apply(try await engine.togglePlayback())
                     queue[index].error = nil
                 } catch { setError(error.localizedDescription) }
@@ -525,7 +657,13 @@ public final class Player {
     }
 
     public func seek(to seconds: Double) async {
-        guard !isShutDown, seconds.isFinite, duration > 0 else { return }
+        guard !isShutDown, !isSystemSleeping, seconds.isFinite, duration > 0 else { return }
+        playbackIntent = isPlaying; wakeRecoveryPending = false
+        if outputRecoveryNeeded, !isPlaying {
+            let target = max(0, min(seconds, duration))
+            position = target; recoverySeekPosition = target
+            return
+        }
         if isRestoredSession {
             guard !isBusy else { return }
             position = max(0, min(seconds, duration))
@@ -580,7 +718,7 @@ public final class Player {
     }
 
     public func refresh() async {
-        guard !isBusy, !isShutDown, !isRestoredSession else { return }
+        guard !isBusy, !isShutDown, !isRestoredSession, !isSystemSleeping else { return }
         let revision = generation
         let snapshot = await engine.snapshot()
         guard generation == revision, !isBusy else { return }
@@ -594,7 +732,7 @@ public final class Player {
 
     /// Replaces the queue and starts at the selected entry.
     public func play(_ entries: [QueueEntry], startingAt index: Int = 0, shuffle: Bool? = nil) async {
-        guard !isBusy, !isShutDown, entries.indices.contains(index) else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping, entries.indices.contains(index) else { return }
         queueRemovals = []
         queue = entries
         unshuffledOrder = entries.map(\.id)
@@ -610,7 +748,7 @@ public final class Player {
     }
 
     public func enqueue(_ entry: QueueEntry, playNext: Bool = false) {
-        guard !isBusy, !isShutDown else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         // Include a standalone file in the queue before adding its successor.
         if queue.isEmpty, let standaloneEntry, duration > 0 {
             queue = [standaloneEntry]; currentEntryID = standaloneEntry.id
@@ -627,7 +765,7 @@ public final class Player {
     }
 
     public func next() async {
-        guard !isBusy, !isShutDown else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         let index = currentQueueIndex.map { $0 + 1 } ?? 0
         if queue.indices.contains(index) { await playFrom(index, wrapping: repeatMode == .all) }
         else if repeatMode == .all, !queue.isEmpty { await playFrom(0) }
@@ -644,12 +782,12 @@ public final class Player {
     }
 
     public func setRepeatMode(_ mode: RepeatMode) {
-        guard !isBusy, !isShutDown else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         repeatMode = mode
     }
 
     public func toggleShuffle() {
-        guard !isBusy, !isShutDown else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         queueRemovals = []
         shuffleEnabled.toggle()
         let start = currentQueueIndex.map { $0 + 1 } ?? 0
@@ -686,7 +824,7 @@ public final class Player {
     }
 
     public func moveUpcoming(from offsets: IndexSet, to destination: Int) {
-        guard !isBusy, !isShutDown else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         let start = currentQueueIndex.map { $0 + 1 } ?? 0
         var upcoming = Array(queue.dropFirst(start))
         guard destination >= 0, destination <= upcoming.count,
@@ -702,7 +840,7 @@ public final class Player {
     }
 
     public func clearUpcoming() {
-        guard !isBusy, !isShutDown else { return }
+        guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         rememberRemoval(upcomingEntries, cleared: true)
         if let index = currentQueueIndex { queue = Array(queue.prefix(index + 1)) }
         else { queue = [] }
@@ -735,6 +873,8 @@ public final class Player {
         guard !isShutDown else { return }
         mediaControls?.stop()
         mediaControls = nil
+        lifecycle?.stop(); lifecycle = nil
+        playbackIntent = false
         sleepTimer.cancel()
         queueRemovals = []
         isShutDown = true
@@ -778,13 +918,19 @@ public final class Player {
             apply(snapshot)
         }
         catch {
-            apply(await engine.snapshot())
+            let snapshot = await engine.snapshot()
+            if snapshot.duration > 0 { apply(snapshot) }
+            else { isPlaying = false }
             setError(error.localizedDescription, fromPlayback: true)
         }
     }
 
     private func apply(_ snapshot: PlaybackSnapshot) {
         adoptContinuation(snapshot)
+        if snapshot.needsOutputRecovery {
+            outputRecoveryNeeded = true
+        } else if snapshot.error != nil { playbackIntent = false }
+        if snapshot.didFinish { playbackIntent = false }
         if snapshot.error != nil { listenCounter.interrupt() }
         if listenCounter.sample(time: listeningTime(), position: snapshot.position,
                                 duration: snapshot.duration, playing: snapshot.isPlaying && snapshot.error == nil),

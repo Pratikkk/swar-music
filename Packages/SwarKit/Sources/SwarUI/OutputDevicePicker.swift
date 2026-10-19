@@ -39,6 +39,11 @@ struct OutputDevicePicker: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let notice = player.outputNotice { Text(notice).font(.caption).foregroundStyle(.orange) }
+                if player.currentURL != nil {
+                    Divider()
+                    Button("Reconnect Output") { Task { await player.retryOutputRecovery() } }
+                        .disabled(!player.canRetryOutput)
+                }
             }
             .padding(16).frame(width: 280)
             .task { await player.refreshOutputs(force: true) }

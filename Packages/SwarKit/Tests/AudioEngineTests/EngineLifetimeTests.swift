@@ -43,6 +43,15 @@ struct EngineLifetimeTests {
         #expect(released.wait(timeout: .now() + 2) == .success)
     }
 
+    @Test func suspendingAndRecoveringWithoutASourceDoesNotStartAudio() async throws {
+        let engine = AudioPlaybackEngine()
+        let suspended = await engine.suspendOutput()
+        let recovered = try await engine.recoverOutput(nil, resume: true)
+        #expect(suspended.source == nil && !suspended.isPlaying)
+        #expect(recovered.source == nil && !recovered.isPlaying && recovered.duration == 0)
+        engine.shutdown()
+    }
+
     @Test func explicitShutdownRemainsIdempotentOffQueue() async {
         let engine = AudioPlaybackEngine()
         engine.shutdown()
