@@ -45,9 +45,13 @@ struct NowPlayingAppearanceControls: View {
 }
 
 struct NowPlayingSettingsView: View {
+    @AppStorage("waveformSeekBar") private var waveform = true
     var body: some View {
         Form {
             Section("Now Playing") { NowPlayingAppearanceControls() }
+            Section("Seek Bar") {
+                Toggle("Show song waveform", isOn: $waveform)
+            }
         }.formStyle(.grouped)
     }
 }

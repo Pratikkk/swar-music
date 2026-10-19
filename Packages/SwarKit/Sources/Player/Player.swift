@@ -10,6 +10,7 @@ public final class Player {
     public private(set) var title = "No file open"
     public private(set) var subtitle = ""
     public private(set) var artworkURL: URL?
+    public private(set) var sourceRevision: UInt64 = 0
     public private(set) var currentURL: URL?
     public private(set) var sourceDescription: String?
     public private(set) var outputDescription: String?
@@ -70,6 +71,7 @@ public final class Player {
     }
     public var currentArtist: String? { currentMediaEntry?.artist }
     public var currentAlbum: String? { currentMediaEntry?.album }
+    public var currentAccessRoot: URL? { currentMediaEntry?.accessRoot }
 
     /// Remains true until the hardware queue has drained coalesced requests.
     public var isSettingOutputVolume: Bool { settingVolume }
@@ -305,6 +307,7 @@ public final class Player {
                 artworkURL = change.artworkURL
             } else { artworkURL = entry?.artworkURL ?? presentation?.artworkURL }
             currentURL = url
+            sourceRevision &+= 1
             if entry == nil {
                 standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle,
                                             artworkURL: artworkURL, artist: presentation?.artist, album: presentation?.album)

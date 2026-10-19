@@ -9,6 +9,20 @@ import Testing
 
 @MainActor
 struct QueueTests {
+    @Test func waveformSourceRevisionChangesOnReopenButNotSeekOrPause() async {
+        let player = Player(engine: QueueTestEngine())
+        let song = entry("one")
+        await player.play([song])
+        let revision = player.sourceRevision
+        #expect(revision > 0 && player.currentAccessRoot == song.accessRoot)
+        await player.seek(to: 2)
+        await player.togglePlayback()
+        #expect(player.sourceRevision == revision)
+        await player.play([song])
+        #expect(player.sourceRevision == revision + 1)
+        player.shutdown()
+    }
+
     @Test func removalUndoPreservesCurrentPlaybackDuplicatesAndNewInsertions() async {
         let engine = QueueTestEngine()
         let player = Player(engine: engine)
