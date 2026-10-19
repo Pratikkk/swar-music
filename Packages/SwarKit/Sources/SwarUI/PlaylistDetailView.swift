@@ -11,7 +11,6 @@ private struct PlaylistBrowseRequest: Equatable {
 @MainActor
 public struct PlaylistDetailView: View {
     @Environment(\.swarPalette) private var palette
-    @Environment(\.floatingPlayerClearance) private var playerClearance
     public let playlist: LibraryPlaylist
     public let library: LibraryModel
     public let player: Player
@@ -64,124 +63,81 @@ public struct PlaylistDetailView: View {
             let inset: CGFloat = compact ? 24 : 40
             let coverSize: CGFloat = min(220, max(160, geometry.size.width * 0.24))
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack(alignment: .bottom, spacing: compact ? 20 : 30) {
-                        playlistArtwork(size: coverSize)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Spacer(minLength: 0)
-                            Text(playlist.isSmart ? "Smart Playlist" : "Playlist")
-                                .font(.caption.bold())
-                                .foregroundStyle(.secondary)
-                                .textCase(.uppercase)
-                            Text(playlist.name)
-                                .font(.system(size: compact ? 22 : 28, weight: .bold))
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
-                            Text("\(items.count) \(items.count == 1 ? "song" : "songs") · \(durationDescription)")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(.secondary)
+            List {
+                playlistHeader(compact: compact, coverSize: coverSize)
+                    .listRowInsets(EdgeInsets(top: 16, leading: inset, bottom: 8, trailing: inset))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
 
-                            if playlist.isSmart {
-                                Button("Edit Rules…", systemImage: "slider.horizontal.3") { showRules = true }.controlSize(.small)
-                            }
-                            Spacer(minLength: 16)
-                            HStack(spacing: 10) {
-                                Button {
-                                    playPlaylist(shuffle: false)
-                                } label: {
-                                    actionButton("Play", symbol: "play.fill")
-                                }
-                                .buttonStyle(PlaybackButtonStyle(unavailable: playableTracks.isEmpty))
-                                .disabled(player.isBusy || !canPlay)
-                                .accessibilityLabel("Play playlist in order")
-
-                                Button {
-                                    playPlaylist(shuffle: true)
-                                } label: {
-                                    actionButton("Shuffle", symbol: "shuffle")
-                                }
-                                .buttonStyle(PlaybackButtonStyle(unavailable: playableTracks.isEmpty))
-                                .disabled(player.isBusy || !canPlay)
-                                .accessibilityLabel("Shuffle playlist")
-
-                                Menu {
-                                    Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { enqueuePlaylist(next: true) }
-                                        .disabled(player.isBusy || !canPlay)
-                                    Button("Add to Queue", systemImage: "text.badge.plus") { enqueuePlaylist(next: false) }
-                                        .disabled(player.isBusy || !canPlay)
-                                    Divider()
-                                    if playlist.isSmart { Button("Edit Rules…", systemImage: "slider.horizontal.3") { showRules = true } }
-                                    Button("Export Playlist…", systemImage: "square.and.arrow.up") { showExport = true }
-                                    Button("Rename Playlist…", systemImage: "pencil") { onRename(playlist) }
-                                    Button("Delete Playlist", systemImage: "trash", role: .destructive) { onDelete(playlist) }
-                                } label: {
-                                    Image(systemName: "ellipsis.circle.fill")
-                                        .font(.title2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .menuStyle(.borderlessButton)
-                                .fixedSize()
-                                .accessibilityLabel("Playlist options")
-                            }
-                        }
-                        .frame(maxWidth: .infinity, minHeight: coverSize, alignment: .leading)
+                if let loadError {
+                    ContentUnavailableView { Label("Couldn’t Load Playlist", systemImage: "exclamationmark.triangle") }
+                        description: { Text(loadError) } actions: { Button("Try Again") { Task { await reloadItems() } } }
+                        .listRowInsets(EdgeInsets(top: 24, leading: inset, bottom: 24, trailing: inset))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                } else if (isLoading && items.isEmpty) || presentation == nil || (visibleRows.isEmpty && !matchesRequest) {
+                    ProgressView("Loading playlist…")
+                        .frame(maxWidth: .infinity)
+                        .listRowInsets(EdgeInsets(top: 40, leading: inset, bottom: 40, trailing: inset))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                } else if items.isEmpty {
+                    ContentUnavailableView {
+                        Label("Playlist is Empty", systemImage: "music.note.list")
+                    } description: {
+                        Text(playlist.isSmart ? "No songs match these rules. Edit the rules to change this playlist." : "Drop songs here or choose Add to Playlist from a song’s menu.")
                     }
-
-                    if let loadError {
-                        ContentUnavailableView { Label("Couldn’t Load Playlist", systemImage: "exclamationmark.triangle") }
-                            description: { Text(loadError) } actions: { Button("Try Again") { Task { await reloadItems() } } }
-                    } else if (isLoading && items.isEmpty) || presentation == nil || (visibleRows.isEmpty && !matchesRequest) {
-                        ProgressView("Loading playlist…")
-                            .frame(maxWidth: .infinity).padding(.top, 40)
-                    } else if items.isEmpty {
-                        ContentUnavailableView {
-                            Label("Playlist is Empty", systemImage: "music.note.list")
-                        } description: {
-                            Text(playlist.isSmart ? "No songs match these rules. Edit the rules to change this playlist." : "Drop songs here or choose Add to Playlist from a song’s menu.")
-                        }
-                        .padding(.top, 40)
-                    } else if visibleRows.isEmpty {
-                        ContentUnavailableView("No Matching Songs", systemImage: "magnifyingglass",
-                            description: Text("Try different words or choose All Fields from the search icon."))
-                    } else {
-                        if isFiltering {
-                            Text("\(visibleRows.count) of \(items.count) \(items.count == 1 ? "song matches" : "songs match")")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        LazyVStack(spacing: 0) {
-                            ForEach(visibleRows) { row in
-                                let item = row.item
-                                PlaylistSongRow(
-                                    item: item,
-                                    index: row.number,
-                                    current: item.track.id == currentTrackID,
-                                    playing: item.track.id == currentTrackID && player.isPlaying,
-                                    compact: compact,
-                                    alternate: row.alternate,
-                                    isFirst: isFiltering || row.number == 1,
-                                    smart: playlist.isSmart,
-                                    isLast: isFiltering || row.number == items.count,
-                                    busy: player.isBusy || !matchesRequest,
-                                    library: library,
-                                    play: { playItem(item, currentTrackID: currentTrackID) },
-                                    enqueue: { enqueueTrack(item.track, next: $0) },
-                                    moveUp: { move(from: row.number - 1, to: row.number - 2) },
-                                    moveDown: { move(from: row.number - 1, to: row.number) },
-                                    remove: { removeItem(item) }
-                                )
-                            }
-                        }
+                    .listRowInsets(EdgeInsets(top: 40, leading: inset, bottom: 40, trailing: inset))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                } else if visibleRows.isEmpty {
+                    ContentUnavailableView("No Matching Songs", systemImage: "magnifyingglass",
+                        description: Text("Try different words or choose All Fields from the search icon."))
+                        .listRowInsets(EdgeInsets(top: 24, leading: inset, bottom: 24, trailing: inset))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                } else {
+                    if isFiltering {
+                        Text("\(visibleRows.count) of \(items.count) \(items.count == 1 ? "song matches" : "songs match")")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .listRowInsets(EdgeInsets(top: 4, leading: inset, bottom: 4, trailing: inset))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
                     }
+                    ForEach(visibleRows) { row in
+                        let item = row.item
+                        PlaylistSongRow(
+                            item: item,
+                            index: row.number,
+                            current: item.track.id == currentTrackID,
+                            playing: item.track.id == currentTrackID && player.isPlaying,
+                            compact: compact,
+                            alternate: row.alternate,
+                            isFirst: isFiltering || row.number == 1,
+                            smart: playlist.isSmart,
+                            isLast: isFiltering || row.number == items.count,
+                            busy: player.isBusy || !matchesRequest,
+                            library: library,
+                            play: { playItem(item, currentTrackID: currentTrackID) },
+                            enqueue: { enqueueTrack(item.track, next: $0) },
+                            moveUp: { move(from: row.number - 1, to: row.number - 2) },
+                            moveDown: { move(from: row.number - 1, to: row.number) },
+                            remove: { removeItem(item) }
+                        )
+                        .listRowInsets(EdgeInsets(top: 0, leading: max(0, inset - 12), bottom: 0, trailing: max(0, inset - 12)))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+                    FloatingPlayerScrollSpacer()
                 }
-                .padding(.horizontal, inset)
-                .padding(.top, 16)
-                .padding(.bottom, 32 + playerClearance)
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 0)
+            .playlistSongDrop(library: library, playlist: playlist)
 
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .playlistSongDrop(library: library, playlist: playlist)
         .sheet(isPresented: $showExport) { PlaylistExportView(library: library, playlist: playlist) }
         .sheet(isPresented: $showRules) {
             SmartPlaylistEditorView(library: library, playlist: playlist) { _ in }
@@ -208,6 +164,70 @@ public struct PlaylistDetailView: View {
                 do { try await Task.sleep(for: .seconds(60)); try Task.checkCancellation() } catch { return }
                 await reloadItems()
             }
+        }
+    }
+
+    private func playlistHeader(compact: Bool, coverSize: CGFloat) -> some View {
+        HStack(alignment: .bottom, spacing: compact ? 20 : 30) {
+            playlistArtwork(size: coverSize)
+            VStack(alignment: .leading, spacing: 6) {
+                Spacer(minLength: 0)
+                Text(playlist.isSmart ? "Smart Playlist" : "Playlist")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Text(playlist.name)
+                    .font(.system(size: compact ? 22 : 28, weight: .bold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Text("\(items.count) \(items.count == 1 ? "song" : "songs") · \(durationDescription)")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                if playlist.isSmart {
+                    Button("Edit Rules…", systemImage: "slider.horizontal.3") { showRules = true }.controlSize(.small)
+                }
+                Spacer(minLength: 16)
+                HStack(spacing: 10) {
+                    Button {
+                        playPlaylist(shuffle: false)
+                    } label: {
+                        actionButton("Play", symbol: "play.fill")
+                    }
+                    .buttonStyle(PlaybackButtonStyle(unavailable: playableTracks.isEmpty))
+                    .disabled(player.isBusy || !canPlay)
+                    .accessibilityLabel("Play playlist in order")
+
+                    Button {
+                        playPlaylist(shuffle: true)
+                    } label: {
+                        actionButton("Shuffle", symbol: "shuffle")
+                    }
+                    .buttonStyle(PlaybackButtonStyle(unavailable: playableTracks.isEmpty))
+                    .disabled(player.isBusy || !canPlay)
+                    .accessibilityLabel("Shuffle playlist")
+
+                    Menu {
+                        Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { enqueuePlaylist(next: true) }
+                            .disabled(player.isBusy || !canPlay)
+                        Button("Add to Queue", systemImage: "text.badge.plus") { enqueuePlaylist(next: false) }
+                            .disabled(player.isBusy || !canPlay)
+                        Divider()
+                        if playlist.isSmart { Button("Edit Rules…", systemImage: "slider.horizontal.3") { showRules = true } }
+                        Button("Export Playlist…", systemImage: "square.and.arrow.up") { showExport = true }
+                        Button("Rename Playlist…", systemImage: "pencil") { onRename(playlist) }
+                        Button("Delete Playlist", systemImage: "trash", role: .destructive) { onDelete(playlist) }
+                    } label: {
+                        Image(systemName: "ellipsis.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .accessibilityLabel("Playlist options")
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: coverSize, alignment: .leading)
         }
     }
 

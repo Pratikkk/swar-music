@@ -131,23 +131,54 @@ struct AlbumBrowserView: View {
         ScrollViewReader { proxy in
             Group {
                 if viewMode == .grid {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 20) {
+                    GeometryReader { geometry in
+                        let gap = density.gridGap
+                        let available = max(120, geometry.size.width - 56)
+                        let minimum = CGFloat(max(120, min(220, coverSize)))
+                        let columns = max(1, Int((available + gap) / (minimum + gap)))
+                        let cardWidth = (available - gap * CGFloat(columns - 1)) / CGFloat(columns)
+                        List {
+                            Color.clear.frame(height: 0).id("album-browser-top")
+                                .listRowSeparator(.hidden).listRowInsets(EdgeInsets())
                             ForEach(presentation?.sections ?? []) { section in
-                                if recent { Text(section.title).font(.system(size: 17, weight: .semibold)).padding(.top, 8) }
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: max(120, min(220, coverSize))), spacing: density.gridGap, alignment: .top)], alignment: .leading, spacing: density.gridGap + 4) {
-                                    ForEach(section.albums) { album in
-                                        AlbumBrowserCard(album: album, artworkURL: library.artworkURL(album.artworkKey),
-                                            busy: player.isBusy || actionInProgress,
-                                            maximumPixels: coverSize <= 140 ? 256 : coverSize >= 200 ? 512 : 384,
-                                            open: { selectedAlbum = album.id }, play: { perform(album) })
-                                            .albumActions(library: library, player: player, album: album).id(album.id)
+                                Section {
+                                    ForEach(albumRows(section.albums, columns: columns)) { row in
+                                        HStack(alignment: .top, spacing: gap) {
+                                            ForEach(row.albums) { album in
+                                                AlbumBrowserCard(album: album,
+                                                    artworkURL: library.artworkURL(album.artworkKey),
+                                                    busy: player.isBusy || actionInProgress,
+                                                    maximumPixels: coverSize <= 140 ? 256 : coverSize >= 200 ? 512 : 384,
+                                                    open: { selectedAlbum = album.id },
+                                                    play: { perform(album) })
+                                                    .frame(width: cardWidth, alignment: .top)
+                                                    .albumActions(library: library, player: player, album: album)
+                                                    .id(album.id)
+                                            }
+                                            if row.albums.count < columns { Spacer(minLength: 0) }
+                                        }
+                                        .listRowInsets(EdgeInsets(top: gap / 2, leading: 28, bottom: gap / 2, trailing: 28))
+                                        .listRowSeparator(.hidden)
+                                        .listRowBackground(Color.clear)
+                                    }
+                                } header: {
+                                    if recent {
+                                        Text(section.title).font(.system(size: 17, weight: .semibold))
+                                            .padding(.horizontal, 28)
                                     }
                                 }
                             }
                             pageFooter
-                        }.padding(.horizontal, 28).padding(.top, 8).padding(.bottom, clearance + 24)
-                            .id("album-browser-top")
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                            Color.clear.frame(height: clearance + 24)
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        }
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                        .environment(\.defaultMinListRowHeight, 0)
+                        .accessibilityLabel("Album grid")
                     }
                 } else {
                     List {
@@ -323,6 +354,19 @@ struct AlbumBrowserView: View {
             for entry in next ? Array(entries.reversed()) : entries { player.enqueue(entry, playNext: next) }
         } catch { player.reportImportError(error) }
     }
+
+    private func albumRows(_ albums: [LibraryAlbumSummary], columns: Int) -> [AlbumGridRow] {
+        guard columns > 0, !albums.isEmpty else { return [] }
+        return stride(from: 0, to: albums.count, by: columns).map { start in
+            let slice = Array(albums[start..<min(start + columns, albums.count)])
+            return AlbumGridRow(id: slice[0].id, albums: slice)
+        }
+    }
+}
+
+private struct AlbumGridRow: Identifiable {
+    let id: String
+    let albums: [LibraryAlbumSummary]
 }
 
 private struct AlbumBrowserCard: View {

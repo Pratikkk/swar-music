@@ -6,7 +6,6 @@ import Player
 struct ListeningHistoryView: View {
     let library: LibraryModel
     let player: Player
-    @Environment(\.floatingPlayerClearance) private var clearance
     @State private var mode: ListeningMode = .recent
     @State private var overview: ListeningOverview?
     @State private var limit = 100
@@ -18,7 +17,7 @@ struct ListeningHistoryView: View {
     }
 
     var body: some View {
-        ScrollView {
+        List {
             VStack(alignment: .leading, spacing: 20) {
                 HStack {
                     Text("Listening").font(.system(size: 32, weight: .semibold, design: .serif))
@@ -35,25 +34,54 @@ struct ListeningHistoryView: View {
                 }.pickerStyle(.segmented).labelsHidden().frame(maxWidth: 600)
                 Text(mode == .forgotten ? "Favourites you haven’t played in 30 days, including songs you haven’t played yet." : "A play counts after 30 seconds, or halfway through a shorter song. Stored only on this Mac.")
                     .font(.caption).foregroundStyle(.secondary)
-                if let failure {
+            }
+            .listRowInsets(EdgeInsets(top: 28, leading: 28, bottom: 12, trailing: 28))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+
+            if let failure {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(failure).foregroundStyle(.orange)
                     Button("Try Again") { Task { await load() } }
-                } else if let overview {
-                    let songs = overview.songs
-                    if songs.isEmpty {
-                        ContentUnavailableView(mode == .forgotten ? "All caught up" : "No listening history yet",
-                            systemImage: mode == .forgotten ? "star" : "clock.arrow.circlepath",
-                            description: Text(library.search.isEmpty ? "Listen to songs in your library to build your history." : "No songs match your search."))
-                    }
-                    LazyVStack(spacing: 2) {
-                        ForEach(songs) { song in songRow(song) }
-                    }
-                    if overview.songs.count < overview.matchedCount && limit < 10000 {
-                        Button("Show More") { limit += 100 }.frame(maxWidth: .infinity)
-                    }
-                } else { ProgressView().padding(30) }
-            }.padding(28).padding(.bottom, clearance)
+                }
+                .listRowInsets(EdgeInsets(top: 12, leading: 28, bottom: 12, trailing: 28))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            } else if let overview {
+                let songs = overview.songs
+                if songs.isEmpty {
+                    ContentUnavailableView(mode == .forgotten ? "All caught up" : "No listening history yet",
+                        systemImage: mode == .forgotten ? "star" : "clock.arrow.circlepath",
+                        description: Text(library.search.isEmpty ? "Listen to songs in your library to build your history." : "No songs match your search."))
+                        .listRowInsets(EdgeInsets(top: 24, leading: 28, bottom: 24, trailing: 28))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
+                ForEach(songs) { song in
+                    songRow(song)
+                        .listRowInsets(EdgeInsets(top: 1, leading: 28, bottom: 1, trailing: 28))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
+                if overview.songs.count < overview.matchedCount && limit < 10000 {
+                    Button("Show More") { limit += 100 }
+                        .frame(maxWidth: .infinity)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 28, bottom: 8, trailing: 28))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .listRowInsets(EdgeInsets(top: 30, leading: 28, bottom: 30, trailing: 28))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+            FloatingPlayerScrollSpacer()
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 0)
         .task(id: request) {
             if !library.search.isEmpty {
                 do { try await Task.sleep(for: .milliseconds(150)) } catch { return }

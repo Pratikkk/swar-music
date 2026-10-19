@@ -28,23 +28,38 @@ struct ArtistsView: View {
         return artists
     }
 
-    /// Headers and albums are siblings of one lazy stack so a long artist does
-    /// not realize every album (and every song) as a single nested child.
+    /// A single flat row model lets the native List virtualize artists, albums
+    /// and songs independently instead of realizing a whole album as one view.
     private enum ArtistRenderItem: Identifiable {
         case header(ArtistBrowseCollection)
         case album(artist: String, album: ArtistBrowseAlbum)
+        case disc(artist: String, album: ArtistBrowseAlbum, disc: Int)
+        case song(artist: String, album: ArtistBrowseAlbum, song: ArtistBrowseSong)
 
         var id: String {
             switch self {
             case .header(let artist): "artist\u{1f}\(artist.name)"
             case .album(let artist, let album): "album\u{1f}\(artist)\u{1f}\(album.title)"
+            case .disc(let artist, let album, let disc): "disc\u{1f}\(artist)\u{1f}\(album.title)\u{1f}\(disc)"
+            case .song(_, _, let song): "song\u{1f}\(song.track.id)"
             }
         }
     }
 
     private var renderItems: [ArtistRenderItem] {
         visibleArtists.flatMap { artist in
-            [.header(artist)] + artist.albums.map { .album(artist: artist.name, album: $0) }
+            var items: [ArtistRenderItem] = [.header(artist)]
+            for album in artist.albums {
+                items.append(.album(artist: artist.name, album: album))
+                for song in album.songs {
+                    if song.startsDisc {
+                        items.append(.disc(artist: artist.name, album: album,
+                                           disc: max(1, song.track.discNumber)))
+                    }
+                    items.append(.song(artist: artist.name, album: album, song: song))
+                }
+            }
+            return items
         }
     }
 
@@ -53,26 +68,53 @@ struct ArtistsView: View {
         GeometryReader { geometry in
             let listWidth = min(285, max(180, geometry.size.width * 0.28))
             let compact = geometry.size.width - listWidth < 560
+            let inset: CGFloat = compact ? 20 : 40
+            let rowInset = max(0, inset - 12)
             HStack(spacing: 0) {
                 artistList.frame(width: listWidth)
                 Divider()
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(renderItems) { item in
-                            switch item {
-                            case .header(let artist):
-                                artistHeader(artist, compact: compact)
-                                    .padding(.top, density == .compact ? 32 : 48)
-                            case .album(_, let album):
-                                albumSection(album, compact: compact, currentTrackID: currentTrackID)
-                                    .padding(.top, 24)
-                            }
+                List {
+                    ForEach(renderItems) { item in
+                        switch item {
+                        case .header(let artist):
+                            artistHeader(artist, compact: compact)
+                                .listRowInsets(EdgeInsets(top: 28, leading: inset, bottom: 8, trailing: inset))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        case .album(_, let album):
+                            albumHeader(album, compact: compact, currentTrackID: currentTrackID)
+                                .listRowInsets(EdgeInsets(top: 20, leading: inset, bottom: 4, trailing: inset))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        case .disc(_, _, let disc):
+                            Text("Disc \(disc)")
+                                .font(.caption.bold())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 8)
+                                .listRowInsets(EdgeInsets(top: 4, leading: inset, bottom: 4, trailing: inset))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        case .song(_, let album, let song):
+                            let track = song.track
+                            let current = track.id == currentTrackID
+                            AlbumSongRow(track: track, library: library, fallbackNumber: song.number,
+                                         current: current, playing: current && player.isPlaying,
+                                         compact: true, alternate: false, busy: player.isBusy,
+                                         play: {
+                                             if current { Task { await player.togglePlayback() } }
+                                             else { play(track, album.tracks, nil) }
+                                         },
+                                         enqueue: { enqueue([track], $0) })
+                                .listRowInsets(EdgeInsets(top: 0, leading: rowInset, bottom: 0, trailing: rowInset))
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
                         }
                     }
-                    .padding(.horizontal, compact ? 20 : 40).padding(.vertical, 24)
-                    .padding(.bottom, playerClearance)
+                    FloatingPlayerScrollSpacer()
                 }
-
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, 0)
                 .id(selection)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -168,27 +210,14 @@ struct ArtistsView: View {
         }
     }
 
-    @ViewBuilder private func albumSection(_ album: ArtistBrowseAlbum, compact: Bool, currentTrackID: String?) -> some View {
-        if compact {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 16) {
-                    artwork(album, size: 96)
-                    albumHeading(album, currentTrackID: currentTrackID)
-                }
-                songs(album, currentTrackID: currentTrackID)
+    private func albumHeader(_ album: ArtistBrowseAlbum, compact: Bool, currentTrackID: String?) -> some View {
+        HStack(alignment: .top, spacing: compact ? 16 : 28) {
+            artwork(album, size: compact ? 96 : 160)
+            VStack(alignment: .leading, spacing: 10) {
+                albumHeading(album, currentTrackID: currentTrackID)
                 summary(album)
             }
-        } else {
-            HStack(alignment: .top, spacing: 28) {
-                VStack(alignment: .leading, spacing: 12) {
-                    artwork(album, size: 160)
-                    summary(album)
-                }.frame(width: 160, alignment: .leading)
-                VStack(alignment: .leading, spacing: 16) {
-                    albumHeading(album, currentTrackID: currentTrackID)
-                    songs(album, currentTrackID: currentTrackID)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -227,28 +256,6 @@ struct ArtistsView: View {
                 }
             }
             .frame(height: 26, alignment: .leading)
-        }
-    }
-
-    private func songs(_ album: ArtistBrowseAlbum, currentTrackID: String?) -> some View {
-        VStack(spacing: 0) {
-            Divider()
-            ForEach(album.songs) { song in
-                let track = song.track
-                let current = track.id == currentTrackID
-                if song.startsDisc {
-                    Text("Disc \(max(1, track.discNumber))").font(.caption.bold())
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
-                }
-                AlbumSongRow(track: track, library: library, fallbackNumber: song.number,
-                             current: current, playing: current && player.isPlaying,
-                             compact: true, alternate: false, busy: player.isBusy,
-                             play: {
-                                 if current { Task { await player.togglePlayback() } }
-                                 else { play(track, album.tracks, nil) }
-                             },
-                             enqueue: { enqueue([track], $0) })
-            }
         }
     }
 
