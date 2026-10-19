@@ -4,33 +4,6 @@ import Library
 import UniformTypeIdentifiers
 import AppKit
 
-private enum LibrarySection: String, CaseIterable, Identifiable {
-    case home = "Home"
-    case recentlyAdded = "Recently Added"
-    case artists = "Artists"
-    case albums = "Albums"
-    case songs = "Songs"
-    case favorites = "Favourites"
-    case listening = "Listening"
-    case genres = "Genres"
-    case manage = "Manage Library"
-
-    var id: Self { self }
-
-    var symbol: String {
-        switch self {
-        case .home: "house"
-        case .recentlyAdded: "clock"
-        case .artists: "music.mic"
-        case .albums: "square.stack"
-        case .songs: "music.note"
-        case .favorites: "star"
-        case .listening: "clock.arrow.circlepath"
-        case .genres: "guitars"
-        case .manage: "tray.full"
-        }
-    }
-}
 
 private enum SidebarSelection: Hashable {
     case section(LibrarySection)
@@ -50,6 +23,9 @@ private struct SharedTrackPageRequest: Equatable {
 public struct LibraryView: View {
     @Environment(\.swarPalette) private var palette
     @State private var selection: SidebarSelection? = .section(.home)
+    @AppStorage("sidebarLayout") private var sidebarLayoutData = ""
+    @State private var showSidebarCustomization = false
+    private var sidebarLayout: SidebarLayout { SidebarLayout(serialized: sidebarLayoutData) }
     @AppStorage("albumSortOrder") private var albumSortOrder: AlbumSortOrder = .artist
     @AppStorage("reverseAlbumSort") private var reverseAlbumSort = false
     @AppStorage("songSortOrder") private var songSortOrder: TrackSortOrder = .album
@@ -90,6 +66,26 @@ public struct LibraryView: View {
             open: { importingFolder = false; showImporter = true },
             nowPlaying: { showNowPlaying = true })
         .task { await library.start() }
+        .onChange(of: sidebarLayoutData, initial: true) {
+            switch selection {
+            case .section(let section) where !sidebarLayout.visibleSections.contains(section):
+                selection = .section(sidebarLayout.visibleSections[0])
+            case .playlist where !sidebarLayout.visibleGroups.contains(.playlists):
+                selection = .section(sidebarLayout.visibleSections[0])
+            case nil: selection = .section(sidebarLayout.visibleSections[0])
+            default: break
+            }
+        }
+        .sheet(isPresented: $showSidebarCustomization) {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Sidebar").font(.headline)
+                    Spacer()
+                    Button("Done") { showSidebarCustomization = false }.keyboardShortcut(.defaultAction)
+                }.padding(20)
+                SidebarSettingsView()
+            }.frame(width: 480, height: 480)
+        }
         .task {
             player.onQualifiedListen = { [weak library] url, date in
                 Task { await library?.recordListen(at: url, date: date) }
@@ -451,84 +447,115 @@ public struct LibraryView: View {
                     }
                     .buttonStyle(.plain).keyboardShortcut("f", modifiers: .command).help("Find music (⌘F)")
                     .padding(.bottom, 10)
-                    navigationRow(.section(.home), title: "Home", symbol: "house")
-                    sidebarHeading("Library").padding(.top, 16)
-                    ForEach(LibrarySection.allCases.filter { $0 != .home }) { section in
-                        navigationRow(.section(section), title: section.rawValue, symbol: section.symbol)
-                    }
-                    HStack {
-                        sidebarHeading("Playlists")
-                        Spacer()
-                        Menu {
-                            Button("New Playlist…") { playlistNameInput = ""; showNewPlaylistAlert = true }
-                            Button("New Smart Playlist…", systemImage: "sparkles") { showNewSmartPlaylist = true }
-                        } label: {
-                            Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
-                                .frame(width: 24, height: 24).contentShape(Circle())
-                        }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundStyle(palette.accent)
-                        .help("New Playlist").accessibilityLabel("Create Playlist")
-                    }.padding(.top, 16).padding(.trailing, 4)
-                    ForEach(library.playlists) { playlist in
-                        navigationRow(.playlist(playlist.id), title: playlist.name, symbol: playlist.isSmart ? "sparkles" : "music.note.list")
-                            .help(playlist.name)
-                            .contextMenu {
-                                if playlist.isSmart { Button("Edit Rules…") { smartPlaylistToEdit = playlist } }
-                                Button("Rename…") {
-                                    playlistToRename = playlist; playlistNameInput = playlist.name; showRenameAlert = true
-                                }
-                                Button("Delete Playlist", role: .destructive) {
-                                    playlistToDelete = playlist; showDeleteAlert = true
-                                }
+                    ForEach(sidebarLayout.visibleGroups) { group in
+                        switch group {
+                        case .library:
+                            sidebarHeading("Library").padding(.top, 8)
+                            ForEach(sidebarLayout.visibleSections) { section in
+                                navigationRow(.section(section), title: section.rawValue, symbol: section.symbol)
                             }
-                    }
-                    sidebarHeading("Music Folders").padding(.top, 16)
-                    ForEach(library.folders) { folder in
-                        HStack(spacing: 10) {
-                            Image(systemName: "folder").font(.system(size: 14)).frame(width: 22)
-                                .foregroundStyle(palette.accent.opacity(0.8))
-                            Text(URL(fileURLWithPath: folder.path).lastPathComponent)
-                                .font(.system(size: 12)).lineLimit(1)
-                            Spacer(minLength: 0)
-                            Circle().fill(library.isMonitoring(folder) ? palette.accent : .orange)
-                                .frame(width: 5, height: 5).accessibilityHidden(true)
-                        }
-                        .padding(.horizontal, 12).frame(minHeight: 34)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(URL(fileURLWithPath: folder.path).lastPathComponent)
-                        .accessibilityValue(library.isMonitoring(folder) ? "Watching for changes" : "Folder needs attention")
-                        .help(folder.path + (library.isMonitoring(folder) ? "\nWatching for changes" : "\nCheck access in Settings"))
-                        .contextMenu {
-                            Button("Remove from Library", role: .destructive) { Task { await library.removeFolder(folder) } }
-                                .disabled(library.isScanning)
+                        case .playlists: sidebarPlaylists
+                        case .folders: sidebarFolders
                         }
                     }
-                    Button { openFolderPicker() } label: {
-                        SidebarItemLabel(title: "Add Folder…", symbol: "folder.badge.plus")
-                    }.buttonStyle(.plain).disabled(library.isScanning)
                 }.padding(.horizontal, 12).padding(.bottom, 18)
             }
             .focusable().focused($sidebarFocused).focusEffectDisabled()
             .onMoveCommand { direction in
-                let choices = LibrarySection.allCases.map { SidebarSelection.section($0) } + library.playlists.map { .playlist($0.id) }
-                guard let selection, let index = choices.firstIndex(of: selection) else { return }
-                let next = direction == .down ? index + 1 : direction == .up ? index - 1 : index
+                let choices: [SidebarSelection] = sidebarLayout.visibleGroups.flatMap { group -> [SidebarSelection] in
+                    switch group {
+                    case .library: return sidebarLayout.visibleSections.map { SidebarSelection.section($0) }
+                    case .playlists: return library.playlists.map { SidebarSelection.playlist($0.id) }
+                    case .folders: return []
+                    }
+                }
+                guard direction == .down || direction == .up else { return }
+                guard let selection, let index = choices.firstIndex(of: selection) else {
+                    self.selection = direction == .down ? choices.first : choices.last
+                    return
+                }
+                let next = direction == .down ? index + 1 : index - 1
                 if choices.indices.contains(next) { self.selection = choices[next] }
             }
-            SettingsLink {
-                Label("Settings", systemImage: "gearshape")
-                    .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12).contentShape(RoundedRectangle(cornerRadius: 12))
-                    .background(SwarTheme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
-            }
-            .buttonStyle(.plain).foregroundStyle(.secondary).help("Settings (⌘,)")
-            .padding(12)
+            HStack(spacing: 0) {
+                SettingsLink {
+                    Label("Settings", systemImage: "gearshape")
+                        .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12).contentShape(RoundedRectangle(cornerRadius: 12))
+                        .background(SwarTheme.surface.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary).help("Settings (⌘,)")
+                Button { showSidebarCustomization = true } label: {
+                    Image(systemName: "slider.horizontal.3").frame(width: 30, height: 36)
+                }.buttonStyle(.plain).foregroundStyle(.secondary)
+                    .help("Customize Sidebar…").accessibilityLabel("Customize Sidebar")
+            }.padding(12)
         }
         .background {
             SidebarMaterial().ignoresSafeArea()
                 .overlay { SwarTheme.canvas.opacity(0.18).ignoresSafeArea().allowsHitTesting(false) }
         }
         .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 260)
+    }
+
+    private var sidebarPlaylists: some View {
+        Group {
+            HStack {
+                sidebarHeading("Playlists")
+                Spacer()
+                Menu {
+                    Button("New Playlist…") { playlistNameInput = ""; showNewPlaylistAlert = true }
+                    Button("New Smart Playlist…", systemImage: "sparkles") { showNewSmartPlaylist = true }
+                } label: {
+                    Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24).contentShape(Circle())
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundStyle(palette.accent)
+                .help("New Playlist").accessibilityLabel("Create Playlist")
+            }.padding(.top, 16).padding(.trailing, 4)
+            ForEach(library.playlists) { playlist in
+                navigationRow(.playlist(playlist.id), title: playlist.name, symbol: playlist.isSmart ? "sparkles" : "music.note.list")
+                    .help(playlist.name)
+                    .contextMenu {
+                        if playlist.isSmart { Button("Edit Rules…") { smartPlaylistToEdit = playlist } }
+                        Button("Rename…") {
+                            playlistToRename = playlist; playlistNameInput = playlist.name; showRenameAlert = true
+                        }
+                        Button("Delete Playlist", role: .destructive) {
+                            playlistToDelete = playlist; showDeleteAlert = true
+                        }
+                    }
+            }
+        }
+    }
+
+    private var sidebarFolders: some View {
+        Group {
+            sidebarHeading("Music Folders").padding(.top, 16)
+            ForEach(library.folders) { folder in
+                HStack(spacing: 10) {
+                    Image(systemName: "folder").font(.system(size: 14)).frame(width: 22)
+                        .foregroundStyle(palette.accent.opacity(0.8))
+                    Text(URL(fileURLWithPath: folder.path).lastPathComponent)
+                        .font(.system(size: 12)).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Circle().fill(library.isMonitoring(folder) ? palette.accent : .orange)
+                        .frame(width: 5, height: 5).accessibilityHidden(true)
+                }
+                .padding(.horizontal, 12).frame(minHeight: 34)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(URL(fileURLWithPath: folder.path).lastPathComponent)
+                .accessibilityValue(library.isMonitoring(folder) ? "Watching for changes" : "Folder needs attention")
+                .help(folder.path + (library.isMonitoring(folder) ? "\nWatching for changes" : "\nCheck access in Settings"))
+                .contextMenu {
+                    Button("Remove from Library", role: .destructive) { Task { await library.removeFolder(folder) } }
+                        .disabled(library.isScanning)
+                }
+            }
+            Button { openFolderPicker() } label: {
+                SidebarItemLabel(title: "Add Folder…", symbol: "folder.badge.plus")
+            }.buttonStyle(.plain).disabled(library.isScanning)
+        }
     }
 
     private func sidebarHeading(_ title: String) -> some View {
