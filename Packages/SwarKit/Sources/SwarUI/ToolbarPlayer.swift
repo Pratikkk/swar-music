@@ -133,7 +133,27 @@ private struct FloatingPlayerSeekBar: View {
     @State private var seekPosition = 0.0
     @State private var seekURL: URL?
 
+    private var displayedPosition: Double {
+        let value = scrubbing ? seekPosition : player.position
+        return value.isFinite ? max(0, min(value, max(0, player.duration))) : 0
+    }
+
     var body: some View {
+        HStack(spacing: 5) {
+            Text(time(displayedPosition))
+                .frame(width: player.duration >= 3600 ? 48 : 34, alignment: .trailing)
+                .accessibilityLabel("Elapsed time")
+                .accessibilityValue(time(displayedPosition))
+            seekSlider
+            Text("−" + time(max(0, player.duration - displayedPosition)))
+                .frame(width: player.duration >= 3600 ? 56 : 42, alignment: .leading)
+                .accessibilityLabel("Remaining time")
+                .accessibilityValue(time(max(0, player.duration - displayedPosition)))
+        }
+        .font(.system(size: 9, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
+    }
+
+    private var seekSlider: some View {
         Slider(value: Binding(get: { scrubbing ? seekPosition : player.position }, set: { seekPosition = $0 }),
                in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
             if editing {
@@ -154,4 +174,12 @@ private struct FloatingPlayerSeekBar: View {
         .onChange(of: player.position) { _, position in if !scrubbing { seekPosition = position } }
         .onChange(of: player.currentURL) { scrubbing = false; seekURL = nil; seekPosition = player.position }
     }
+
+    private func time(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0, seconds < Double(Int.max) else { return "0:00" }
+        let value = Int(seconds)
+        if value >= 3600 { return String(format: "%d:%02d:%02d", value / 3600, value / 60 % 60, value % 60) }
+        return String(format: "%d:%02d", value / 60, value % 60)
+    }
+
 }
