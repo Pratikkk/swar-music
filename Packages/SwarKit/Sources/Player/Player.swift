@@ -83,6 +83,52 @@ public final class Player {
     public private(set) var shuffleEnabled = false
     public private(set) var repeatMode: RepeatMode = .off
     private var unshuffledOrder: [UUID] = []
+    private struct QueueRemoval {
+        let entries: [QueueEntry]
+        let order: [UUID]
+        let originalOrder: [UUID]
+        let cleared: Bool
+    }
+    private var queueRemovals: [QueueRemoval] = []
+    public var canUndoQueueRemoval: Bool { !queueRemovals.isEmpty && !isBusy && !isShutDown }
+    public var queueUndoTitle: String { queueRemovals.last?.cleared == true ? "Undo Clear" : "Undo Remove" }
+
+    private func rememberRemoval(_ entries: [QueueEntry], cleared: Bool = false) {
+        guard !entries.isEmpty else { return }
+        queueRemovals.append(QueueRemoval(entries: entries, order: queue.map(\.id), originalOrder: unshuffledOrder, cleared: cleared))
+        if queueRemovals.count > 20 { queueRemovals.removeFirst() }
+    }
+
+    public func undoQueueRemoval() {
+        guard canUndoQueueRemoval, let removal = queueRemovals.popLast() else { return }
+        let entries = Dictionary((removal.entries + queue).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        let removedIDs = Set(removal.entries.map(\.id))
+        queue = Self.restoring(removedIDs, in: queue.map(\.id), accordingTo: removal.order).compactMap { entries[$0] }
+        unshuffledOrder = Self.restoring(removedIDs, in: unshuffledOrder, accordingTo: removal.originalOrder)
+    }
+
+    /// Linear merge keeps new insertions intact and restores duplicate songs by entry identity.
+    private static func restoring(_ removed: Set<UUID>, in current: [UUID], accordingTo original: [UUID]) -> [UUID] {
+        let existing = Set(current)
+        var before: [UUID: [UUID]] = [:]
+        var pending: [UUID] = []
+        var lastAnchor: UUID?
+        for id in original {
+            if existing.contains(id) {
+                if !pending.isEmpty { before[id] = pending; pending = [] }
+                lastAnchor = id
+            } else if removed.contains(id) { pending.append(id) }
+        }
+        var result: [UUID] = []
+        for id in current {
+            result.append(contentsOf: before[id] ?? [])
+            result.append(id)
+            if id == lastAnchor { result.append(contentsOf: pending) }
+        }
+        if lastAnchor == nil { return pending + result }
+        return result
+    }
+
     public var currentQueueIndex: Int? { queue.firstIndex { $0.id == currentEntryID } }
     public var canGoNext: Bool { currentQueueIndex.map { $0 + 1 < queue.count || (repeatMode == .all && !queue.isEmpty) } ?? !queue.isEmpty }
     public var canTogglePlayback: Bool { duration > 0 || isRestoredSession || (currentEntryID == nil && !queue.isEmpty) }
@@ -210,6 +256,7 @@ public final class Player {
         guard !isBusy, !isShutDown else { return }
         isBusy = true
         defer { isBusy = false }
+        queueRemovals = []
         queue = []
         unshuffledOrder = []
         currentEntryID = nil
@@ -387,6 +434,7 @@ public final class Player {
     /// Replaces the queue and starts at the selected entry.
     public func play(_ entries: [QueueEntry], startingAt index: Int = 0, shuffle: Bool? = nil) async {
         guard !isBusy, !isShutDown, entries.indices.contains(index) else { return }
+        queueRemovals = []
         queue = entries
         unshuffledOrder = entries.map(\.id)
         if let shuffle { shuffleEnabled = shuffle }
@@ -441,6 +489,7 @@ public final class Player {
 
     public func toggleShuffle() {
         guard !isBusy, !isShutDown else { return }
+        queueRemovals = []
         shuffleEnabled.toggle()
         let start = currentQueueIndex.map { $0 + 1 } ?? 0
         if shuffleEnabled { shuffleUpcoming(after: start - 1) }
@@ -470,6 +519,7 @@ public final class Player {
 
     public func removeUpcoming(_ id: UUID) {
         guard !isBusy, !isShutDown, upcomingEntries.contains(where: { $0.id == id }) else { return }
+        rememberRemoval(queue.filter { $0.id == id })
         queue.removeAll { $0.id == id }
         unshuffledOrder.removeAll { $0 == id }
     }
@@ -480,6 +530,8 @@ public final class Player {
         var upcoming = Array(queue.dropFirst(start))
         guard destination >= 0, destination <= upcoming.count,
               offsets.allSatisfy({ upcoming.indices.contains($0) }) else { return }
+        guard !offsets.isEmpty else { return }
+        queueRemovals = []
         let moving = offsets.sorted().map { upcoming[$0] }
         for index in offsets.sorted().reversed() { upcoming.remove(at: index) }
         let insertion = destination - offsets.filter { $0 < destination }.count
@@ -490,6 +542,7 @@ public final class Player {
 
     public func clearUpcoming() {
         guard !isBusy, !isShutDown else { return }
+        rememberRemoval(upcomingEntries, cleared: true)
         if let index = currentQueueIndex { queue = Array(queue.prefix(index + 1)) }
         else { queue = [] }
         let retained = Set(queue.map(\.id))
@@ -499,6 +552,7 @@ public final class Player {
     private var standaloneEntry: QueueEntry?
 
     private func playFrom(_ start: Int, wrapping: Bool = false) async {
+        queueRemovals = []
         isBusy = true
         defer { isBusy = false }
         // A bounded forward pass skips broken files without looping forever.
@@ -521,6 +575,7 @@ public final class Player {
         mediaControls?.stop()
         mediaControls = nil
         sleepTimer.cancel()
+        queueRemovals = []
         isShutDown = true
         pendingVolume = nil
         pendingSeek = nil

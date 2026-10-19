@@ -118,7 +118,7 @@ struct ToolbarPlayer: View {
             Button { showQueue.toggle() } label: { Image(systemName: "list.bullet").frame(width: 24, height: 32) }
                 .foregroundStyle(showQueue ? Color.accentColor : .secondary)
                 .accessibilityLabel("Show Queue").help("Up Next")
-                .popover(isPresented: $showQueue) { QueueView(player: player) }
+                .popover(isPresented: $showQueue) { QueueView(player: player, library: library) }
         }
         .buttonStyle(.borderless).padding(.horizontal, 16).frame(height: 56)
     }

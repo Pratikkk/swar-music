@@ -9,6 +9,61 @@ import Testing
 
 @MainActor
 struct QueueTests {
+    @Test func removalUndoPreservesCurrentPlaybackDuplicatesAndNewInsertions() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let one = entry("one"), duplicate = entry("two"), otherDuplicate = entry("two"), last = entry("last")
+        await player.play([one, duplicate, otherDuplicate, last])
+        await player.seek(to: 2)
+        player.removeUpcoming(duplicate.id)
+        player.removeUpcoming(last.id)
+        let added = entry("added")
+        player.enqueue(added)
+        player.undoQueueRemoval()
+        #expect(player.queue.map(\.id) == [one.id, otherDuplicate.id, last.id, added.id])
+        player.undoQueueRemoval()
+        #expect(player.queue.map(\.id) == [one.id, duplicate.id, otherDuplicate.id, last.id, added.id])
+        #expect(!player.canUndoQueueRemoval && player.isPlaying && player.position == 2)
+        #expect(player.currentEntryID == one.id && engine.opened.count == 1)
+        player.shutdown()
+    }
+
+    @Test func undoClearPreservesNewEntriesAndShuffleRestorationOrder() async {
+        let player = Player(engine: QueueTestEngine())
+        let songs = (0..<8).map { entry(String($0)) }
+        await player.play(songs)
+        player.toggleShuffle()
+        let shuffled = player.queue
+        player.clearUpcoming()
+        #expect(player.queueUndoTitle == "Undo Clear")
+        let added = entry("new")
+        player.enqueue(added)
+        player.undoQueueRemoval()
+        #expect(player.queue.map(\.id) == shuffled.map(\.id) + [added.id])
+        player.toggleShuffle()
+        #expect(player.queue.map(\.id) == songs.map(\.id) + [added.id])
+        player.shutdown()
+    }
+
+    @Test func undoBeforePlaybackAndInvalidationOnReorderOrTrackChange() async {
+        let player = Player(engine: QueueTestEngine())
+        let songs = (0..<4).map { entry(String($0)) }
+        songs.forEach { player.enqueue($0) }
+        player.clearUpcoming()
+        let added = entry("new")
+        player.enqueue(added)
+        player.undoQueueRemoval()
+        #expect(player.queue.map(\.id) == songs.map(\.id) + [added.id])
+        player.removeUpcoming(songs[1].id)
+        player.moveUpcoming(from: IndexSet(integer: 1), to: 0)
+        #expect(!player.canUndoQueueRemoval)
+        await player.play(songs)
+        player.removeUpcoming(songs[2].id)
+        await player.next()
+        #expect(!player.canUndoQueueRemoval && player.currentEntryID == songs[1].id)
+        player.shutdown()
+    }
+
     @Test func qualifiedListeningRecordsOncePerPlaybackAndResetsOnRepeat() async {
         let engine = QueueTestEngine()
         let player = Player(engine: engine)

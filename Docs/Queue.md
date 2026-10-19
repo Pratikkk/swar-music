@@ -107,3 +107,36 @@ makes no volume changes and is excluded from normal runs:
 SWAR_TEST_SILENT_OUTPUT=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   swift test --package-path Packages/SwarKit --filter HardwarePlaybackTests.exactEndSeekPublishesCompletionWithoutAnotherPump
 ```
+
+## Queue editing and playlist snapshots (build 82)
+
+Drag an upcoming song using its grip, or use the Earlier/Later buttons. Drag payloads
+are private to Swar and contain only an entry UUID; the target resolves the current
+queue when the drop completes. The playing entry cannot be dragged or removed.
+
+Removing an upcoming entry or clearing Up Next offers **Undo Remove** / **Undo Clear**.
+Up to 20 removals can be undone while staying on the current song. Undo merges entries
+back by UUID, preserving duplicate songs, new additions and the current playback
+position. It also restores the corresponding unshuffled order. Starting another song,
+replacing/opening the queue, reordering, changing shuffle, or quitting discards removal
+history. Ordinary pause/resume and seeks within a song retain it. Undo history itself
+is not persisted; the resulting queue is saved by normal session persistence.
+
+The Queue options menu can save **the entire queue** (including earlier entries) or
+**Up Next** as a new manual playlist. The dialog previews a snapshot of that selection
+and reports entries outside the connected, visible library. Such entries are skipped;
+no files are imported implicitly. Duplicates and current queue order are retained.
+The queue and playback are untouched. Membership and playlist creation use one database
+transaction; if a previewed song is removed/hidden before save, the save fails without
+leaving a partial playlist. The new playlist appears in the sidebar immediately.
+
+Device-free regressions cover removal/clear undo, duplicates, intervening additions,
+shuffle restoration, pre-playback edits and transition invalidation. Temporary-library
+tests cover full-library file resolution, ordered duplicate membership, excluded files,
+empty selections and stale-preview rollback.
+
+Build 82 native UI checks verified both save actions and their previews (whole queue:
+3 songs; Up Next: 1 song), cancellation, the queue grip and existing transport state.
+These checks did not create test playlists in the user's library. Multi-row native
+dragging has not been manually exercised; ordering and undo are covered by the
+injected-player tests.

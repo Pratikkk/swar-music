@@ -378,6 +378,28 @@ public final class LibraryModel {
     }
 
     @discardableResult
+    public func queuePlaylistDraft(urls: [URL]) async throws -> QueuePlaylistDraft {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        let roots = scopes.map { ($0.key, $0.value.url.standardizedFileURL.pathComponents) }
+        let ids = urls.compactMap { url -> String? in
+            guard url.isFileURL else { return nil }
+            let path = url.standardizedFileURL.pathComponents
+            for (folderID, root) in roots where path.count > root.count && path.starts(with: root) {
+                return folderID + ":" + path.dropFirst(root.count).joined(separator: "/")
+            }
+            return nil
+        }
+        return try await repository.queuePlaylistDraft(trackIDs: ids, sourceCount: urls.count)
+    }
+
+    public func saveQueuePlaylist(name: String, draft: QueuePlaylistDraft) async throws -> LibraryPlaylist {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        let playlist = try await repository.createQueuePlaylist(name: name, draft: draft)
+        await reloadPlaylists()
+        overviewRevision += 1
+        return playlist
+    }
+
     public func createPlaylist(name: String) async -> LibraryPlaylist? {
         guard let repository else { return nil }
         do {

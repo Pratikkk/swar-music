@@ -1,9 +1,14 @@
 import SwiftUI
 import Player
+import Library
 
 @MainActor
 struct QueueView: View {
     let player: Player
+    let library: LibraryModel
+    @State private var savingQueue: [QueueEntry]?
+    @State private var savedNotice: String?
+    private static let dragType = "com.swar.queue-entry"
     var embedded = false
 
     var body: some View {
@@ -11,8 +16,28 @@ struct QueueView: View {
             HStack {
                 Text("Queue").font(.headline)
                 Spacer()
-                Button("Clear Up Next") { player.clearUpcoming() }
+                Menu {
+                    Button("Save Queue as Playlist…") { savingQueue = player.queue }
+                        .disabled(player.queue.isEmpty || !library.isReady)
+                    Button("Save Up Next as Playlist…") { savingQueue = player.upcomingEntries }
+                        .disabled(player.upcomingEntries.isEmpty || !library.isReady)
+                    Divider()
+                    Button("Clear Up Next") { player.clearUpcoming() }
+                        .disabled(player.upcomingEntries.isEmpty)
+                } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Queue options")
+                Button("Clear") { player.clearUpcoming() }
                     .disabled(player.upcomingEntries.isEmpty || player.isBusy)
+            }
+            if player.canUndoQueueRemoval || savedNotice != nil {
+                HStack {
+                    if let savedNotice { Text(savedNotice).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                    Spacer()
+                    if player.canUndoQueueRemoval {
+                        Button(player.queueUndoTitle) { player.undoQueueRemoval() }
+                            .help("Restore the last removed queue entries")
+                    }
+                }
             }
             if let current = player.queue.first(where: { $0.id == player.currentEntryID }) {
                 Text("Current Track").font(.caption).foregroundStyle(.secondary)
@@ -30,6 +55,18 @@ struct QueueView: View {
                 List {
                     ForEach(player.upcomingEntries) { entry in
                         HStack {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.caption).foregroundStyle(.tertiary)
+                                .padding(.vertical, 12).contentShape(Rectangle())
+                                .help("Drag to reorder").accessibilityLabel("Drag " + entry.title + " to reorder")
+                                .onDrag {
+                                    let provider = NSItemProvider()
+                                    provider.registerDataRepresentation(forTypeIdentifier: Self.dragType, visibility: .ownProcess) { completion in
+                                        completion(Data(entry.id.uuidString.utf8), nil)
+                                        return nil
+                                    }
+                                    return provider
+                                }
                             Button { Task { await player.playEntry(entry.id) } } label: { row(entry) }
                                 .buttonStyle(.plain).accessibilityLabel("Play \(entry.title)")
                             Spacer(minLength: 4)
@@ -48,6 +85,19 @@ struct QueueView: View {
                                 .buttonStyle(.borderless).accessibilityLabel("Remove \(entry.title) from queue")
                         }
                         .listRowBackground(Color.clear)
+                        .onDrop(of: [Self.dragType], isTargeted: nil) { providers in
+                            guard !player.isBusy, let provider = providers.first else { return false }
+                            provider.loadDataRepresentation(forTypeIdentifier: Self.dragType) { data, _ in
+                                guard let data, let value = String(data: data, encoding: .utf8), let id = UUID(uuidString: value) else { return }
+                                Task { @MainActor in
+                                    let upcoming = player.upcomingEntries
+                                    guard let from = upcoming.firstIndex(where: { $0.id == id }),
+                                          let to = upcoming.firstIndex(where: { $0.id == entry.id }), from != to else { return }
+                                    player.moveUpcoming(from: IndexSet(integer: from), to: to > from ? to + 1 : to)
+                                }
+                            }
+                            return true
+                        }
                     }
                     .onMove { player.moveUpcoming(from: $0, to: $1) }
                 }
@@ -59,6 +109,14 @@ struct QueueView: View {
                 DisclosureGroup("\(failures.count) failed entries") {
                     ScrollView { VStack(alignment: .leading, spacing: 8) { ForEach(failures) { row($0) } } }
                         .frame(maxHeight: 120)
+                }
+            }
+        }
+        .sheet(isPresented: Binding(get: { savingQueue != nil }, set: { if !$0 { savingQueue = nil } })) {
+            if let entries = savingQueue {
+                SaveQueuePlaylistView(library: library, entries: entries) { playlist in
+                    savedNotice = "Saved as “" + playlist.name + "”"
+                    savingQueue = nil
                 }
             }
         }

@@ -55,7 +55,7 @@ struct NowPlayingView: View {
                 HStack(spacing: 0) {
                     VStack(spacing: 0) {
                         if showQueue && !sideBySide {
-                            QueueView(player: player, embedded: true)
+                            QueueView(player: player, library: library, embedded: true)
                                 .frame(maxHeight: .infinity)
                         } else {
                             NowPlayingArtwork(player: player, library: library, size: min(250, max(180, geometry.size.height * 0.40)),
@@ -66,7 +66,7 @@ struct NowPlayingView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if showQueue && sideBySide {
-                        QueueView(player: player, embedded: true)
+                        QueueView(player: player, library: library, embedded: true)
                             .frame(width: 300)
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
                             .padding(.trailing, 16).padding(.bottom, 16)
