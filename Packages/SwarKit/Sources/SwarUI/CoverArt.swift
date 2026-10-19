@@ -47,6 +47,11 @@ struct CoverArt: View {
                 // The view already displays a synchronous cache hit; retain it for
                 // crossfades without waiting for the background decoder actor.
                 if let cached { cover = cached; loadedRequest = request; return }
+                // Dwell: only begin a background decode once the cell has been
+                // visible long enough that a fast scroll is unlikely to cancel it.
+                // This prevents a decode storm when flicking through long lists.
+                do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
+                guard !Task.isCancelled else { return }
                 let result = await CoverCache.shared.image(for: request)
                 guard !Task.isCancelled else { return }
                 cover = result; loadedRequest = request

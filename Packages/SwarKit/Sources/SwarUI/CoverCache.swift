@@ -4,11 +4,15 @@ import ImageIO
 struct CoverRequest: Hashable, Sendable {
     let url: URL
     let pixels: Int
+    /// Canonical cache key: the same artwork file always shares one entry,
+    /// regardless of how its URL was obtained (bookmark, alias, or direct path).
+    let key: String
     init(url: URL, pixels: Int) {
-        self.url = url
+        let standardized = url.standardizedFileURL
+        self.url = standardized
         self.pixels = min(768, max(32, pixels))
+        self.key = "\(standardized.path)|\(self.pixels)"
     }
-    var key: NSString { "\(url.absoluteString)|\(pixels)" as NSString }
 }
 
 final class CoverBitmap: NSObject, @unchecked Sendable {
@@ -22,19 +26,50 @@ final class CoverCache: @unchecked Sendable {
     static let shared = CoverCache()
     private let images = NSCache<NSString, CoverBitmap>()
     private let decoder = CoverDecoder()
+    /// In-flight decode tasks keyed by cache key. Concurrent requests for the
+    /// same cover share a single decode instead of each starting a duplicate.
+    private var inFlight: [NSString: Task<CoverBitmap?, Never>] = [:]
+    private let inFlightLock = NSLock()
     init() { images.countLimit = 256; images.totalCostLimit = 32 * 1024 * 1024 }
 
     func cached(_ request: CoverRequest) -> CoverBitmap? {
-        images.object(forKey: request.key)
+        images.object(forKey: request.key as NSString)
     }
     fileprivate func store(_ bitmap: CoverBitmap, for request: CoverRequest) {
-        images.setObject(bitmap, forKey: request.key, cost: bitmap.image.bytesPerRow * bitmap.image.height)
+        images.setObject(bitmap, forKey: request.key as NSString, cost: bitmap.image.bytesPerRow * bitmap.image.height)
     }
     func image(for request: CoverRequest) async -> CoverBitmap? {
         guard !Task.isCancelled else { return nil }
         if let cached = cached(request) { return cached }
-        let work = Task.detached(priority: .utility) { await self.decoder.image(for: request, cache: self) }
-        return await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
+        // Coalesce: if a decode for this exact request is already in flight,
+        // await it instead of starting a duplicate decode.
+        if let existing = inFlightTask(for: request) {
+            return try? await existing.value
+        }
+        let task: Task<CoverBitmap?, Never> = Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return nil }
+            defer { self.removeInFlight(for: request) }
+            guard !Task.isCancelled else { return nil }
+            return await self.decoder.image(for: request, cache: self)
+        }
+        setInFlight(task, for: request)
+        return try? await task.value
+    }
+
+    private func inFlightTask(for request: CoverRequest) -> Task<CoverBitmap?, Never>? {
+        inFlightLock.lock()
+        defer { inFlightLock.unlock() }
+        return inFlight[request.key as NSString]
+    }
+    private func setInFlight(_ task: Task<CoverBitmap?, Never>, for request: CoverRequest) {
+        inFlightLock.lock()
+        defer { inFlightLock.unlock() }
+        inFlight[request.key as NSString] = task
+    }
+    private func removeInFlight(for request: CoverRequest) {
+        inFlightLock.lock()
+        defer { inFlightLock.unlock() }
+        inFlight[request.key as NSString] = nil
     }
 }
 
