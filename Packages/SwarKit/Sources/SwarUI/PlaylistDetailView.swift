@@ -18,6 +18,7 @@ public struct PlaylistDetailView: View {
     public let onRename: (LibraryPlaylist) -> Void
     public let onDelete: (LibraryPlaylist) -> Void
 
+    @State private var showExport = false
     @State private var showRules = false
     @State private var loadError: String?
     @State private var items: [PlaylistTrackItem] = []
@@ -110,6 +111,7 @@ public struct PlaylistDetailView: View {
                                         .disabled(player.isBusy || !canPlay)
                                     Divider()
                                     if playlist.isSmart { Button("Edit Rules…", systemImage: "slider.horizontal.3") { showRules = true } }
+                                    Button("Export Playlist…", systemImage: "square.and.arrow.up") { showExport = true }
                                     Button("Rename Playlist…", systemImage: "pencil") { onRename(playlist) }
                                     Button("Delete Playlist", systemImage: "trash", role: .destructive) { onDelete(playlist) }
                                 } label: {
@@ -179,6 +181,7 @@ public struct PlaylistDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .playlistSongDrop(library: library, playlist: playlist)
+        .sheet(isPresented: $showExport) { PlaylistExportView(library: library, playlist: playlist) }
         .sheet(isPresented: $showRules) {
             SmartPlaylistEditorView(library: library, playlist: playlist) { _ in }
         }

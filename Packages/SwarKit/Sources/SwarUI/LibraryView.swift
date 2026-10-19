@@ -43,6 +43,8 @@ public struct LibraryView: View {
     @State private var lastTrackSearch: String?
     @State private var library: LibraryModel
 
+    @State private var showPlaylistImport = false
+    @State private var playlistToExport: LibraryPlaylist?
     @State private var showNewSmartPlaylist = false
     @State private var smartPlaylistToEdit: LibraryPlaylist?
     @State private var showNewPlaylistAlert = false
@@ -145,6 +147,12 @@ public struct LibraryView: View {
 
     private var playlistPresentation: some View {
         windowPresentation
+        .sheet(isPresented: $showPlaylistImport) {
+            PlaylistImportView(library: library) { playlist in
+                library.search = ""; selection = .playlist(playlist.id); showPlaylistImport = false
+            }
+        }
+        .sheet(item: $playlistToExport) { playlist in PlaylistExportView(library: library, playlist: playlist) }
         .sheet(isPresented: $showNewSmartPlaylist) {
             SmartPlaylistEditorView(library: library) { playlist in
                 library.search = ""; selection = .playlist(playlist.id)
@@ -389,6 +397,8 @@ public struct LibraryView: View {
                 }
                 SettingsLink { Label("Music Folder Settings…", systemImage: "gearshape") }
                 Divider()
+                Button("Import Playlist…", systemImage: "square.and.arrow.down") { showPlaylistImport = true }
+                    .disabled(!library.isReady)
                 Button("Open Audio File…", systemImage: "doc.waveform") { importingFolder = false; showImporter = true }
                     .disabled(player.isBusy)
                 Button("Add Folder…", systemImage: "folder.badge.plus") { openFolderPicker() }
@@ -509,6 +519,8 @@ public struct LibraryView: View {
                 Menu {
                     Button("New Playlist…") { playlistNameInput = ""; showNewPlaylistAlert = true }
                     Button("New Smart Playlist…", systemImage: "sparkles") { showNewSmartPlaylist = true }
+                    Divider()
+                    Button("Import Playlist…", systemImage: "square.and.arrow.down") { showPlaylistImport = true }.disabled(!library.isReady)
                 } label: {
                     Image(systemName: "plus").font(.system(size: 11, weight: .semibold))
                         .frame(width: 24, height: 24).contentShape(Circle())
@@ -521,7 +533,8 @@ public struct LibraryView: View {
                     .playlistSongDrop(library: library, playlist: playlist)
                     .help(playlist.name)
                     .contextMenu {
-                        if playlist.isSmart { Button("Edit Rules…") { smartPlaylistToEdit = playlist } }
+                        Button("Export Playlist…", systemImage: "square.and.arrow.up") { playlistToExport = playlist }
+                    if playlist.isSmart { Button("Edit Rules…") { smartPlaylistToEdit = playlist } }
                         Button("Rename…") {
                             playlistToRename = playlist; playlistNameInput = playlist.name; showRenameAlert = true
                         }

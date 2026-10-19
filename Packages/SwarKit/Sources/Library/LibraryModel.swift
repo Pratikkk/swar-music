@@ -378,6 +378,33 @@ public final class LibraryModel {
     }
 
     @discardableResult
+    public func previewPlaylistImport(from url: URL) async throws -> PlaylistImportPreview {
+        guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
+        let roots = scopes.mapValues(\.url)
+        let task = Task.detached(priority: .utility) {
+            let entries = try PlaylistFile.read(url)
+            return (entries, try PlaylistFile.trackIDs(for: entries, roots: roots))
+        }
+        let (entries, ids) = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+        try Task.checkCancellation()
+        return try await repository.playlistImportPreview(name: url.deletingPathExtension().lastPathComponent, entries: entries, trackIDs: ids)
+    }
+
+    public func playlistExportEntries(for playlist: LibraryPlaylist) async throws -> [PlaylistExportEntry] {
+        let items = try await playlistItems(for: playlist.id)
+        let roots = scopes.mapValues(\.url)
+        return try await Task.detached(priority: .utility) {
+            try items.map { item in
+                try Task.checkCancellation()
+                guard let root = roots[item.track.folderID] else {
+                    throw LibraryFailure("Reconnect this playlist’s music folders before exporting.")
+                }
+                return PlaylistExportEntry(url: root.appendingPathComponent(item.track.relativePath), title: item.track.title,
+                    artist: item.track.artist, duration: item.track.duration)
+            }
+        }.value
+    }
+
     public func queuePlaylistDraft(urls: [URL]) async throws -> QueuePlaylistDraft {
         guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
         let roots = scopes.map { ($0.key, $0.value.url.standardizedFileURL.pathComponents) }
