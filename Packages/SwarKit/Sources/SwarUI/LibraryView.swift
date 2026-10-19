@@ -308,14 +308,18 @@ public struct LibraryView: View {
                     browseAlbum: { album in
                         navigate(.album(artist: album.artist, title: album.title))
                     }, addFolder: openFolderPicker)
+                .libraryFolderDrop(library: library)
             } else if selection == .section(.listening) {
                 ListeningHistoryView(library: library, player: player)
+                .libraryFolderDrop(library: library)
             } else if selection == .section(.manage) {
                 CollectionManagerView(library: library, player: player, addFolder: openFolderPicker)
+                .libraryFolderDrop(library: library)
             } else if selection == .section(.albums) || selection == .section(.recentlyAdded) {
                 AlbumBrowserView(library: library, player: player,
                     recent: selection == .section(.recentlyAdded), selectedAlbum: $selectedAlbum, requestedAlbum: $requestedAlbum,
                     sortOrder: $albumSortOrder, reversed: $reverseAlbumSort)
+                .libraryFolderDrop(library: library)
             } else {
                 let sectionName: String = {
                     if case .section(let s) = selection {
@@ -325,6 +329,7 @@ public struct LibraryView: View {
                 }()
                 LibraryContent(library: library, player: player,
                                section: sectionName)
+                .libraryFolderDrop(library: library)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -515,6 +520,7 @@ public struct LibraryView: View {
             }.padding(.top, 16).padding(.trailing, 4)
             ForEach(library.playlists) { playlist in
                 navigationRow(.playlist(playlist.id), title: playlist.name, symbol: playlist.isSmart ? "sparkles" : "music.note.list")
+                    .playlistSongDrop(library: library, playlist: playlist)
                     .help(playlist.name)
                     .contextMenu {
                         if playlist.isSmart { Button("Edit Rules…") { smartPlaylistToEdit = playlist } }
@@ -555,6 +561,7 @@ public struct LibraryView: View {
             Button { openFolderPicker() } label: {
                 SidebarItemLabel(title: "Add Folder…", symbol: "folder.badge.plus")
             }.buttonStyle(.plain).disabled(library.isScanning)
+            .libraryFolderDrop(library: library)
         }
     }
 

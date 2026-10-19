@@ -129,11 +129,15 @@ private struct SongActions<Extra: View>: ViewModifier {
 extension View {
     @MainActor func songActions(library: LibraryModel, track: LibraryTrack, busy: Bool, play: (() -> Void)? = nil, playLabel: String = "Play", showsButton: Bool = true, enqueue: @escaping (Bool) -> Void) -> some View {
         modifier(SongActions(library: library, track: track, busy: busy, play: play, playLabel: playLabel, showsButton: showsButton, enqueue: enqueue, extra: EmptyView()))
+            .contentShape(Rectangle())
+            .onDrag { LibrarySongDrag.provider(for: track, library: library) }
     }
 
     @MainActor func songActions<Extra: View>(library: LibraryModel, track: LibraryTrack, busy: Bool, play: (() -> Void)? = nil, playLabel: String = "Play", showsButton: Bool = true,
                                  enqueue: @escaping (Bool) -> Void, @ViewBuilder extra: () -> Extra) -> some View {
         modifier(SongActions(library: library, track: track, busy: busy, play: play, playLabel: playLabel, showsButton: showsButton, enqueue: enqueue, extra: extra()))
+            .contentShape(Rectangle())
+            .onDrag { LibrarySongDrag.provider(for: track, library: library) }
     }
 }
 

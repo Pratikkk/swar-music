@@ -148,6 +148,7 @@ struct LibraryContent: View {
             }, playLabel: current && player.isPlaying ? "Pause" : "Play", enqueue: { enqueue(track, next: $0) })
             .padding(.vertical, density == .compact ? 3 : 6)
             .listRowBackground(current ? Color.accentColor.opacity(0.06) : Color.clear)
+            .onDrag { LibrarySongDrag.provider(for: track, library: library) }
 
     }
 

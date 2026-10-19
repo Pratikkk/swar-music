@@ -50,7 +50,7 @@ struct QueueView: View {
             }
             if player.upcomingEntries.isEmpty {
                 ContentUnavailableView("Nothing Up Next", systemImage: "music.note.list",
-                    description: Text("Use Play Next or Add to Queue on a library track."))
+                    description: Text("Drop songs here or use Play Next."))
             } else {
                 List {
                     ForEach(player.upcomingEntries) { entry in
@@ -120,6 +120,7 @@ struct QueueView: View {
                 }
             }
         }
+        .queueSongDrop(library: library, player: player)
         .padding(16)
         .frame(width: embedded ? nil : 380, height: embedded ? nil : 420)
         .frame(maxWidth: embedded ? .infinity : nil, maxHeight: embedded ? .infinity : nil, alignment: .topLeading)

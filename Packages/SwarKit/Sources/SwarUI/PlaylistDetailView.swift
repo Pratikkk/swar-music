@@ -135,7 +135,7 @@ public struct PlaylistDetailView: View {
                         ContentUnavailableView {
                             Label("Playlist is Empty", systemImage: "music.note.list")
                         } description: {
-                            Text(playlist.isSmart ? "No songs match these rules. Edit the rules to change this playlist." : "Add songs from your library by right-clicking any track and choosing Add to Playlist.")
+                            Text(playlist.isSmart ? "No songs match these rules. Edit the rules to change this playlist." : "Drop songs here or choose Add to Playlist from a song’s menu.")
                         }
                         .padding(.top, 40)
                     } else if visibleRows.isEmpty {
@@ -178,6 +178,7 @@ public struct PlaylistDetailView: View {
 
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .playlistSongDrop(library: library, playlist: playlist)
         .sheet(isPresented: $showRules) {
             SmartPlaylistEditorView(library: library, playlist: playlist) { _ in }
         }
