@@ -11,6 +11,9 @@ public final class LibraryModel {
     public private(set) var hiddenTrackCount = 0
     public private(set) var trackActionsRevision = 0
     public private(set) var overviewRevision = 0
+    /// Changes only when the visible track page changes. Views that derive
+    /// their own grouping observe this instead of the 500-element array.
+    public private(set) var tracksRevision = 0
     public private(set) var totalCount = 0
     public private(set) var unreadableCount = 0
     public private(set) var isScanning = false
@@ -33,6 +36,7 @@ public final class LibraryModel {
     private var watchers: [String: FolderWatcher] = [:]
     private var pendingRescan = false
     private var refreshRevision = 0
+    private var lastProgressReload = Date.distantPast
     private var watchTask: Task<Void, Never>?
     private var scanTask: Task<Void, Never>?
     private var isShutDown = false
@@ -179,8 +183,9 @@ public final class LibraryModel {
             let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed, searchScope: scope)
             let preferences = try await repository.trackPreferences()
             guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, scope == searchScope, onlyFavorites == favoritesOnly, recent == recentFirst, order == sortOrder, reversed == reverseSort else { return }
-            let overviewChanged = tracks != page.tracks || totalCount != page.count || favoriteTrackIDs != preferences.favorites || hiddenTrackCount != preferences.hiddenCount
-            if tracks != page.tracks { tracks = page.tracks }
+            let tracksChanged = tracks != page.tracks
+            let overviewChanged = tracksChanged || totalCount != page.count || favoriteTrackIDs != preferences.favorites || hiddenTrackCount != preferences.hiddenCount
+            if tracksChanged { tracks = page.tracks; tracksRevision &+= 1 }
             if totalCount != page.count { totalCount = page.count }
             if unreadableCount != page.unreadableCount { unreadableCount = page.unreadableCount }
             if favoriteTrackIDs != preferences.favorites { favoriteTrackIDs = preferences.favorites }
@@ -496,14 +501,20 @@ public final class LibraryModel {
 
     /// Resolve a playing file against connected library roots, not the visible page.
     public func track(at url: URL) async -> LibraryTrack? {
-        guard url.isFileURL, let repository, !isShutDown else { return nil }
+        guard let id = trackID(at: url), let repository else { return nil }
+        do { return try await repository.visibleTrack(id: id) }
+        catch { return nil }
+    }
+
+    /// Resolve a playing file to its library identity without a database round-trip.
+    /// Views use this once per body instead of standardizing a URL per row.
+    public func trackID(at url: URL?) -> String? {
+        guard let url, url.isFileURL else { return nil }
         let components = url.standardizedFileURL.pathComponents
         for (folderID, access) in scopes {
             let root = access.url.standardizedFileURL.pathComponents
             guard components.count > root.count, components.starts(with: root) else { continue }
-            let relativePath = components.dropFirst(root.count).joined(separator: "/")
-            do { return try await repository.visibleTrack(id: folderID + ":" + relativePath) }
-            catch { return nil }
+            return folderID + ":" + components.dropFirst(root.count).joined(separator: "/")
         }
         return nil
     }
@@ -517,8 +528,13 @@ public final class LibraryModel {
         guard !isShutDown, !Task.isCancelled else { return }
         progress = update
         // The scanner publishes after committed batches; the final reload also
-        // reconciles deletions. An unchanged scan needs no intermediate query.
-        if update.changed > 0 { await reload() }
+        // reconciles deletions. Throttle intermediate refreshes so a scan does
+        // not re-render and re-sort a large visible list four times a second.
+        let now = Date()
+        if update.changed > 0, now.timeIntervalSince(lastProgressReload) >= 0.75 {
+            lastProgressReload = now
+            await reload()
+        }
     }
 
     private func restoreFolders() async throws {

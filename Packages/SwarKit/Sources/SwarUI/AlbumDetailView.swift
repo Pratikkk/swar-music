@@ -15,7 +15,7 @@ struct AlbumDetailView: View {
     let player: Player
     let library: LibraryModel
     var playlists: [LibraryPlaylist] = []
-    let isCurrent: (LibraryTrack) -> Bool
+    let currentTrackID: String?
     let playAlbum: (Bool) -> Void
     let playTrack: (LibraryTrack) -> Void
     let enqueueTrack: (LibraryTrack, Bool) -> Void
@@ -35,6 +35,7 @@ struct AlbumDetailView: View {
     }
 
     var body: some View {
+        let hasMultipleDiscs = Set(tracks.map(\.discNumber)).count > 1
         GeometryReader { geometry in
             let compact = geometry.size.width < 700
             let inset: CGFloat = compact ? 24 : 40
@@ -59,7 +60,8 @@ struct AlbumDetailView: View {
                             // switching between albums or shuffled tracks.
                             ZStack(alignment: .leading) {
                                 Color.clear
-                                if tracks.contains(where: isCurrent), let info = player.formatInfo {
+                                if let currentTrackID, tracks.contains(where: { $0.id == currentTrackID }),
+                                   let info = player.formatInfo {
                                     FormatChip(info: info)
                                 }
                             }
@@ -86,12 +88,13 @@ struct AlbumDetailView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                             let newDisc = index == 0 || track.discNumber != tracks[index - 1].discNumber
-                            if newDisc && Set(tracks.map(\.discNumber)).count > 1 {
+                            if newDisc && hasMultipleDiscs {
                                 Text("Disc \(max(1, track.discNumber))")
                                     .font(.headline).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, density.songPadding)
                             }
+                            let current = track.id == currentTrackID
                             AlbumSongRow(track: track, library: library, fallbackNumber: index + 1,
-                                         current: isCurrent(track), playing: isCurrent(track) && player.isPlaying,
+                                         current: current, playing: current && player.isPlaying,
                                          compact: compact, alternate: index.isMultiple(of: 2), busy: player.isBusy,
                                          play: { playTrack(track) }, enqueue: { enqueueTrack(track, $0) })
                         }

@@ -11,21 +11,9 @@ struct LibraryContent: View {
     let player: Player
     let section: String
     var body: some View {
+        let currentTrackID = library.trackID(at: player.currentURL)
         VStack(spacing: 0) {
-            if let error = library.errorMessage {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.callout).foregroundStyle(.orange).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding()
-            }
-            if let progress = library.progress {
-                HStack {
-                    ProgressView(value: Double(progress.completed), total: Double(max(progress.total, 1)))
-                        .frame(maxWidth: 180)
-                    Text("\(progress.folder): \(progress.completed) of \(progress.total)")
-                    if progress.failed > 0 { Text("\(progress.failed) unreadable").foregroundStyle(.orange) }
-                }
-                .font(.caption).padding(12)
-            }
+            LibraryStatusBanner(library: library, inset: 12, detailedProgress: true)
             if library.totalCount > 0 {
                 HStack {
                     Text("\(library.tracks.count) of \(library.totalCount) \(TrackSearchQuery(library.search).isEmpty ? (library.totalCount == 1 ? "track" : "tracks") : "matches")")
@@ -66,12 +54,16 @@ struct LibraryContent: View {
                 List {
                     let groups = Dictionary(grouping: library.tracks, by: { section == "Artists" ? $0.artist : $0.genre })
                     ForEach(groups.keys.sorted(), id: \.self) { name in
-                        Section(name) { ForEach(groups[name] ?? []) { track in trackRow(track, context: groups[name] ?? []) } }
+                        Section(name) {
+                            ForEach(groups[name] ?? []) { track in
+                                trackRow(track, context: groups[name] ?? [], currentTrackID: currentTrackID)
+                            }
+                        }
                     }
                     FloatingPlayerScrollSpacer()
                 }.listStyle(.inset)
             } else {
-                trackList(library.tracks)
+                trackList(library.tracks, currentTrackID: currentTrackID)
             }
 
         }
@@ -96,15 +88,15 @@ struct LibraryContent: View {
         .disabled(player.isBusy || library.tracks.allSatisfy { $0.error != nil })
     }
 
-    private func trackList(_ tracks: [LibraryTrack]) -> some View {
+    private func trackList(_ tracks: [LibraryTrack], currentTrackID: String?) -> some View {
         List {
-            ForEach(tracks) { track in trackRow(track, context: tracks) }
+            ForEach(tracks) { track in trackRow(track, context: tracks, currentTrackID: currentTrackID) }
             FloatingPlayerScrollSpacer()
         }.listStyle(.inset)
     }
 
-    private func trackRow(_ track: LibraryTrack, context: [LibraryTrack]) -> some View {
-            let current = (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL && player.currentURL != nil
+    private func trackRow(_ track: LibraryTrack, context: [LibraryTrack], currentTrackID: String?) -> some View {
+            let current = track.id == currentTrackID
             return HStack(spacing: 12) {
                 ArtworkPlaybackButton(
                     url: library.artworkURL(track.artworkKey), album: track.album,

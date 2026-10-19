@@ -38,16 +38,19 @@ struct AlbumBrowserView: View {
     @State private var actionInProgress = false
 
     private var refreshKey: String {
-        "\(library.isReady)-\(library.overviewRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)-\(library.searchScope)-\(library.search)-\(sortOrder)-\(reversed)-\(recent)-\(filter)"
+        // Favourite changes must not reset album pagination; scans, metadata and
+        // artwork changes bump trackActionsRevision or lastScanAt.
+        "\(library.isReady)-\(library.trackActionsRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)-\(library.searchScope)-\(library.search)-\(sortOrder)-\(reversed)-\(recent)-\(filter)"
     }
     var body: some View {
+        let currentTrackID = library.trackID(at: player.currentURL)
         ZStack {
             // Keep the browser mounted to preserve its scroll position when returning from details.
             browser.opacity(selectedAlbum == nil ? 1 : 0)
                 .allowsHitTesting(selectedAlbum == nil).accessibilityHidden(selectedAlbum != nil)
             if let selectedAlbum {
                 if detailID == selectedAlbum, let album = detailAlbum {
-                    detail(album)
+                    detail(album, currentTrackID: currentTrackID)
                 } else { ProgressView("Opening album…") }
             }
         }
@@ -99,21 +102,7 @@ struct AlbumBrowserView: View {
             }.pickerStyle(.segmented).labelsHidden()
                 .frame(maxWidth: 380).frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 28).padding(.bottom, 12)
-            if let error = library.errorMessage {
-                HStack {
-                    Label(error, systemImage: "exclamationmark.triangle").lineLimit(2)
-                    Spacer()
-                    Button { library.dismissError() } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).accessibilityLabel("Dismiss library error")
-                }.font(.caption).foregroundStyle(.orange).padding(.horizontal, 28).padding(.bottom, 10)
-            }
-            if let progress = library.progress {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Updating library · \(progress.completed) of \(progress.total)").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                }.padding(.horizontal, 28).padding(.bottom, 10)
-            }
+            LibraryStatusBanner(library: library, inset: 28, dismissibleError: true)
             if let loadError {
                 ContentUnavailableView {
                     Label("Couldn’t Load Albums", systemImage: "exclamationmark.triangle")
@@ -291,14 +280,14 @@ struct AlbumBrowserView: View {
         }
     }
 
-    private func detail(_ album: LibraryAlbumSummary) -> some View {
+    private func detail(_ album: LibraryAlbumSummary, currentTrackID: String?) -> some View {
         AlbumDetailView(title: album.title, artist: album.artist, tracks: detailTracks,
             artworkURL: library.artworkURL(album.artworkKey), player: player, library: library,
-            playlists: library.manualPlaylists, isCurrent: isCurrent,
+            playlists: library.manualPlaylists, currentTrackID: currentTrackID,
             playAlbum: { shuffle in Task { await play(detailTracks, shuffle: shuffle) } },
             playTrack: { track in
                 Task {
-                    if isCurrent(track) { await player.togglePlayback() }
+                    if track.id == currentTrackID { await player.togglePlayback() }
                     else { await play(detailTracks, startingAt: track.id) }
                 }
             },
@@ -315,9 +304,6 @@ struct AlbumBrowserView: View {
             let tracks = await library.tracks(in: album)
             await play(tracks, shuffle: false)
         }
-    }
-    private func isCurrent(_ track: LibraryTrack) -> Bool {
-        player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
     }
     private func entry(_ track: LibraryTrack) throws -> QueueEntry {
         let location = try library.location(for: track)

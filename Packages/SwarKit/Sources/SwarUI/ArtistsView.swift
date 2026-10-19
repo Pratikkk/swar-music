@@ -28,7 +28,28 @@ struct ArtistsView: View {
         return artists
     }
 
+    /// Headers and albums are siblings of one lazy stack so a long artist does
+    /// not realize every album (and every song) as a single nested child.
+    private enum ArtistRenderItem: Identifiable {
+        case header(ArtistBrowseCollection)
+        case album(artist: String, album: ArtistBrowseAlbum)
+
+        var id: String {
+            switch self {
+            case .header(let artist): "artist\u{1f}\(artist.name)"
+            case .album(let artist, let album): "album\u{1f}\(artist)\u{1f}\(album.title)"
+            }
+        }
+    }
+
+    private var renderItems: [ArtistRenderItem] {
+        visibleArtists.flatMap { artist in
+            [.header(artist)] + artist.albums.map { .album(artist: artist.name, album: $0) }
+        }
+    }
+
     var body: some View {
+        let currentTrackID = library.trackID(at: player.currentURL)
         GeometryReader { geometry in
             let listWidth = min(285, max(180, geometry.size.width * 0.28))
             let compact = geometry.size.width - listWidth < 560
@@ -36,9 +57,16 @@ struct ArtistsView: View {
                 artistList.frame(width: listWidth)
                 Divider()
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: density == .compact ? 32 : 48) {
-                        ForEach(visibleArtists) { artist in
-                            artistSection(artist, compact: compact)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(renderItems) { item in
+                            switch item {
+                            case .header(let artist):
+                                artistHeader(artist, compact: compact)
+                                    .padding(.top, density == .compact ? 32 : 48)
+                            case .album(_, let album):
+                                albumSection(album, compact: compact, currentTrackID: currentTrackID)
+                                    .padding(.top, 24)
+                            }
                         }
                     }
                     .padding(.horizontal, compact ? 20 : 40).padding(.vertical, 24)
@@ -49,7 +77,13 @@ struct ArtistsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .task(id: library.tracks) {
+        .task(id: "\(library.tracksRevision)-\(library.search)-\(library.searchScope)-\(library.favoritesOnly)-\(library.isScanning)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)") {
+            // A scan commits batches repeatedly. Keep the last prepared grouping
+            // while it runs, then arrange once from the settled page.
+            if library.isScanning, !artists.isEmpty { return }
+            if !artists.isEmpty {
+                do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            }
             do {
                 let result = try await arranger.arrange(library.tracks)
                 guard !Task.isCancelled else { return }
@@ -121,8 +155,8 @@ struct ArtistsView: View {
         }
     }
 
-    private func artistSection(_ artist: ArtistBrowseCollection, compact: Bool) -> some View {
-        LazyVStack(alignment: .leading, spacing: 24) {
+    private func artistHeader(_ artist: ArtistBrowseCollection, compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Text(artist.name).font(.system(size: compact ? 21 : 24, weight: .bold))
                     .lineLimit(1).help(artist.name).frame(maxWidth: .infinity, alignment: .leading)
@@ -130,21 +164,18 @@ struct ArtistsView: View {
                 playButton(artist.tracks, shuffle: true, label: "Shuffle \(artist.name)", symbol: "shuffle")
                 actions(artist.tracks, label: "Actions for \(artist.name)")
             }
-            Divider().padding(.top, -12)
-            ForEach(artist.albums) { album in
-                albumSection(album, compact: compact)
-            }
+            Divider()
         }
     }
 
-    @ViewBuilder private func albumSection(_ album: ArtistBrowseAlbum, compact: Bool) -> some View {
+    @ViewBuilder private func albumSection(_ album: ArtistBrowseAlbum, compact: Bool, currentTrackID: String?) -> some View {
         if compact {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 16) {
                     artwork(album, size: 96)
-                    albumHeading(album)
+                    albumHeading(album, currentTrackID: currentTrackID)
                 }
-                songs(album)
+                songs(album, currentTrackID: currentTrackID)
                 summary(album)
             }
         } else {
@@ -154,8 +185,8 @@ struct ArtistsView: View {
                     summary(album)
                 }.frame(width: 160, alignment: .leading)
                 VStack(alignment: .leading, spacing: 16) {
-                    albumHeading(album)
-                    songs(album)
+                    albumHeading(album, currentTrackID: currentTrackID)
+                    songs(album, currentTrackID: currentTrackID)
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -176,7 +207,7 @@ struct ArtistsView: View {
         .accessibilityLabel("Play \(album.title)").help("Play \(album.title)")
     }
 
-    private func albumHeading(_ album: ArtistBrowseAlbum) -> some View {
+    private func albumHeading(_ album: ArtistBrowseAlbum, currentTrackID: String?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
                 Text(album.title).font(.headline).lineLimit(2).help(album.title)
@@ -190,7 +221,8 @@ struct ArtistsView: View {
             }
             // Keep the track list stationary as playback moves between albums.
             ZStack(alignment: .leading) {
-                if album.tracks.contains(where: isCurrent), let info = player.formatInfo {
+                if let currentTrackID, album.songs.contains(where: { $0.track.id == currentTrackID }),
+                   let info = player.formatInfo {
                     FormatChip(info: info)
                 }
             }
@@ -198,20 +230,21 @@ struct ArtistsView: View {
         }
     }
 
-    private func songs(_ album: ArtistBrowseAlbum) -> some View {
-        LazyVStack(spacing: 0) {
+    private func songs(_ album: ArtistBrowseAlbum, currentTrackID: String?) -> some View {
+        VStack(spacing: 0) {
             Divider()
             ForEach(album.songs) { song in
                 let track = song.track
+                let current = track.id == currentTrackID
                 if song.startsDisc {
                     Text("Disc \(max(1, track.discNumber))").font(.caption.bold())
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
                 }
                 AlbumSongRow(track: track, library: library, fallbackNumber: song.number,
-                             current: isCurrent(track), playing: isCurrent(track) && player.isPlaying,
+                             current: current, playing: current && player.isPlaying,
                              compact: true, alternate: false, busy: player.isBusy,
                              play: {
-                                 if isCurrent(track) { Task { await player.togglePlayback() } }
+                                 if current { Task { await player.togglePlayback() } }
                                  else { play(track, album.tracks, nil) }
                              },
                              enqueue: { enqueue([track], $0) })
@@ -255,8 +288,5 @@ struct ArtistsView: View {
     private func canPlay(_ tracks: [LibraryTrack]) -> Bool { tracks.contains { $0.error == nil } }
     private func start(_ tracks: [LibraryTrack], shuffle: Bool) {
         if let first = tracks.first(where: { $0.error == nil }) { play(first, tracks, shuffle) }
-    }
-    private func isCurrent(_ track: LibraryTrack) -> Bool {
-        player.currentURL != nil && (try? library.location(for: track).file.standardizedFileURL) == player.currentURL?.standardizedFileURL
     }
 }

@@ -58,6 +58,7 @@ public struct PlaylistDetailView: View {
     }
 
     public var body: some View {
+        let currentTrackID = library.trackID(at: player.currentURL)
         GeometryReader { geometry in
             let compact = geometry.size.width < 700
             let inset: CGFloat = compact ? 24 : 40
@@ -154,8 +155,8 @@ public struct PlaylistDetailView: View {
                                 PlaylistSongRow(
                                     item: item,
                                     index: row.number,
-                                    current: isCurrent(item.track),
-                                    playing: isCurrent(item.track) && player.isPlaying,
+                                    current: item.track.id == currentTrackID,
+                                    playing: item.track.id == currentTrackID && player.isPlaying,
                                     compact: compact,
                                     alternate: row.alternate,
                                     isFirst: isFiltering || row.number == 1,
@@ -163,7 +164,7 @@ public struct PlaylistDetailView: View {
                                     isLast: isFiltering || row.number == items.count,
                                     busy: player.isBusy || !matchesRequest,
                                     library: library,
-                                    play: { playItem(item) },
+                                    play: { playItem(item, currentTrackID: currentTrackID) },
                                     enqueue: { enqueueTrack(item.track, next: $0) },
                                     moveUp: { move(from: row.number - 1, to: row.number - 2) },
                                     moveDown: { move(from: row.number - 1, to: row.number) },
@@ -239,12 +240,6 @@ public struct PlaylistDetailView: View {
             .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func isCurrent(_ track: LibraryTrack) -> Bool {
-        guard let currentURL = player.currentURL?.standardizedFileURL,
-              let location = try? library.location(for: track).file.standardizedFileURL else { return false }
-        return location == currentURL
-    }
-
     private func reloadItems() async {
         let playlistID = playlist.id
         let generation = UUID()
@@ -275,9 +270,9 @@ public struct PlaylistDetailView: View {
         )
     }
 
-    private func playItem(_ item: PlaylistTrackItem) {
+    private func playItem(_ item: PlaylistTrackItem, currentTrackID: String?) {
         Task {
-            if isCurrent(item.track) {
+            if item.track.id == currentTrackID {
                 await player.togglePlayback()
                 return
             }
