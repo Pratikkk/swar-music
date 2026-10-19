@@ -27,11 +27,13 @@ struct swarApp: App {
                 FormatChipPreview().swarAppearancePreferences()
             } else {
                 LibraryView(library: library)
+                    .welcomeGuide(library: library)
                     .frame(minWidth: 760, minHeight: 500)
                     .swarAppearancePreferences()
             }
             #else
             LibraryView(library: library)
+                .welcomeGuide(library: library)
                 .frame(minWidth: 760, minHeight: 500)
                 .swarAppearancePreferences()
             #endif

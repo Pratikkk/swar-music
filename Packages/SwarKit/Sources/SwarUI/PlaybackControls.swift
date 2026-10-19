@@ -37,6 +37,10 @@ public struct SwarCommands: Commands {
                 .keyboardShortcut("o", modifiers: .command)
                 .disabled(actions?.canOpen != true)
         }
+        CommandGroup(after: .help) {
+            Button("Welcome Guide") { NotificationCenter.default.post(name: .showWelcomeGuide, object: nil) }
+                .disabled(actions == nil)
+        }
         CommandMenu("Playback") {
             Button("Show Now Playing") { actions?.nowPlaying() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
