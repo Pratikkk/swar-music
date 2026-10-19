@@ -17,7 +17,7 @@ public final class Player {
     public private(set) var duration: Double = 0
     public private(set) var position: Double = 0
     public private(set) var isPlaying = false
-    public private(set) var isBusy = false
+    public private(set) var isBusy = false { didSet { if !isBusy { scheduleGapless() } } }
     public private(set) var isSeeking = false
     private var pendingSeek: Double?
     public private(set) var errorMessage: String?
@@ -96,10 +96,10 @@ public final class Player {
         !isBusy && !isShutDown && outputVolume.canSet && (volumeDeviceID == nil || volumeDeviceID == outputVolume.deviceID)
     }
 
-    public private(set) var queue: [QueueEntry] = []
-    public private(set) var currentEntryID: UUID?
+    public private(set) var queue: [QueueEntry] = [] { didSet { scheduleGapless() } }
+    public private(set) var currentEntryID: UUID? { didSet { scheduleGapless() } }
     public private(set) var shuffleEnabled = false
-    public private(set) var repeatMode: RepeatMode = .off
+    public private(set) var repeatMode: RepeatMode = .off { didSet { scheduleGapless() } }
     private var unshuffledOrder: [UUID] = []
     private struct QueueRemoval {
         let entries: [QueueEntry]
@@ -154,6 +154,68 @@ public final class Player {
     public var upcomingEntries: [QueueEntry] {
         guard let index = currentQueueIndex else { return queue }
         return Array(queue.dropFirst(index + 1))
+    }
+
+    private struct GaplessPlan: Equatable {
+        let token: UUID
+        let next: PlaybackContinuation?
+    }
+    @ObservationIgnored private var playbackToken: UUID?
+    @ObservationIgnored private var gaplessPlan: GaplessPlan?
+    @ObservationIgnored private var gaplessTask: Task<Void, Never>?
+    @ObservationIgnored private var stagedGaplessEntries: [UUID: QueueEntry] = [:]
+
+    private func nextContinuation() -> PlaybackContinuation? {
+        guard let index = currentQueueIndex else {
+            if queue.isEmpty, repeatMode != .off, let entry = standaloneEntry {
+                return PlaybackContinuation(id: entry.id, url: entry.url, accessRoot: entry.accessRoot)
+            }
+            return nil
+        }
+        let next: QueueEntry?
+        if repeatMode == .one { next = queue[index] }
+        else if queue.indices.contains(index + 1) { next = queue[index + 1] }
+        else { next = repeatMode == .all ? queue.first : nil }
+        return next.map { PlaybackContinuation(id: $0.id, url: $0.url, accessRoot: $0.accessRoot) }
+    }
+
+    private func scheduleGapless() {
+        guard !isBusy, !isRestoredSession, !isShutDown, let playbackToken else { return }
+        let plan = GaplessPlan(token: playbackToken, next: nextContinuation())
+        guard gaplessPlan != plan else { return }
+        gaplessPlan = plan
+        if let id = plan.next?.id, let entry = queue.first(where: { $0.id == id }) ?? (standaloneEntry?.id == id ? standaloneEntry : nil) {
+            if stagedGaplessEntries.count > 4 { stagedGaplessEntries = [:] }
+            stagedGaplessEntries[id] = entry
+        }
+        gaplessTask?.cancel()
+        let engine = engine
+        gaplessTask = Task {
+            guard !Task.isCancelled else { return }
+            await engine.prepareNext(plan.next, after: plan.token)
+        }
+    }
+
+    private func adoptContinuation(_ snapshot: PlaybackSnapshot) {
+        guard snapshot.playbackToken != playbackToken else { return }
+        playbackToken = snapshot.playbackToken
+        if let id = snapshot.continuationID, let entry = queue.first(where: { $0.id == id }) ?? stagedGaplessEntries[id] {
+            // An edit can race the audible boundary. Once already audible, keep
+            // that entry as the current song rather than showing stale metadata.
+            if !queue.contains(where: { $0.id == id }) {
+                let index = currentQueueIndex.map { $0 + 1 } ?? 0
+                queue.insert(entry, at: min(index, queue.count)); unshuffledOrder.append(id)
+            }
+            listenCounter = ListenCounter()
+            completionHandled = false
+            queueRemovals = []
+            currentEntryID = id
+            scopedAccess = ScopedFileAccess(entry.accessRoot)
+            currentURL = entry.url
+            title = entry.title; subtitle = entry.subtitle; artworkURL = entry.artworkURL
+            sourceRevision &+= 1
+        }
+        scheduleGapless()
     }
 
     public let sleepTimer: SleepTimer
@@ -253,7 +315,7 @@ public final class Player {
         isBusy = true; generation += 1
         pendingVolume = nil
         listenCounter.interrupt()
-        defer { isBusy = false }
+        defer { gaplessPlan = nil; isBusy = false }
         do {
             let snapshot = try await engine.selectOutput(id, pause: pause)
             guard !isShutDown else { return }
@@ -339,6 +401,7 @@ public final class Player {
     }
 
     deinit {
+        gaplessTask?.cancel()
         engine.shutdown()
     }
 
@@ -358,6 +421,7 @@ public final class Player {
     @discardableResult
     private func load(_ url: URL, accessRoot: URL?, displayTitle: String?, entry: QueueEntry? = nil,
                       startPlayback: Bool = false) async -> Bool {
+        gaplessTask?.cancel(); gaplessPlan = nil; playbackToken = nil
         generation += 1
         let revision = generation
         completionHandled = false
@@ -478,7 +542,7 @@ public final class Player {
         generation += 1
         isSeeking = true
         isBusy = true
-        defer { isSeeking = false; isBusy = false }
+        defer { gaplessPlan = nil; isSeeking = false; isBusy = false }
         // One decoder operation at a time; intermediate drag/key requests are superseded.
         while let target = pendingSeek, !isShutDown {
             pendingSeek = nil
@@ -674,6 +738,7 @@ public final class Player {
         sleepTimer.cancel()
         queueRemovals = []
         isShutDown = true
+        gaplessTask?.cancel(); gaplessTask = nil
         pendingVolume = nil
         pendingSeek = nil
         if didAttemptRestore, !isBusy, let sessionStore {
@@ -719,6 +784,7 @@ public final class Player {
     }
 
     private func apply(_ snapshot: PlaybackSnapshot) {
+        adoptContinuation(snapshot)
         if snapshot.error != nil { listenCounter.interrupt() }
         if listenCounter.sample(time: listeningTime(), position: snapshot.position,
                                 duration: snapshot.duration, playing: snapshot.isPlaying && snapshot.error == nil),

@@ -13,13 +13,16 @@ public struct PlaybackSnapshot: Sendable {
     public let underrunFrames: UInt64
     public let error: String?
     public let didFinish: Bool
+    public let playbackToken: UUID?
+    public let continuationID: UUID?
 
     public init(source: SourceFormat? = nil, output: OutputDescription? = nil,
                 duration: Double = 0, position: Double = 0, isPlaying: Bool = false,
-                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false) {
+                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil) {
         self.source = source; self.output = output; self.duration = duration
         self.position = position; self.isPlaying = isPlaying
         self.underrunFrames = underrunFrames; self.error = error; self.didFinish = didFinish
+        self.playbackToken = playbackToken; self.continuationID = continuationID
     }
 }
 
@@ -31,10 +34,12 @@ public protocol PlaybackDriving: Sendable {
     func seek(to seconds: Double) async throws -> PlaybackSnapshot
     func snapshot() async -> PlaybackSnapshot
     func shutdown()
+    func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async
     func selectOutput(_ deviceID: UInt32?, pause: Bool) async throws -> PlaybackSnapshot
 }
 
 public extension PlaybackDriving {
+    func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async {}
     func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot { try await open(url) }
     func selectOutput(_ deviceID: UInt32?, pause: Bool) async throws -> PlaybackSnapshot { await snapshot() }
 }
@@ -78,7 +83,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     private static func open(_ url: URL, on state: EngineState) throws -> PlaybackSnapshot {
         state.closeSession()
         do {
-            state.session = try OutputSession(decoder: DecoderFactory.open(url: url), deviceID: state.deviceID)
+            state.session = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: state.deviceID)
             state.url = url
             state.error = nil
             return state.snapshot()
@@ -121,11 +126,12 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
 
     public func selectOutput(_ deviceID: UInt32?, pause: Bool = false) async throws -> PlaybackSnapshot {
         try await perform { state in
-            guard let session = state.session, let url = state.url else {
+            _ = state.snapshot()
+            guard let session = state.session else {
                 state.deviceID = deviceID
                 if let recovery = state.routeRecovery {
                     do {
-                        let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), deviceID: deviceID)
+                        let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), url: recovery.url, deviceID: deviceID, entryID: recovery.entryID, token: recovery.token)
                         state.session = replacement; state.url = recovery.url
                         try replacement.seek(recovery.position)
                         state.routeRecovery = nil; state.error = nil
@@ -143,11 +149,16 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 return state.snapshot()
             }
             let previous = state.deviceID
-            let position = session.position
             let resume = session.isPlaying && !pause
+            try session.pause()
+            let audible = session.pcm.audible
+            let url = audible.segment.url
+            let playbackToken = audible.segment.token
+            let entryID = audible.segment.entryID
+            let position = audible.position
             state.closeSession()
             do {
-                let replacement = try OutputSession(decoder: DecoderFactory.open(url: url), deviceID: deviceID)
+                let replacement = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: deviceID, entryID: entryID, token: playbackToken)
                 state.session = replacement; state.url = url
                 try replacement.seek(position)
                 if resume { try replacement.play() }
@@ -158,17 +169,40 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 state.closeSession()
                 // Best-effort rollback retains the song and position on an incompatible output.
                 do {
-                    let old = try OutputSession(decoder: DecoderFactory.open(url: url), deviceID: previous)
+                    let old = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: previous, entryID: entryID, token: playbackToken)
                     state.session = old; state.url = url
                     try old.seek(position)
                     if resume { try old.play() }
                 } catch { state.closeSession() }
                 if state.session == nil {
-                    state.routeRecovery = (url, position)
+                    state.routeRecovery = (url, position, entryID, playbackToken)
                     state.error = failure.localizedDescription
                 }
                 throw failure
             }
+        }
+    }
+
+    public func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async {
+        guard !Task.isCancelled else { return }
+        let request = UUID()
+        let shouldPrepare = (try? await perform { state -> Bool in
+            guard let session = state.session, session.pcm.current.token == token else { return false }
+            if session.pcm.requestedID == next?.id, session.pcm.requestedToken == token { return false }
+            state.preparation = request
+            state.preparer.invalidate(request)
+            if session.pcm.hasQueuedBoundary { try session.seek(session.position) }
+            guard session.pcm.current.token == token else { return false }
+            session.pcm.request(next?.id, after: token)
+            return next != nil
+        }) ?? false
+        guard shouldPrepare, let next, !Task.isCancelled else { return }
+        let prepared = await state.preparer.prepare(next, request: request)
+        guard !Task.isCancelled, let prepared else { return }
+        _ = try? await perform { state in
+            guard state.preparation == request, let session = state.session,
+                  session.pcm.current.token == token else { return }
+            _ = session.pcm.install(prepared)
         }
     }
 
@@ -205,9 +239,11 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
 private final class EngineState: @unchecked Sendable {
     // Every field is accessed only on AudioPlaybackEngine.queue.
     var session: OutputSession?
+    let preparer = ContinuationPreparer()
+    var preparation = UUID()
     var deviceID: UInt32?
     var url: URL?
-    var routeRecovery: (url: URL, position: Double)?
+    var routeRecovery: (url: URL, position: Double, entryID: UUID?, token: UUID)?
     var error: String?
     private var timer: DispatchSourceTimer?
     private var pumping = false
@@ -243,46 +279,41 @@ private final class EngineState: @unchecked Sendable {
 
     func snapshot() -> PlaybackSnapshot {
         defer { updateTimer() }
-        return PlaybackSnapshot(source: session?.decoder.source,
+        let audible = session?.pcm.audible
+        if let audible { url = audible.segment.url }
+        return PlaybackSnapshot(source: audible?.segment.decoder.source,
                                 output: session?.outputStatus.output,
-                                duration: session?.duration ?? 0, position: session?.position ?? 0,
+                                duration: audible?.duration ?? 0, position: audible?.position ?? 0,
                                 isPlaying: session?.isPlaying ?? false,
                                 underrunFrames: session.flatMap { $0.ring.map(swar_ring_underruns) } ?? 0,
-                                error: error, didFinish: session?.didFinish ?? false)
+                                error: error, didFinish: session?.didFinish ?? false,
+                                playbackToken: audible?.segment.token, continuationID: audible?.segment.entryID)
     }
 
-    func closeSession() { session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil }
+    func closeSession() { preparer.invalidate(); preparation = UUID(); session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil }
     func close() { timer?.cancel(); timer = nil; pumping = false; closeSession() }
 }
 
 private final class OutputSession {
-    let decoder: any AudioDecoding
+    let pcm: GaplessPCM
+    var decoder: any AudioDecoding { pcm.current.decoder }
     let device: OutputDevice
     private var deviceMonitor: OutputDeviceMonitor?
     var outputStatus: OutputDeviceStatus { deviceMonitor?.status ?? OutputDeviceStatus() }
     private var unit: AudioUnit?
-    private(set) var ring: OpaquePointer?
-    private let scratch: UnsafeMutableRawPointer
-    private var eof = false
+    var ring: OpaquePointer? { closed ? nil : pcm.ring }
     private(set) var didFinish = false
-    private var baseFrame: Int64 = 0
     private(set) var isPlaying = false
     private var closed = false
-    var duration: Double { Double(decoder.frameCount) / decoder.source.sampleRate }
-    var position: Double {
-        min(duration, Double(baseFrame + Int64(ring.map(swar_ring_consumed) ?? 0)) / decoder.source.sampleRate)
-    }
+    var duration: Double { pcm.duration }
+    var position: Double { pcm.position }
 
-    init(decoder: any AudioDecoding, deviceID: UInt32? = nil) throws {
-        self.decoder = decoder
+    init(decoder: any AudioDecoding, url: URL, deviceID: UInt32? = nil, entryID: UUID? = nil, token: UUID? = nil) throws {
+        pcm = try GaplessPCM(decoder: decoder, url: url, entryID: entryID, token: token)
         device = try OutputDevice(id: deviceID)
-        scratch = .allocate(byteCount: 4096 * Int(decoder.pcmFormat.mBytesPerFrame), alignment: 16)
         do {
             try device.configure(for: decoder.source)
-            guard let buffer = swar_ring_create(UInt32(decoder.source.sampleRate), decoder.pcmFormat.mBytesPerFrame) else {
-                throw AudioFailure("Could not allocate a lock-free audio buffer.")
-            }
-            ring = buffer
+            let buffer = self.pcm.ring
             var componentDescription = AudioComponentDescription(componentType: kAudioUnitType_Output,
                 componentSubType: kAudioUnitSubType_HALOutput, componentManufacturer: kAudioUnitManufacturer_Apple,
                 componentFlags: 0, componentFlagsMask: 0)
@@ -307,7 +338,7 @@ private final class OutputSession {
         } catch { close(); throw error }
     }
 
-    deinit { close(); scratch.deallocate() }
+    deinit { close() }
 
     func play() throws {
         guard let unit, !closed else { throw AudioFailure("The output session is closed.") }
@@ -332,12 +363,8 @@ private final class OutputSession {
     func seek(_ seconds: Double) throws {
         let resume = isPlaying
         try pause()
-        guard let ring else { return }
         let target = Int64(max(0, min(seconds, duration)) * decoder.source.sampleRate)
-        try decoder.seek(to: target)
-        swar_ring_reset(ring)
-        baseFrame = target
-        eof = false
+        try pcm.seek(seconds)
         didFinish = false
         try prime()
         if resume && target < decoder.frameCount { try play() }
@@ -346,8 +373,9 @@ private final class OutputSession {
 
     func pump() throws {
         if let error = outputStatus.error { throw AudioFailure(error) }
-        try fill()
-        if eof, let ring, swar_ring_readable(ring) == 0 {
+        try pcm.fill()
+        if let failure = pcm.failure { throw AudioFailure(failure) }
+        if pcm.eof, let ring, swar_ring_readable(ring) == 0 {
             try pause()
             didFinish = true
         }
@@ -356,19 +384,7 @@ private final class OutputSession {
     private func prime() throws {
         // Start with 200 ms, then let the 10 ms producer timer fill the one-second ring.
         // Capacity is unchanged; only synchronous decode work before start/seek is bounded.
-        try fill(upTo: UInt32(ceil(decoder.source.sampleRate * 0.2)))
-    }
-
-    private func fill(upTo targetFrames: UInt32 = .max) throws {
-        guard let ring, !eof else { return }
-        while swar_ring_writable(ring) > 0 {
-            let readable = swar_ring_readable(ring)
-            guard readable < targetFrames else { break }
-            let requested = min(4096, swar_ring_writable(ring), targetFrames - readable)
-            let count = try decoder.read(into: scratch, frames: requested)
-            if count == 0 { eof = true; swar_ring_finish(ring); break }
-            guard swar_ring_write(ring, scratch, count) == count else { throw AudioFailure("PCM buffer write failed.") }
-        }
+        try pcm.fill(upTo: UInt32(ceil(decoder.source.sampleRate * 0.2)))
     }
 
     func close() {
@@ -383,7 +399,6 @@ private final class OutputSession {
             self.unit = nil
         }
         isPlaying = false
-        if let ring { swar_ring_destroy(ring); self.ring = nil }
         device.restore()
     }
 }
