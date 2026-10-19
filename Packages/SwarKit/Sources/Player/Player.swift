@@ -20,6 +20,10 @@ public final class Player {
     public private(set) var isBusy = false { didSet { if !isBusy { scheduleGapless() } } }
     public private(set) var isSeeking = false
     private var pendingSeek: Double?
+    private var pendingSeekResume = false
+    public private(set) var isScrubbing = false
+    private var scrubWasPlaying = false
+    private var scrubURL: URL?
     public private(set) var errorMessage: String?
     @ObservationIgnored private var errorIsFromPlayback = false
     public private(set) var underrunFrames: UInt64 = 0
@@ -543,6 +547,7 @@ public final class Player {
     private func load(_ url: URL, accessRoot: URL?, displayTitle: String?, entry: QueueEntry? = nil,
                       startPlayback: Bool = false) async -> Bool {
         gaplessTask?.cancel(); gaplessPlan = nil; playbackToken = nil
+        isScrubbing = false; scrubWasPlaying = false; scrubURL = nil; pendingSeekResume = false
         outputRecoveryNeeded = false; wakeRecoveryPending = false; recoveryPolicy = OutputRecoveryPolicy()
         playbackIntent = startPlayback; recoverySeekPosition = nil
         generation += 1
@@ -656,9 +661,50 @@ public final class Player {
         if isPlaying { outputNotice = nil }
     }
 
+    /// Capture playback intent for a scrub gesture. Intermediate scrub seeks
+    /// stay paused; only the release seek resumes the device.
+    public func beginScrubbing() {
+        guard !isShutDown, !isSystemSleeping, !isRestoredSession, duration > 0 else { return }
+        guard !isScrubbing else { return }
+        isScrubbing = true
+        scrubWasPlaying = isPlaying
+        scrubURL = currentURL
+    }
+
+    public func scrub(to seconds: Double) async {
+        guard isScrubbing else { await seek(to: seconds); return }
+        await performSeek(seconds, resume: false)
+    }
+
+    public func endScrubbing(at seconds: Double) async {
+        guard isScrubbing else { await seek(to: seconds); return }
+        let resume = scrubWasPlaying
+        isScrubbing = false
+        scrubWasPlaying = false
+        scrubURL = nil
+        await performSeek(seconds, resume: resume)
+    }
+
+    /// Abandon a scrub without seeking (view teardown, track change or sleep).
+    public func cancelScrubbing() {
+        guard isScrubbing else { return }
+        let resume = scrubWasPlaying
+        let url = scrubURL
+        isScrubbing = false
+        scrubWasPlaying = false
+        scrubURL = nil
+        guard resume, !isShutDown, !isPlaying, url == currentURL, duration > 0,
+              !isBusy || isSeeking else { return }
+        Task { await performSeek(position, resume: true) }
+    }
+
     public func seek(to seconds: Double) async {
+        await performSeek(seconds, resume: isPlaying)
+    }
+
+    private func performSeek(_ seconds: Double, resume: Bool) async {
         guard !isShutDown, !isSystemSleeping, seconds.isFinite, duration > 0 else { return }
-        playbackIntent = isPlaying; wakeRecoveryPending = false
+        playbackIntent = resume; wakeRecoveryPending = false
         if outputRecoveryNeeded, !isPlaying {
             let target = max(0, min(seconds, duration))
             position = target; recoverySeekPosition = target
@@ -673,23 +719,25 @@ public final class Player {
         listenCounter.interrupt()
         let target = max(0, min(seconds, duration))
         pendingSeek = target
+        pendingSeekResume = pendingSeekResume || resume
         position = target
         guard !isSeeking else { return }
-        let startedPlaying = isPlaying
         var finished = false
         generation += 1
         isSeeking = true
         isBusy = true
-        defer { gaplessPlan = nil; isSeeking = false; isBusy = false }
+        defer { gaplessPlan = nil; isSeeking = false; isBusy = false; pendingSeekResume = false }
         // One decoder operation at a time; intermediate drag/key requests are superseded.
         while let target = pendingSeek, !isShutDown {
+            let shouldResume = pendingSeekResume
             pendingSeek = nil
+            pendingSeekResume = false
             do {
-                var snapshot = try await engine.seek(to: target)
+                var snapshot = try await engine.seek(to: target, resume: shouldResume)
                 guard !isShutDown else { return }
                 // A superseded seek may have stopped exactly at EOF. Preserve
                 // playback intent if the latest request moves back into the song.
-                if pendingSeek == nil, startedPlaying, !snapshot.isPlaying, !snapshot.didFinish, snapshot.error == nil {
+                if pendingSeek == nil, shouldResume, !snapshot.isPlaying, !snapshot.didFinish, snapshot.error == nil {
                     snapshot = try await engine.togglePlayback()
                     guard !isShutDown else { return }
                 }
@@ -701,6 +749,7 @@ public final class Player {
                 }
             } catch {
                 pendingSeek = nil
+                pendingSeekResume = false
                 let snapshot = await engine.snapshot()
                 guard !isShutDown else { return }
                 apply(snapshot)
@@ -708,7 +757,7 @@ public final class Player {
                 return
             }
         }
-        if finished, !isShutDown, !completionHandled {
+        if finished, !isShutDown, !completionHandled, !isScrubbing {
             // Completion cannot depend on the playing-only UI polling task:
             // an EOF seek has already stopped it. Release the seek lock first.
             isSeeking = false; isBusy = false
@@ -881,6 +930,8 @@ public final class Player {
         gaplessTask?.cancel(); gaplessTask = nil
         pendingVolume = nil
         pendingSeek = nil
+        pendingSeekResume = false
+        isScrubbing = false; scrubWasPlaying = false; scrubURL = nil
         if didAttemptRestore, !isBusy, let sessionStore {
             do {
                 let session = sessionSnapshot()

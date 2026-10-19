@@ -28,14 +28,17 @@ struct PlaybackSeekControl: View {
                 WaveformSeekSurface(samples: waveformURL == player.currentURL ? samples : [],
                     progress: player.duration > 0 ? state.displayedPosition(player.position) / player.duration : 0,
                     mini: mini, changed: { fraction in
-                        if !state.dragging { state.begin() }
+                        if !state.dragging {
+                            state.begin()
+                            player.beginScrubbing()
+                        }
                         state.change(to: fraction * player.duration)
                     }, ended: { fraction in
                         state.change(to: fraction * player.duration)
-                        if let request = state.end() { commit(request) }
+                        if let request = state.end() { commit(request, final: true) }
                     }, step: { delta in
                         state.change(to: state.displayedPosition(player.position) + delta)
-                        if let request = state.request() { commit(request) }
+                        if let request = state.request() { commit(request, final: true) }
                     })
                     .id(player.sourceRevision)
                     .accessibilityRepresentation { nativeSlider }
@@ -48,13 +51,14 @@ struct PlaybackSeekControl: View {
             guard state.dragging else { return }
             var lastPosition: Double? = player.position
             while state.dragging && !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                guard state.dragging && !Task.isCancelled else { return }
                 // Send an explicit end-of-song seek only when the pointer is released.
                 if lastPosition != state.value, player.duration - state.value > 0.05,
                    let request = state.request() {
                     lastPosition = request.position
-                    await write(request)
+                    await write(request, final: false)
                 }
-                do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
             }
         }
         .onChange(of: player.currentURL, initial: true) { synchronize() }
@@ -87,10 +91,14 @@ struct PlaybackSeekControl: View {
     private var nativeSlider: some View {
         Slider(value: Binding(get: { state.displayedPosition(player.position) }, set: {
             state.change(to: $0)
-            if !state.dragging, let request = state.request() { commit(request) }
+            if !state.dragging, let request = state.request() { commit(request, final: true) }
         }), in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
-            if editing { state.begin() }
-            else if let request = state.end() { commit(request) }
+            if editing {
+                state.begin()
+                player.beginScrubbing()
+            } else if let request = state.end() {
+                commit(request, final: true)
+            }
         })
         .controlSize(mini ? .mini : .regular)
         .accessibilityLabel("Playback position")
@@ -102,19 +110,24 @@ struct PlaybackSeekControl: View {
     }
 
     private func cancel() {
+        player.cancelScrubbing()
         state.cancel(position: player.position, duration: player.duration, url: player.currentURL)
     }
 
-    private func commit(_ request: SeekSliderState.Request) {
-        Task { await write(request) }
+    private func commit(_ request: SeekSliderState.Request, final: Bool) {
+        Task { await write(request, final: final) }
     }
 
-    private func write(_ request: SeekSliderState.Request) async {
+    private func write(_ request: SeekSliderState.Request, final: Bool) async {
         guard !Task.isCancelled else { return }
         guard request.url == player.currentURL, player.duration > 0,
               !player.isBusy || player.isSeeking else { cancel(); return }
         guard state.submit(request) else { return }
-        await player.seek(to: request.position)
+        if final {
+            await player.endScrubbing(at: request.position)
+        } else {
+            await player.scrub(to: request.position)
+        }
         guard request.url == player.currentURL else { synchronize(); return }
         state.finish(request, position: player.position, seeking: player.isSeeking)
     }

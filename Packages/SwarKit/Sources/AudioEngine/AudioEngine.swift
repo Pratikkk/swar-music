@@ -34,6 +34,9 @@ public protocol PlaybackDriving: Sendable {
     func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot
     func togglePlayback() async throws -> PlaybackSnapshot
     func seek(to seconds: Double) async throws -> PlaybackSnapshot
+    /// Seek without implicitly resuming. Scrubbing pauses once, sends paused
+    /// preview seeks, then resumes only on release.
+    func seek(to seconds: Double, resume: Bool) async throws -> PlaybackSnapshot
     func snapshot() async -> PlaybackSnapshot
     func shutdown()
     func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async
@@ -43,6 +46,9 @@ public protocol PlaybackDriving: Sendable {
 }
 
 public extension PlaybackDriving {
+    func seek(to seconds: Double, resume: Bool) async throws -> PlaybackSnapshot {
+        try await seek(to: seconds)
+    }
     func suspendOutput() async -> PlaybackSnapshot {
         let state = await snapshot()
         return state.isPlaying ? ((try? await togglePlayback()) ?? state) : state
@@ -128,6 +134,22 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
             guard seconds.isFinite, let session = state.session else { throw AudioFailure("No seekable file is open.") }
             do {
                 try session.seek(seconds)
+                state.error = nil; state.needsRecovery = false
+                return state.snapshot()
+            } catch {
+                try? session.pause()
+                state.error = error.localizedDescription
+                state.needsRecovery = error is OutputRecoveryFailure
+                throw error
+            }
+        }
+    }
+
+    public func seek(to seconds: Double, resume: Bool) async throws -> PlaybackSnapshot {
+        try await perform { state in
+            guard seconds.isFinite, let session = state.session else { throw AudioFailure("No seekable file is open.") }
+            do {
+                try session.seek(seconds, resume: resume)
                 state.error = nil; state.needsRecovery = false
                 return state.snapshot()
             } catch {
@@ -386,18 +408,23 @@ private final class OutputSession {
 
     deinit { close() }
 
-    func play() throws {
+    private func resumeDevice() throws {
         guard let unit, !closed else { throw AudioFailure("The output session is closed.") }
-        try device.validate(rate: decoder.source.sampleRate)
-        // Explicit start may configure/query HAL. Periodic snapshots never do.
-        deviceMonitor?.reset(output: try? device.description())
-        if position >= duration { try seek(0) }
         try prime()
         didFinish = false
         do { try checkAudio(AudioOutputUnitStart(unit), "Start AUHAL") }
         catch { throw OutputRecoveryFailure(message: error.localizedDescription) }
         isPlaying = true
         deviceMonitor?.setActive(true)
+    }
+
+    func play() throws {
+        guard let unit, !closed else { throw AudioFailure("The output session is closed.") }
+        try device.validate(rate: decoder.source.sampleRate)
+        // Explicit start may configure/query HAL. Periodic snapshots never do.
+        deviceMonitor?.reset(output: try? device.description())
+        if position >= duration { try seek(0, resume: false) }
+        try resumeDevice()
     }
 
     func pause() throws {
@@ -408,15 +435,17 @@ private final class OutputSession {
         deviceMonitor?.setActive(false)
     }
 
-    func seek(_ seconds: Double) throws {
-        let resume = isPlaying
-        try pause()
+    func seek(_ seconds: Double, resume: Bool? = nil) throws {
+        let shouldResume = resume ?? isPlaying
+        if isPlaying { try pause() }
         let target = Int64(max(0, min(seconds, duration)) * decoder.source.sampleRate)
         try pcm.seek(seconds)
         didFinish = false
-        try prime()
-        if resume && target < decoder.frameCount { try play() }
-        else if resume && target == decoder.frameCount { didFinish = true }
+        // A paused scrub preview needs neither decoded lead-in nor a device
+        // restart; the release seek primes and starts once.
+        guard shouldResume else { return }
+        if target < decoder.frameCount { try resumeDevice() }
+        else if target == decoder.frameCount { didFinish = true }
     }
 
     func pump() throws {

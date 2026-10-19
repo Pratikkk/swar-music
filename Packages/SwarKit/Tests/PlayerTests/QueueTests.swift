@@ -23,6 +23,52 @@ struct QueueTests {
         player.shutdown()
     }
 
+    @Test func scrubbingWhilePlayingKeepsIntermediateSeeksPausedAndReleaseResumes() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let song = entry("one")
+        await player.play([song])
+        #expect(player.isPlaying)
+
+        player.beginScrubbing()
+        #expect(player.isScrubbing)
+
+        await player.scrub(to: 3)
+        #expect(!player.isPlaying)
+        #expect(player.position == 3)
+
+        await player.scrub(to: 5)
+        #expect(!player.isPlaying)
+        #expect(player.position == 5)
+
+        await player.endScrubbing(at: 7)
+        #expect(!player.isScrubbing)
+        #expect(player.isPlaying)
+        #expect(player.position == 7)
+
+        player.shutdown()
+    }
+
+    @Test func cancellingScrubRestoresPlayingState() async throws {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let song = entry("one")
+        await player.play([song])
+        #expect(player.isPlaying)
+
+        player.beginScrubbing()
+        await player.scrub(to: 4)
+        #expect(!player.isPlaying)
+
+        player.cancelScrubbing()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!player.isScrubbing)
+        #expect(player.isPlaying)
+        #expect(player.position == 4)
+
+        player.shutdown()
+    }
+
     @Test func removalUndoPreservesCurrentPlaybackDuplicatesAndNewInsertions() async {
         let engine = QueueTestEngine()
         let player = Player(engine: engine)
@@ -896,12 +942,15 @@ private final class QueueTestEngine: PlaybackDriving, @unchecked Sendable {
         }
     }
     func seek(to seconds: Double) async throws -> PlaybackSnapshot {
+        try await seek(to: seconds, resume: lock.withLock { value.isPlaying })
+    }
+    func seek(to seconds: Double, resume: Bool) async throws -> PlaybackSnapshot {
         let first = lock.withLock { seekHistory.append(seconds); return seekHistory.count == 1 }
         if first, let seekGate { await seekGate.block() }
         return try lock.withLock {
             if seekFailure { seekFailure = false; throw CocoaError(.fileReadCorruptFile) }
-            let completed = value.isPlaying && seconds >= 10
-            value = PlaybackSnapshot(duration: 10, position: seconds, isPlaying: value.isPlaying && !completed, didFinish: completed)
+            let completed = resume && seconds >= 10
+            value = PlaybackSnapshot(duration: 10, position: seconds, isPlaying: resume && !completed, didFinish: completed)
             return value
         }
     }
