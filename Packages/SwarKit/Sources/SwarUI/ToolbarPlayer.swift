@@ -129,14 +129,9 @@ struct ToolbarPlayer: View {
 @MainActor
 private struct FloatingPlayerSeekBar: View {
     let player: Player
-    @State private var scrubbing = false
-    @State private var seekPosition = 0.0
-    @State private var seekURL: URL?
+    @State private var seek = SeekSliderState()
 
-    private var displayedPosition: Double {
-        let value = scrubbing ? seekPosition : player.position
-        return value.isFinite ? max(0, min(value, max(0, player.duration))) : 0
-    }
+    private var displayedPosition: Double { seek.displayedPosition(player.position) }
 
     var body: some View {
         HStack(spacing: 5) {
@@ -144,35 +139,13 @@ private struct FloatingPlayerSeekBar: View {
                 .frame(width: player.duration >= 3600 ? 48 : 34, alignment: .trailing)
                 .accessibilityLabel("Elapsed time")
                 .accessibilityValue(time(displayedPosition))
-            seekSlider
+            PlaybackSeekControl(player: player, state: $seek, mini: true)
             Text("−" + time(max(0, player.duration - displayedPosition)))
                 .frame(width: player.duration >= 3600 ? 56 : 42, alignment: .leading)
                 .accessibilityLabel("Remaining time")
                 .accessibilityValue(time(max(0, player.duration - displayedPosition)))
         }
         .font(.system(size: 9, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
-    }
-
-    private var seekSlider: some View {
-        Slider(value: Binding(get: { scrubbing ? seekPosition : player.position }, set: { seekPosition = $0 }),
-               in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
-            if editing {
-                seekURL = player.currentURL
-                scrubbing = true
-            } else {
-                let target = seekPosition
-                scrubbing = false
-                guard let seekURL, seekURL == player.currentURL, player.duration > 0, !player.isBusy else { return }
-                Task { await player.seek(to: target) }
-            }
-        })
-        .controlSize(.mini).accessibilityLabel("Playback position")
-        .accessibilityValue("\(Int(player.position)) of \(Int(player.duration)) seconds")
-        .disabled(player.duration == 0)
-        .allowsHitTesting(!player.isBusy || player.isSeeking)
-        .onAppear { seekPosition = player.position }
-        .onChange(of: player.position) { _, position in if !scrubbing { seekPosition = position } }
-        .onChange(of: player.currentURL) { scrubbing = false; seekURL = nil; seekPosition = player.position }
     }
 
     private func time(_ seconds: Double) -> String {

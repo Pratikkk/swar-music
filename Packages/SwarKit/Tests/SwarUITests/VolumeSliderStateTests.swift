@@ -2,6 +2,27 @@ import Testing
 @testable import SwarUI
 
 struct VolumeSliderStateTests {
+    @Test func liveWritesWhileDraggingNeverReplaceThePointerPreview() throws {
+        var state = ready()
+        state.begin(); state.change(to: 0.65)
+        let candidate = state.request()
+        let live = try #require(candidate)
+        let submitted = state.submit(live)
+        #expect(submitted, "Live hardware writes must be allowed during a drag")
+        state.change(to: 0.85)
+        state.finish(live, level: 0.625, deviceID: 42, available: true, writing: false)
+        state.synchronize(level: 0.625, deviceID: 42, available: true)
+        #expect(state.dragging && state.value == 0.85)
+        let finalCandidate = state.end()
+        let final = try #require(finalCandidate)
+        state.finish(live, level: 0.625, deviceID: 42, available: true, writing: false)
+        #expect(state.value == 0.85)
+        let finalSubmitted = state.submit(final)
+        #expect(finalSubmitted)
+        state.finish(final, level: 0.875, deviceID: 42, available: true, writing: false)
+        #expect(state.value == 0.875)
+    }
+
     private func ready() -> VolumeSliderState {
         var state = VolumeSliderState()
         state.synchronize(level: 0.4, deviceID: 42, available: true)

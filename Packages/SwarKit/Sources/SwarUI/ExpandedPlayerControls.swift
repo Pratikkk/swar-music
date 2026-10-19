@@ -6,11 +6,9 @@ import Player
 struct ExpandedPlayerControls: View {
     @Environment(\.swarPalette) private var palette
     let player: Player
-    @State private var scrubbing = false
-    @State private var seekPosition = 0.0
-    @State private var seekURL: URL?
+    @State private var seek = SeekSliderState()
 
-    private var displayedPosition: Double { scrubbing ? seekPosition : player.position }
+    private var displayedPosition: Double { seek.displayedPosition(player.position) }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -18,34 +16,14 @@ struct ExpandedPlayerControls: View {
                 HStack {
                     Text(time(displayedPosition)).frame(width: 46, alignment: .leading)
                     Spacer()
-                    Text("Seek to " + time(seekPosition)).foregroundStyle(palette.accent)
-                        .opacity(scrubbing ? 1 : 0).accessibilityHidden(!scrubbing)
+                    Text("Seek to " + time(seek.value)).foregroundStyle(palette.accent)
+                        .opacity(seek.dragging ? 1 : 0).accessibilityHidden(!seek.dragging)
                     Spacer()
                     Text("−" + time(ceil(max(0, player.duration - displayedPosition))))
                         .frame(width: 46, alignment: .trailing)
                 }
                 .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
-                Slider(value: Binding(
-                    get: { seekPosition },
-                    set: { seekPosition = $0 }
-                ), in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
-                    if editing {
-                        seekURL = player.currentURL
-                        scrubbing = true
-                    } else {
-                        let target = seekPosition
-                        scrubbing = false
-                        guard let seekURL, seekURL == player.currentURL, player.duration > 0, !player.isBusy else {
-                            seekPosition = player.position
-                            return
-                        }
-                        Task { await player.seek(to: target) }
-                    }
-                })
-                .accessibilityLabel("Playback position")
-                .accessibilityValue(time(displayedPosition) + " of " + time(player.duration))
-                .disabled(player.duration <= 0)
-                .allowsHitTesting(!player.isBusy || player.isSeeking)
+                PlaybackSeekControl(player: player, state: $seek)
             }
             HStack(spacing: 24) {
                 Button { player.toggleShuffle() } label: {
@@ -87,11 +65,7 @@ struct ExpandedPlayerControls: View {
         .frame(maxWidth: 460)
         .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 20)
         .frame(maxWidth: .infinity)
-        .onAppear { seekPosition = player.position }
-        .onChange(of: player.position) { _, position in
-            if !scrubbing { seekPosition = position }
-        }
-        .onChange(of: player.currentURL) { scrubbing = false; seekURL = nil; seekPosition = player.position }
+
     }
 
     private func time(_ seconds: Double) -> String {

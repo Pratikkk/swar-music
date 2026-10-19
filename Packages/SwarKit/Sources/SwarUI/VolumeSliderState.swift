@@ -50,7 +50,7 @@ struct VolumeSliderState {
     }
 
     mutating func submit(_ request: Request) -> Bool {
-        guard available, !dragging, pending == request else { return false }
+        guard available, pending == request else { return false }
         submitted = true
         return true
     }

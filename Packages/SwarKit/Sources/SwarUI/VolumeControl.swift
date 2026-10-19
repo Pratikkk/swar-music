@@ -16,7 +16,7 @@ struct VolumeControl: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: player.outputVolume.isMuted || (player.outputVolume.level ?? 0) == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+            Image(systemName: player.outputVolume.isMuted || slider.value == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
                 .font(.caption).foregroundStyle(.secondary).accessibilityHidden(true)
             Slider(value: Binding(
                 get: { slider.value },
@@ -34,13 +34,27 @@ struct VolumeControl: View {
             .allowsHitTesting(player.canSetOutputVolume)
             .accessibilityLabel("Output volume")
             .accessibilityValue(player.outputVolume.level.map { _ in "\(Int((slider.value * 100).rounded())) percent\(player.outputVolume.isMuted ? ", muted" : "")" } ?? "Unavailable")
+            Text(player.outputVolume.canSet ? "\(Int((slider.value * 100).rounded()))%" : "–")
+                .font(.system(size: 9, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
+                .frame(width: 29, alignment: .trailing).accessibilityHidden(true)
             if player.volumeError != nil {
                 Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
                     .accessibilityLabel(help)
             }
         }
-        .frame(width: expanded ? 180 : 100)
+        .frame(width: expanded ? 216 : 136)
         .help(help)
+        .task(id: slider.dragging) {
+            guard slider.dragging else { return }
+            var lastLevel: Double? = player.outputVolume.level
+            while slider.dragging && !Task.isCancelled {
+                if lastLevel != slider.value, let request = slider.request() {
+                    lastLevel = request.level
+                    await write(request)
+                }
+                do { try await Task.sleep(for: .milliseconds(60)) } catch { return }
+            }
+        }
         .onChange(of: player.outputVolume, initial: true) { synchronize() }
         .onChange(of: player.canSetOutputVolume) { synchronize() }
         .onChange(of: player.isSettingOutputVolume) {
@@ -59,17 +73,19 @@ struct VolumeControl: View {
     }
 
     private func commit(_ request: VolumeSliderState.Request) {
-        Task {
-            guard player.outputVolume.deviceID == request.deviceID, player.canSetOutputVolume else {
-                synchronize()
-                return
-            }
-            guard slider.submit(request) else { return }
-            await player.setVolume(to: request.level)
-            // A coalesced call can return before its queued write finishes.
-            // In that case the writing-state observer settles the final value.
-            slider.finish(request, level: player.outputVolume.level, deviceID: player.outputVolume.deviceID,
-                          available: player.canSetOutputVolume, writing: player.isSettingOutputVolume)
+        Task { await write(request) }
+    }
+
+    private func write(_ request: VolumeSliderState.Request) async {
+        guard !Task.isCancelled else { return }
+        guard player.outputVolume.deviceID == request.deviceID, player.canSetOutputVolume else {
+            synchronize()
+            return
         }
+        guard slider.submit(request) else { return }
+        await player.setVolume(to: request.level)
+        // Coalesced calls can return before the latest hardware write finishes.
+        slider.finish(request, level: player.outputVolume.level, deviceID: player.outputVolume.deviceID,
+                      available: player.canSetOutputVolume, writing: player.isSettingOutputVolume)
     }
 }
