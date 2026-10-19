@@ -32,8 +32,8 @@ final class OutputDevice {
     private var requestedRate: Double?
     private var changedPhysical = false
 
-    init() throws {
-        id = try Self.value(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, initial: AudioDeviceID(0))
+    init(id selectedID: AudioDeviceID? = nil) throws {
+        id = try selectedID ?? Self.value(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, initial: AudioDeviceID(0))
         guard id != kAudioObjectUnknown else { throw AudioFailure("No default audio output is available.") }
         let streams: [AudioStreamID] = try Self.array(id, kAudioDevicePropertyStreams, scope: kAudioDevicePropertyScopeOutput)
         guard let first = streams.first else { throw AudioFailure("The output has no audio stream.") }
@@ -53,7 +53,7 @@ final class OutputDevice {
         }
         let ranges: [AudioValueRange] = try Self.array(id, kAudioDevicePropertyAvailableNominalSampleRates)
         guard ranges.contains(where: { $0.mMinimum <= source.sampleRate && source.sampleRate <= $0.mMaximum }) else {
-            throw AudioFailure("\(name) does not support \(source.sampleRate / 1000) kHz. Choose a compatible output in macOS Sound settings and reopen the file.")
+            throw AudioFailure("\(name) does not support \(source.sampleRate / 1000) kHz. Choose a compatible output in Swar.")
         }
         requestedRate = source.sampleRate
         if originalRate != source.sampleRate {
@@ -90,7 +90,7 @@ final class OutputDevice {
 
     private static func validate(id: AudioDeviceID, rate: Double) throws {
         let alive = try Self.value(id, kAudioDevicePropertyDeviceIsAlive, initial: UInt32(0))
-        guard alive != 0 else { throw AudioFailure("The output device disconnected. Reconnect it and reopen the file.") }
+        guard alive != 0 else { throw AudioFailure("The output device disconnected. Choose another output in Swar.") }
         let actual = try Self.value(id, kAudioDevicePropertyNominalSampleRate, initial: Double(0))
         guard actual == rate else { throw AudioFailure("The output sample rate changed outside Swar. Reopen the file to configure playback again.") }
     }

@@ -8,7 +8,7 @@ import Testing
 @MainActor
 struct VolumeTests {
     @Test func unchangedHardwareVolumeDoesNotInvalidateViews() async {
-        let player = Player(volumeController: TestVolumeController())
+        let player = Player(volumeController: TestVolumeController(), outputsReader: EmptyOutputs())
         await player.refreshVolume()
         let changes = OSAllocatedUnfairLock(initialState: 0)
         withObservationTracking { _ = player.outputVolume } onChange: { changes.withLock { $0 += 1 } }
@@ -19,7 +19,7 @@ struct VolumeTests {
 
     @Test func volumeClampsRejectsInvalidValuesAndDoesNotOpenPlayback() async {
         let controller = TestVolumeController()
-        let player = Player(volumeController: controller)
+        let player = Player(volumeController: controller, outputsReader: EmptyOutputs())
         await player.refreshVolume()
         #expect(player.outputVolume.level == 0.4)
         await player.setVolume(to: 4)
@@ -34,7 +34,7 @@ struct VolumeTests {
 
     @Test func unavailableVolumeDoesNotWriteAndDeviceChangesClearOldErrors() async {
         let controller = TestVolumeController()
-        let player = Player(volumeController: controller)
+        let player = Player(volumeController: controller, outputsReader: EmptyOutputs())
         await controller.change(OutputVolume(deviceID: 42))
         await player.refreshVolume()
         await player.setVolume(to: 0.5)
@@ -57,7 +57,7 @@ struct VolumeTests {
 
     @Test func rapidChangesCoalesceToTheLastRequestedLevel() async {
         let controller = TestVolumeController(gated: true)
-        let player = Player(volumeController: controller)
+        let player = Player(volumeController: controller, outputsReader: EmptyOutputs())
         await player.refreshVolume()
         let first = Task { await player.setVolume(to: 0.2) }
         await controller.waitUntilWriting()
@@ -104,4 +104,8 @@ private actor TestVolumeController: OutputVolumeControlling {
         await withCheckedContinuation { waiting = $0 }
     }
     func release() { held?.resume(); held = nil }
+}
+
+private struct EmptyOutputs: AudioOutputsReading {
+    func snapshot() async throws -> AudioOutputs { AudioOutputs() }
 }

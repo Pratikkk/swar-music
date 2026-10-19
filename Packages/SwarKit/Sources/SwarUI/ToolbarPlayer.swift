@@ -115,6 +115,7 @@ struct ToolbarPlayer: View {
             }
             .frame(minWidth: 0, maxWidth: .infinity)
             VolumeControl(player: player)
+            OutputDevicePicker(player: player)
             Button { showQueue.toggle() } label: { Image(systemName: "list.bullet").frame(width: 24, height: 32) }
                 .foregroundStyle(showQueue ? Color.accentColor : .secondary)
                 .accessibilityLabel("Show Queue").help("Up Next")

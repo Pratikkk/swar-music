@@ -58,8 +58,7 @@ struct ExpandedPlayerControls: View {
             .buttonStyle(PlaybackButtonStyle()).foregroundStyle(.primary)
             HStack(spacing: 12) {
                 VolumeControl(player: player, expanded: true)
-                Text(player.outputVolume.deviceName).font(.system(size: 10))
-                    .foregroundStyle(.secondary).lineLimit(1).frame(maxWidth: 120, alignment: .leading)
+                OutputDevicePicker(player: player, expanded: true)
             }
         }
         .frame(maxWidth: 460)

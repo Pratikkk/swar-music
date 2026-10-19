@@ -26,10 +26,17 @@ public struct PlaybackSnapshot: Sendable {
 /// Also allows queue behavior to be tested without touching an audio device.
 public protocol PlaybackDriving: Sendable {
     func open(_ url: URL) async throws -> PlaybackSnapshot
+    func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot
     func togglePlayback() async throws -> PlaybackSnapshot
     func seek(to seconds: Double) async throws -> PlaybackSnapshot
     func snapshot() async -> PlaybackSnapshot
     func shutdown()
+    func selectOutput(_ deviceID: UInt32?, pause: Bool) async throws -> PlaybackSnapshot
+}
+
+public extension PlaybackDriving {
+    func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot { try await open(url) }
+    func selectOutput(_ deviceID: UInt32?, pause: Bool) async throws -> PlaybackSnapshot { await snapshot() }
 }
 
 private let engineLog = Logger(subsystem: "catto.swar", category: "AudioEngine")
@@ -57,15 +64,27 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
 
     public func open(_ url: URL) async throws -> PlaybackSnapshot {
         try await perform { state in
+            try Self.open(url, on: state)
+        }
+    }
+
+    public func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot {
+        try await perform { state in
+            state.deviceID = outputDeviceID
+            return try Self.open(url, on: state)
+        }
+    }
+
+    private static func open(_ url: URL, on state: EngineState) throws -> PlaybackSnapshot {
+        state.closeSession()
+        do {
+            state.session = try OutputSession(decoder: DecoderFactory.open(url: url), deviceID: state.deviceID)
+            state.url = url
+            state.error = nil
+            return state.snapshot()
+        } catch {
             state.closeSession()
-            do {
-                state.session = try OutputSession(decoder: DecoderFactory.open(url: url))
-                state.error = nil
-                return state.snapshot()
-            } catch {
-                state.closeSession()
-                throw error
-            }
+            throw error
         }
     }
 
@@ -96,6 +115,59 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 try? session.pause()
                 state.error = error.localizedDescription
                 throw error
+            }
+        }
+    }
+
+    public func selectOutput(_ deviceID: UInt32?, pause: Bool = false) async throws -> PlaybackSnapshot {
+        try await perform { state in
+            guard let session = state.session, let url = state.url else {
+                state.deviceID = deviceID
+                if let recovery = state.routeRecovery {
+                    do {
+                        let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), deviceID: deviceID)
+                        state.session = replacement; state.url = recovery.url
+                        try replacement.seek(recovery.position)
+                        state.routeRecovery = nil; state.error = nil
+                    } catch {
+                        state.closeSession(); state.routeRecovery = recovery
+                        throw error
+                    }
+                }
+                return state.snapshot()
+            }
+            if session.device.id == deviceID, session.outputStatus.error == nil, state.error == nil {
+                state.error = nil
+                if pause { try session.pause() }
+                state.deviceID = deviceID
+                return state.snapshot()
+            }
+            let previous = state.deviceID
+            let position = session.position
+            let resume = session.isPlaying && !pause
+            state.closeSession()
+            do {
+                let replacement = try OutputSession(decoder: DecoderFactory.open(url: url), deviceID: deviceID)
+                state.session = replacement; state.url = url
+                try replacement.seek(position)
+                if resume { try replacement.play() }
+                state.deviceID = deviceID
+                return state.snapshot()
+            } catch {
+                let failure = error
+                state.closeSession()
+                // Best-effort rollback retains the song and position on an incompatible output.
+                do {
+                    let old = try OutputSession(decoder: DecoderFactory.open(url: url), deviceID: previous)
+                    state.session = old; state.url = url
+                    try old.seek(position)
+                    if resume { try old.play() }
+                } catch { state.closeSession() }
+                if state.session == nil {
+                    state.routeRecovery = (url, position)
+                    state.error = failure.localizedDescription
+                }
+                throw failure
             }
         }
     }
@@ -133,6 +205,9 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
 private final class EngineState: @unchecked Sendable {
     // Every field is accessed only on AudioPlaybackEngine.queue.
     var session: OutputSession?
+    var deviceID: UInt32?
+    var url: URL?
+    var routeRecovery: (url: URL, position: Double)?
     var error: String?
     private var timer: DispatchSourceTimer?
     private var pumping = false
@@ -176,7 +251,7 @@ private final class EngineState: @unchecked Sendable {
                                 error: error, didFinish: session?.didFinish ?? false)
     }
 
-    func closeSession() { session?.close(); session = nil; error = nil }
+    func closeSession() { session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil }
     func close() { timer?.cancel(); timer = nil; pumping = false; closeSession() }
 }
 
@@ -198,9 +273,9 @@ private final class OutputSession {
         min(duration, Double(baseFrame + Int64(ring.map(swar_ring_consumed) ?? 0)) / decoder.source.sampleRate)
     }
 
-    init(decoder: any AudioDecoding) throws {
+    init(decoder: any AudioDecoding, deviceID: UInt32? = nil) throws {
         self.decoder = decoder
-        device = try OutputDevice()
+        device = try OutputDevice(id: deviceID)
         scratch = .allocate(byteCount: 4096 * Int(decoder.pcmFormat.mBytesPerFrame), alignment: 16)
         do {
             try device.configure(for: decoder.source)

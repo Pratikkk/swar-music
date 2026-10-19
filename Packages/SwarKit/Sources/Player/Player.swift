@@ -28,6 +28,22 @@ public final class Player {
     public private(set) var sessionNotice: String?
     public private(set) var outputVolume = OutputVolume()
     public private(set) var volumeError: String?
+    public private(set) var audioOutputs = AudioOutputs()
+    public private(set) var preferredOutputUID: String?
+    public private(set) var outputNotice: String?
+    @ObservationIgnored private let outputsReader: any AudioOutputsReading
+    @ObservationIgnored private let outputPreferences: UserDefaults
+    @ObservationIgnored private var lastOutputCheck = -Double.infinity
+    @ObservationIgnored private var checkingOutputs = false
+    @ObservationIgnored private var routedOutputID: UInt32?
+    @ObservationIgnored private var failedAutomaticRoute: UInt32?
+    public var preferredOutputUnavailable: Bool {
+        preferredOutputUID.map { uid in !audioOutputs.devices.contains { $0.uid == uid } } ?? false
+    }
+    public var selectedOutputName: String {
+        audioOutputs.resolve(preferredOutputUID)?.name ?? "No Output"
+    }
+
     private var settingVolume = false
     private var pendingVolume: (Double, UInt32)?
     private var volumeDeviceID: UInt32?
@@ -151,8 +167,11 @@ public final class Player {
     private var scopedAccess: ScopedFileAccess?
     private var generation = 0
 
-    public init(engine: any PlaybackDriving = AudioPlaybackEngine(), sessionStore: PlaybackSessionStore? = nil, volumeController: any OutputVolumeControlling = HardwareVolumeController(), sleepTimer: SleepTimer? = nil) {
+    public init(engine: any PlaybackDriving = AudioPlaybackEngine(), sessionStore: PlaybackSessionStore? = nil, volumeController: any OutputVolumeControlling = HardwareVolumeController(), sleepTimer: SleepTimer? = nil, outputsReader: any AudioOutputsReading = SystemAudioOutputs(), outputPreferences: UserDefaults = .standard) {
         self.engine = engine
+        self.outputsReader = outputsReader
+        self.outputPreferences = outputPreferences
+        self.preferredOutputUID = outputPreferences.string(forKey: "preferredOutputUID")
         self.sessionStore = sessionStore
         self.volumeController = volumeController
         self.sleepTimer = sleepTimer ?? SleepTimer()
@@ -177,11 +196,80 @@ public final class Player {
 
     public func refreshVolume() async {
         guard !isShutDown, !settingVolume else { return }
+        await refreshOutputs()
+        guard !isShutDown, !isBusy else { return }
         let revision = generation
-        let volume = await volumeController.snapshot(deviceID: volumeDeviceID)
+        let volume = await volumeController.snapshot(deviceID: volumeDeviceID ?? audioOutputs.resolve(preferredOutputUID)?.id)
         guard !isShutDown, !settingVolume, revision == generation else { return }
         if outputVolume.deviceID != volume.deviceID || !volume.canSet { volumeError = nil }
         if outputVolume != volume { outputVolume = volume }
+    }
+
+    public func refreshOutputs(force: Bool = false) async {
+        guard !isShutDown, !checkingOutputs,
+              force || ProcessInfo.processInfo.systemUptime - lastOutputCheck >= 2 else { return }
+        checkingOutputs = true
+        defer { checkingOutputs = false }
+        lastOutputCheck = ProcessInfo.processInfo.systemUptime
+        do {
+            let outputs = try await outputsReader.snapshot()
+            guard !isShutDown else { return }
+            if audioOutputs != outputs { audioOutputs = outputs; failedAutomaticRoute = nil }
+            guard !isBusy else { return }
+            if !outputs.devices.isEmpty, outputNotice == "No audio output is available." || outputNotice?.hasPrefix("Couldn’t list audio outputs:") == true { outputNotice = nil }
+            let lostActive = routedOutputID.map { id in !outputs.devices.contains { $0.id == id } } ?? false
+            guard let target = outputs.resolve(preferredOutputUID) else {
+                if lostActive, isPlaying { await control { try await self.engine.togglePlayback() } }
+                outputNotice = "No audio output is available."
+                return
+            }
+            guard target.id != routedOutputID, target.id != failedAutomaticRoute else { return }
+            await routeOutput(target.id, pause: lostActive)
+            if outputNotice != nil { failedAutomaticRoute = target.id }
+            else if lostActive { outputNotice = "Output disconnected. Playback paused." }
+        } catch { outputNotice = "Couldn’t list audio outputs: " + error.localizedDescription }
+    }
+
+    public func selectOutput(uid: String?) async {
+        guard !isBusy, !isShutDown else { return }
+        do {
+            let outputs = try await outputsReader.snapshot()
+            guard !isBusy, !isShutDown else { return }
+            if audioOutputs != outputs { audioOutputs = outputs }
+        } catch { outputNotice = "Couldn’t list audio outputs: " + error.localizedDescription; return }
+        guard uid == nil || audioOutputs.devices.contains(where: { $0.uid == uid }) else {
+            outputNotice = "This output is no longer available."; return
+        }
+        guard let target = audioOutputs.resolve(uid) else { outputNotice = "No audio output is available."; return }
+        await routeOutput(target.id, pause: false)
+        guard outputNotice == nil, !isShutDown else { return }
+        preferredOutputUID = uid
+        outputPreferences.set(uid, forKey: "preferredOutputUID")
+        failedAutomaticRoute = nil
+    }
+
+    private func routeOutput(_ id: UInt32, pause: Bool) async {
+        guard !isBusy, !isShutDown else { return }
+        isBusy = true; generation += 1
+        pendingVolume = nil
+        listenCounter.interrupt()
+        defer { isBusy = false }
+        do {
+            let snapshot = try await engine.selectOutput(id, pause: pause)
+            guard !isShutDown else { return }
+            routedOutputID = id; outputNotice = nil
+            if !isRestoredSession, currentURL != nil { apply(snapshot) }
+            volumeDeviceID = id
+            outputVolume = await volumeController.snapshot(deviceID: id)
+        } catch {
+            guard !isShutDown else { return }
+            if !isRestoredSession, currentURL != nil {
+                let snapshot = await engine.snapshot()
+                if snapshot.duration > 0 { apply(snapshot) }
+                else { isPlaying = false } // Retain song/position for output recovery.
+            }
+            outputNotice = error.localizedDescription
+        }
     }
 
     public func setVolume(to level: Double) async {
@@ -282,7 +370,11 @@ public final class Player {
         scopedAccess = ScopedFileAccess(accessRoot ?? url)
         defer { withExtendedLifetime(oldAccess) {} }
         do {
-            var snapshot = try await engine.open(url)
+            // A missing catalogue must never turn a playable song into an import/open error.
+            if let outputs = try? await outputsReader.snapshot(), audioOutputs != outputs { audioOutputs = outputs }
+            let target = audioOutputs.resolve(preferredOutputUID)?.id
+            var snapshot = try await engine.open(url, outputDeviceID: target)
+            routedOutputID = snapshot.output?.id ?? target
             guard generation == revision, !isShutDown else { return false }
             let presentation = entry == nil && snapshot.source != nil
                 ? await Task.detached(priority: .utility) { TrackPresentation.read(url: url) }.value : nil
@@ -307,6 +399,7 @@ public final class Player {
                 artworkURL = change.artworkURL
             } else { artworkURL = entry?.artworkURL ?? presentation?.artworkURL }
             currentURL = url
+            outputNotice = nil
             sourceRevision &+= 1
             if entry == nil {
                 standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle,
@@ -364,6 +457,7 @@ public final class Player {
             return
         }
         await control { try await self.engine.togglePlayback() }
+        if isPlaying { outputNotice = nil }
     }
 
     public func seek(to seconds: Double) async {
