@@ -130,6 +130,7 @@ private struct NowPlayingArtwork: View {
             .multilineTextAlignment(.center)
             .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 10).padding(.bottom, 8)
         }
+        .scrollIndicators(.never)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: player.isBusy) {
             showActivity = false
