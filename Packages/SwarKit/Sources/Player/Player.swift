@@ -15,7 +15,14 @@ public final class Player {
     public private(set) var sourceDescription: String?
     public private(set) var outputDescription: String?
     public private(set) var duration: Double = 0
-    public private(set) var position: Double = 0
+    public private(set) var position: Double = 0 {
+        didSet {
+            let progressed = position > 0
+            if hasPlaybackProgress != progressed { hasPlaybackProgress = progressed }
+        }
+    }
+    // Command/transport availability changes at zero, not on every clock tick.
+    private var hasPlaybackProgress = false
     public private(set) var isPlaying = false
     public private(set) var isBusy = false { didSet { if !isBusy { scheduleGapless() } } }
     public private(set) var isSeeking = false
@@ -171,7 +178,7 @@ public final class Player {
     public var currentQueueIndex: Int? { queue.firstIndex { $0.id == currentEntryID } }
     public var canGoNext: Bool { currentQueueIndex.map { $0 + 1 < queue.count || (repeatMode == .all && !queue.isEmpty) } ?? !queue.isEmpty }
     public var canTogglePlayback: Bool { !isSystemSleeping && (duration > 0 || isRestoredSession || (currentEntryID == nil && !queue.isEmpty)) }
-    public var canGoPrevious: Bool { currentQueueIndex.map { $0 > 0 || position > 0 } ?? false }
+    public var canGoPrevious: Bool { currentQueueIndex.map { $0 > 0 || hasPlaybackProgress } ?? false }
     public var upcomingEntries: [QueueEntry] {
         guard let index = currentQueueIndex else { return queue }
         return Array(queue.dropFirst(index + 1))

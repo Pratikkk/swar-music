@@ -10,6 +10,16 @@ struct SeekSliderStateTests {
         return state
     }
 
+    @Test func dragStartsAtTheLiveClockWithoutMirroringEveryTick() {
+        var state = ready()
+        #expect(state.value == 10)
+        #expect(state.displayedPosition(55.25) == 55.25)
+        state.begin(at: state.displayedPosition(55.25))
+        #expect(state.value == 55.25 && state.displayedPosition(56) == 55.25)
+        state.change(to: 72)
+        #expect(state.displayedPosition(56) == 72)
+    }
+
     @Test func liveDragAndReleaseKeepLatestPreviewUntilFinalSeekSettles() throws {
         var state = ready()
         state.begin(); state.change(to: 40)

@@ -415,6 +415,29 @@ struct QueueTests {
         #expect(restored.url == song.url)
     }
 
+    @Test func previousAvailabilityDoesNotObserveEveryPlaybackTick() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        await player.play([entry("one"), entry("two")])
+        defer { player.shutdown() }
+        #expect(!player.canGoPrevious)
+        let firstChange = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking { _ = player.canGoPrevious } onChange: { firstChange.withLock { $0 += 1 } }
+        engine.progress(to: 0.2); await player.refresh()
+        #expect(player.canGoPrevious && firstChange.withLock { $0 } == 1)
+        let clockChanges = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking { _ = player.canGoPrevious } onChange: { clockChanges.withLock { $0 += 1 } }
+        for tick in 2...30 { engine.progress(to: Double(tick) / 5); await player.refresh() }
+        #expect(player.position == 6 && clockChanges.withLock { $0 } == 0)
+        engine.progress(to: 0); await player.refresh()
+        #expect(!player.canGoPrevious && clockChanges.withLock { $0 } == 1)
+        await player.next()
+        let laterTrackChanges = OSAllocatedUnfairLock(initialState: 0)
+        withObservationTracking { _ = player.canGoPrevious } onChange: { laterTrackChanges.withLock { $0 += 1 } }
+        engine.progress(to: 1); await player.refresh()
+        #expect(player.canGoPrevious && laterTrackChanges.withLock { $0 } == 0)
+    }
+
     @Test func unchangedPollingDoesNotInvalidatePlaybackViews() async {
         let player = Player(engine: QueueTestEngine())
         await player.play([entry("one")])

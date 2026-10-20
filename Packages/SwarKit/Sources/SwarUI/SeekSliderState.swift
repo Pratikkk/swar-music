@@ -28,7 +28,8 @@ struct SeekSliderState {
         }
     }
 
-    mutating func begin() {
+    mutating func begin(at position: Double? = nil) {
+        if let position { value = bounded(position) }
         dragging = true
         pending = nil; submitted = false
     }

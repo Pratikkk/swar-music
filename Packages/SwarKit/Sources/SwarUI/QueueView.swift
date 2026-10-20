@@ -12,6 +12,7 @@ struct QueueView: View {
     var embedded = false
 
     var body: some View {
+        let upcoming = player.upcomingEntries
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Queue").font(.headline)
@@ -20,14 +21,14 @@ struct QueueView: View {
                     Button("Save Queue as Playlist…") { savingQueue = player.queue }
                         .disabled(player.queue.isEmpty || !library.isReady)
                     Button("Save Up Next as Playlist…") { savingQueue = player.upcomingEntries }
-                        .disabled(player.upcomingEntries.isEmpty || !library.isReady)
+                        .disabled(upcoming.isEmpty || !library.isReady)
                     Divider()
                     Button("Clear Up Next") { player.clearUpcoming() }
-                        .disabled(player.upcomingEntries.isEmpty)
+                        .disabled(upcoming.isEmpty)
                 } label: { Image(systemName: "ellipsis.circle") }
                 .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Queue options")
                 Button("Clear") { player.clearUpcoming() }
-                    .disabled(player.upcomingEntries.isEmpty || player.isBusy)
+                    .disabled(upcoming.isEmpty || player.isBusy)
             }
             if player.canUndoQueueRemoval || savedNotice != nil {
                 HStack {
@@ -46,14 +47,14 @@ struct QueueView: View {
             HStack {
                 Text("Up Next").font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text("\(player.upcomingEntries.count) \(player.upcomingEntries.count == 1 ? "track" : "tracks")").font(.caption).foregroundStyle(.tertiary)
+                Text("\(upcoming.count) \(upcoming.count == 1 ? "track" : "tracks")").font(.caption).foregroundStyle(.tertiary)
             }
-            if player.upcomingEntries.isEmpty {
+            if upcoming.isEmpty {
                 ContentUnavailableView("Nothing Up Next", systemImage: "music.note.list",
                     description: Text("Drop songs here or use Play Next."))
             } else {
                 List {
-                    ForEach(player.upcomingEntries) { entry in
+                    ForEach(upcoming) { entry in
                         HStack {
                             Image(systemName: "line.3.horizontal")
                                 .font(.caption).foregroundStyle(.tertiary)
@@ -72,11 +73,11 @@ struct QueueView: View {
                             Spacer(minLength: 4)
                             VStack(spacing: 3) {
                                 Button { move(entry, by: -1) } label: { Image(systemName: "chevron.up").frame(width: 22, height: 18) }
-                                    .disabled(player.upcomingEntries.first?.id == entry.id)
+                                    .disabled(upcoming.first?.id == entry.id)
                                     .accessibilityLabel("Move \(entry.title) Earlier")
                                     .help("Move Earlier")
                                 Button { move(entry, by: 1) } label: { Image(systemName: "chevron.down").frame(width: 22, height: 18) }
-                                    .disabled(player.upcomingEntries.last?.id == entry.id)
+                                    .disabled(upcoming.last?.id == entry.id)
                                     .accessibilityLabel("Move \(entry.title) Later")
                                     .help("Move Later")
                             }

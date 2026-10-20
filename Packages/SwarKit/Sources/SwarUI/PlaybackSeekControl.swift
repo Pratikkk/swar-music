@@ -32,7 +32,7 @@ struct PlaybackSeekControl: View {
                     isDragging: state.dragging,
                     changed: { fraction in
                         if !state.dragging {
-                            state.begin()
+                            state.begin(at: state.displayedPosition(player.position))
                             player.beginScrubbing()
                         }
                         state.change(to: fraction * player.duration)
@@ -65,7 +65,6 @@ struct PlaybackSeekControl: View {
             }
         }
         .onChange(of: player.currentURL, initial: true) { synchronize() }
-        .onChange(of: player.position) { synchronize() }
         .onChange(of: player.duration) { synchronize() }
         .onChange(of: player.sourceRevision) { cancel() }
         .onChange(of: player.isSeeking) {
@@ -97,7 +96,7 @@ struct PlaybackSeekControl: View {
             if !state.dragging, let request = state.request() { commit(request, final: true) }
         }), in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
             if editing {
-                state.begin()
+                state.begin(at: state.displayedPosition(player.position))
                 player.beginScrubbing()
             } else if let request = state.end() {
                 commit(request, final: true)

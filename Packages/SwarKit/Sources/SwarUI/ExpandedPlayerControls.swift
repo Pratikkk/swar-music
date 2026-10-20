@@ -6,27 +6,9 @@ import Player
 struct ExpandedPlayerControls: View {
     @Environment(\.swarPalette) private var palette
     let player: Player
-    @State private var seek = SeekSliderState()
-    @AppStorage("waveformSeekBar") private var waveformEnabled = true
-
-    private var displayedPosition: Double { seek.displayedPosition(player.position) }
-
     var body: some View {
         VStack(spacing: 12) {
-            VStack(spacing: 2) {
-                HStack {
-                    Text(time(displayedPosition)).frame(width: 46, alignment: .leading)
-                    Spacer()
-                    Text("Seek to " + time(seek.value)).foregroundStyle(palette.accent)
-                        .opacity(seek.dragging && !waveformEnabled ? 1 : 0)
-                        .accessibilityHidden(!seek.dragging || waveformEnabled)
-                    Spacer()
-                    Text("−" + time(ceil(max(0, player.duration - displayedPosition))))
-                        .frame(width: 46, alignment: .trailing)
-                }
-                .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
-                PlaybackSeekControl(player: player, state: $seek)
-            }
+            ExpandedSeekBar(player: player)
             HStack(spacing: 24) {
                 Button { player.toggleShuffle() } label: {
                     Image(systemName: "shuffle").frame(width: 24, height: 32)
@@ -67,6 +49,34 @@ struct ExpandedPlayerControls: View {
         .padding(.horizontal, 28).padding(.top, 24).padding(.bottom, 20)
         .frame(maxWidth: .infinity)
 
+    }
+
+}
+
+/// Clock and drag updates stay inside this small view, outside transport and volume.
+@MainActor
+private struct ExpandedSeekBar: View {
+    let player: Player
+    @Environment(\.swarPalette) private var palette
+    @State private var seek = SeekSliderState()
+    @AppStorage("waveformSeekBar") private var waveformEnabled = true
+    private var displayedPosition: Double { seek.displayedPosition(player.position) }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack {
+                Text(time(displayedPosition)).frame(width: 46, alignment: .leading)
+                Spacer()
+                Text("Seek to " + time(seek.value)).foregroundStyle(palette.accent)
+                    .opacity(seek.dragging && !waveformEnabled ? 1 : 0)
+                    .accessibilityHidden(!seek.dragging || waveformEnabled)
+                Spacer()
+                Text("−" + time(ceil(max(0, player.duration - displayedPosition))))
+                    .frame(width: 46, alignment: .trailing)
+            }
+            .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
+            PlaybackSeekControl(player: player, state: $seek)
+        }
     }
 
     private func time(_ seconds: Double) -> String {
