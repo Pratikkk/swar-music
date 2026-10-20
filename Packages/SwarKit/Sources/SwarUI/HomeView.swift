@@ -17,6 +17,9 @@ struct HomeView: View {
     let addFolder: () -> Void
     @Environment(\.floatingPlayerClearance) private var clearance
     @State private var overview: LibraryOverview?
+    /// Cached source-info for the current track, so the expensive per-track scan
+    /// only runs when the current URL changes (not on every HomeView body invalidation).
+    @State private var currentSourceInfoCache: FormatChipInfo?
 
     var body: some View {
         ScrollView {
@@ -72,6 +75,12 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .task(id: "\(library.overviewRevision)-\(library.isReady)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)") { await load() }
+        .onChange(of: player.currentURL) { _ in
+            currentSourceInfoCache = Self.sourceInfo(for: player.currentURL, library: library)
+        }
+        .task {
+            currentSourceInfoCache = Self.sourceInfo(for: player.currentURL, library: library)
+        }
     }
 
     private func load() async {
@@ -87,8 +96,10 @@ struct HomeView: View {
         .font(.system(size: 12)).foregroundStyle(.secondary)
     }
 
-    private var currentSourceInfo: FormatChipInfo? {
-        guard let url = player.currentURL?.standardizedFileURL,
+    /// Scans library tracks to find the source format of the current URL.
+    /// Expensive — call only when currentURL changes, not on every body invalidation.
+    private static func sourceInfo(for url: URL?, library: LibraryModel) -> FormatChipInfo? {
+        guard let url = url?.standardizedFileURL,
               let track = library.tracks.first(where: { (try? library.location(for: $0).file.standardizedFileURL) == url }),
               let source = track.sourceFormat else { return nil }
         return FormatClassifier.describe(source: source, path: SignalPath())
@@ -105,7 +116,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(player.currentURL == nil ? "Your queue is ready" : player.title).font(.system(size: 21, weight: .semibold)).lineLimit(2)
                     Text(player.subtitle).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
-                    if let info = player.formatInfo ?? currentSourceInfo { FormatChip(info: info) }
+                    if let info = player.formatInfo ?? currentSourceInfoCache { FormatChip(info: info) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 Button { Task { await player.togglePlayback() } } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")

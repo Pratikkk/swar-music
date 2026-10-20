@@ -36,6 +36,9 @@ struct AlbumBrowserView: View {
     @State private var loadedKey: String?
     @State private var loadGeneration = UUID()
     @State private var actionInProgress = false
+    /// Cached current track ID; resolved from player.currentURL only when it changes,
+    /// not on every AlbumBrowserView body invalidation.
+    @State private var currentTrackIDCache: String?
 
     private var refreshKey: String {
         // Favourite changes must not reset album pagination; scans, metadata and
@@ -43,7 +46,7 @@ struct AlbumBrowserView: View {
         "\(library.isReady)-\(library.trackActionsRevision)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)-\(library.searchScope)-\(library.search)-\(sortOrder)-\(reversed)-\(recent)-\(filter)"
     }
     var body: some View {
-        let currentTrackID = library.trackID(at: player.currentURL)
+        let currentTrackID = currentTrackIDCache
         ZStack {
             // Keep the browser mounted to preserve its scroll position when returning from details.
             browser.opacity(selectedAlbum == nil ? 1 : 0)
@@ -59,6 +62,12 @@ struct AlbumBrowserView: View {
         .onChange(of: library.search) { selectedAlbum = nil }
         .onChange(of: library.searchScope) { selectedAlbum = nil }
         .onChange(of: requestedAlbum, initial: true) { openRequestedAlbum() }
+        .onChange(of: player.currentURL) { _ in
+            currentTrackIDCache = library.trackID(at: player.currentURL)
+        }
+        .task {
+            currentTrackIDCache = library.trackID(at: player.currentURL)
+        }
     }
 
     private var browser: some View {

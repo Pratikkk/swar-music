@@ -132,6 +132,17 @@ public actor LibraryRepository {
             try db.alter(table: "tracks") { $0.add(column: "isMissing", .boolean).notNull().defaults(to: false) }
             try db.create(index: "tracks_location", on: "tracks", columns: ["folderID", "relativePath"], unique: true)
         }
+        migrator.registerMigration("library-duplicate-indexes-v11") { db in
+            try db.execute(sql: """
+                CREATE INDEX IF NOT EXISTS tracks_duplicates ON tracks(
+                    lower(trim(title)), lower(trim(artist)), CAST(round(duration) AS INTEGER)
+                ) WHERE error IS NULL AND duration > 0
+                    AND trim(artist) NOT IN ('', 'Unknown Artist') AND trim(title) != '';
+                CREATE INDEX IF NOT EXISTS tracks_incomplete ON tracks(
+                    error, trim(title), trim(artist), trim(album)
+                ) WHERE error IS NULL;
+                """)
+        }
         try migrator.migrate(database)
     }
 

@@ -10,8 +10,12 @@ struct LibraryContent: View {
     let library: LibraryModel
     let player: Player
     let section: String
+    /// Cached current track ID; resolved from player.currentURL only when it changes,
+    /// not on every LibraryContent body invalidation.
+    @State private var currentTrackIDCache: String?
+
     var body: some View {
-        let currentTrackID = library.trackID(at: player.currentURL)
+        let currentTrackID = currentTrackIDCache
         VStack(spacing: 0) {
             LibraryStatusBanner(library: library, inset: 12, detailedProgress: true)
             if library.totalCount > 0 {
@@ -68,6 +72,12 @@ struct LibraryContent: View {
 
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onChange(of: player.currentURL) { _ in
+            currentTrackIDCache = library.trackID(at: player.currentURL)
+        }
+        .task {
+            currentTrackIDCache = library.trackID(at: player.currentURL)
+        }
     }
 
     private var favouritePlaybackButtons: some View {
@@ -178,7 +188,6 @@ private struct ArtworkPlaybackButton: View {
     let unavailable: Bool
     let busy: Bool
     let action: () -> Void
-    @State private var hovered = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -186,14 +195,9 @@ private struct ArtworkPlaybackButton: View {
             CoverArt(url: url, title: album, maximumPixelSize: 128)
                 .frame(width: density.artworkSize, height: density.artworkSize)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 6).fill(.black.opacity(hovered ? 0.12 : 0))
-                    Image(systemName: unavailable ? "exclamationmark.triangle.fill" : (playing ? "pause.fill" : "play.fill"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .offset(x: !playing && !unavailable ? 1 : 0)
-                        .foregroundStyle(.white)
-                        .frame(width: 26, height: 26)
-                        .background(current ? Color.accentColor : .black.opacity(hovered ? 0.75 : 0.5), in: Circle())
-                        .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+                    HoveredPlaybackOverlay(
+                        unavailable: unavailable, playing: playing, current: current
+                    )
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: 6)
@@ -203,10 +207,33 @@ private struct ArtworkPlaybackButton: View {
         }
         .buttonStyle(PlaybackButtonStyle(unavailable: unavailable))
         .disabled(unavailable || busy)
-        .onHover { hovered = $0 }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
         .accessibilityLabel("\(playing ? "Pause" : "Play") \(title)")
         .accessibilityValue(current ? (playing ? "Now playing" : "Current track, paused") : "")
         .help(unavailable ? "This song cannot be played" : "\(playing ? "Pause" : "Play") \(title)")
+    }
+}
+
+/// Hover-dependent overlay isolated into its own view so only this layer
+/// invalidates on hover, not the cover art or button container.
+private struct HoveredPlaybackOverlay: View {
+    let unavailable: Bool
+    let playing: Bool
+    let current: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovered = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6).fill(.black.opacity(hovered ? 0.12 : 0))
+            Image(systemName: unavailable ? "exclamationmark.triangle.fill" : (playing ? "pause.fill" : "play.fill"))
+                .font(.system(size: 11, weight: .semibold))
+                .offset(x: !playing && !unavailable ? 1 : 0)
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 26)
+                .background(current ? Color.accentColor : .black.opacity(hovered ? 0.75 : 0.5), in: Circle())
+                .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+        }
+        .onHover { hovered = $0 }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovered)
     }
 }

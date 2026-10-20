@@ -54,13 +54,16 @@ struct ExpandedPlayerControls: View {
 }
 
 /// Clock and drag updates stay inside this small view, outside transport and volume.
+/// Position is read from SeekSliderState (updated via synchronize on player.position
+/// changes) rather than directly from player.position, so the view does not
+/// invalidate on every sub-second playback tick.
 @MainActor
 private struct ExpandedSeekBar: View {
     let player: Player
     @Environment(\.swarPalette) private var palette
     @State private var seek = SeekSliderState()
     @AppStorage("waveformSeekBar") private var waveformEnabled = true
-    private var displayedPosition: Double { seek.displayedPosition(player.position) }
+    private var displayedPosition: Double { seek.value }
 
     var body: some View {
         VStack(spacing: 2) {

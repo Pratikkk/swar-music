@@ -28,6 +28,8 @@ public struct PlaylistDetailView: View {
     @State private var presentation: PlaylistBrowseSnapshot?
     @State private var presentedRequest: PlaylistBrowseRequest?
     @State private var itemsRevision: UInt64 = 0
+    /// Cached current track ID; resolved from player.currentURL only when it changes.
+    @State private var currentTrackIDCache: String?
 
     private var request: PlaylistBrowseRequest {
         PlaylistBrowseRequest(revision: itemsRevision, search: library.search, scope: library.searchScope)
@@ -57,7 +59,7 @@ public struct PlaylistDetailView: View {
     }
 
     public var body: some View {
-        let currentTrackID = library.trackID(at: player.currentURL)
+        let currentTrackID = currentTrackIDCache
         GeometryReader { geometry in
             let compact = geometry.size.width < 700
             let inset: CGFloat = compact ? 24 : 40
@@ -164,6 +166,12 @@ public struct PlaylistDetailView: View {
                 do { try await Task.sleep(for: .seconds(60)); try Task.checkCancellation() } catch { return }
                 await reloadItems()
             }
+        }
+        .onChange(of: player.currentURL) { _ in
+            currentTrackIDCache = library.trackID(at: player.currentURL)
+        }
+        .task {
+            currentTrackIDCache = library.trackID(at: player.currentURL)
         }
     }
 
@@ -376,14 +384,12 @@ private struct PlaylistSongRow: View {
     let moveDown: () -> Void
     let remove: () -> Void
 
-    @State private var hovered = false
-
     var body: some View {
         HStack(spacing: 10) {
             Button(action: play) {
                 HStack(spacing: 12) {
                     ZStack {
-                        if hovered || current {
+                        if current {
                             Image(systemName: playing ? "pause.fill" : "play.fill")
                                 .font(.system(size: 11, weight: .semibold))
                         } else {
@@ -449,10 +455,23 @@ private struct PlaylistSongRow: View {
         .font(.system(size: 13))
         .padding(.horizontal, 12)
         .padding(.vertical, density == .compact ? 4 : 8)
-        .background(
-            current ? Color.accentColor.opacity(0.1) : Color.primary.opacity(hovered ? 0.055 : (alternate ? 0.025 : 0)),
-            in: RoundedRectangle(cornerRadius: 6)
-        )
-        .onHover { hovered = $0 }
+        .background {
+            RowBackground(isCurrent: current, isAlternate: alternate)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// Isolates hover state so only the background layer invalidates on hover,
+    /// not the entire row (text, images, buttons).
+    private struct RowBackground: View {
+        let isCurrent: Bool
+        let isAlternate: Bool
+        @State private var hovered = false
+
+        var body: some View {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(isCurrent ? Color.accentColor.opacity(0.1) : Color.primary.opacity(hovered ? 0.055 : (isAlternate ? 0.025 : 0)))
+                .onHover { hovered = $0 }
+        }
     }
 }

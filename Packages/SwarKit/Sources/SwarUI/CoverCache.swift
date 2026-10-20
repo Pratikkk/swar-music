@@ -30,7 +30,14 @@ final class CoverCache: @unchecked Sendable {
     /// same cover share a single decode instead of each starting a duplicate.
     private var inFlight: [NSString: Task<CoverBitmap?, Never>] = [:]
     private let inFlightLock = NSLock()
-    init() { images.countLimit = 256; images.totalCostLimit = 32 * 1024 * 1024 }
+    /// Scale the memory budget with physical RAM: roughly 0.4% of memory,
+    /// clamped between 16 MB (small Macs) and 64 MB (large Macs).
+    private let costLimit: Int = {
+        let physical = ProcessInfo.processInfo.physicalMemory
+        let limit = Int(physical / 256)
+        return min(max(limit, 16 * 1024 * 1024), 64 * 1024 * 1024)
+    }()
+    init() { images.countLimit = 256; images.totalCostLimit = costLimit }
 
     func cached(_ request: CoverRequest) -> CoverBitmap? {
         images.object(forKey: request.key as NSString)

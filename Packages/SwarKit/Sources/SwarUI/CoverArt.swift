@@ -18,44 +18,41 @@ struct CoverArt: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let request = url.map { CoverRequest(url: $0, pixels: maximumPixelSize) }
-            let cached = request.flatMap { CoverCache.shared.cached($0) }
-            let bitmap = cached ?? (loadedRequest == request || crossfade ? cover : nil)
-            ZStack {
-                if let bitmap {
-                    if crossfade {
-                        Image(decorative: bitmap.image, scale: 1).resizable().scaledToFill()
-                            .id(ObjectIdentifier(bitmap)).transition(.opacity)
-                    } else {
-                        Image(decorative: bitmap.image, scale: 1).resizable().scaledToFill()
-                    }
+        let request = url.map { CoverRequest(url: $0, pixels: maximumPixelSize) }
+        let cached = request.flatMap { CoverCache.shared.cached($0) }
+        let bitmap = cached ?? (loadedRequest == request || crossfade ? cover : nil)
+        ZStack {
+            if let bitmap {
+                if crossfade {
+                    Image(decorative: bitmap.image, scale: 1).resizable().scaledToFill()
+                        .id(ObjectIdentifier(bitmap)).transition(.opacity)
                 } else {
-                    LinearGradient(colors: [tint.opacity(0.2), tint.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    Image(systemName: "music.note")
-                        .font(.system(size: min(geometry.size.width, geometry.size.height) * 0.36, weight: .medium))
-                        .foregroundStyle(tint.opacity(0.7))
+                    Image(decorative: bitmap.image, scale: 1).resizable().scaledToFill()
                 }
+            } else {
+                LinearGradient(colors: [tint.opacity(0.2), tint.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                Image(systemName: "music.note")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(tint.opacity(0.7))
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-            .overlay { RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5) }
-            .animation(crossfade && !reduceMotion ? .easeInOut(duration: 0.18) : nil, value: loadedRequest)
-            .task(id: request) {
-                guard let request else { cover = nil; loadedRequest = nil; return }
-                guard loadedRequest != request else { return }
-                // The view already displays a synchronous cache hit; retain it for
-                // crossfades without waiting for the background decoder actor.
-                if let cached { cover = cached; loadedRequest = request; return }
-                // Dwell: only begin a background decode once the cell has been
-                // visible long enough that a fast scroll is unlikely to cancel it.
-                // This prevents a decode storm when flicking through long lists.
-                do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
-                guard !Task.isCancelled else { return }
-                let result = await CoverCache.shared.image(for: request)
-                guard !Task.isCancelled else { return }
-                cover = result; loadedRequest = request
-            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .overlay { RoundedRectangle(cornerRadius: cornerRadius).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5) }
+        .animation(crossfade && !reduceMotion ? .easeInOut(duration: 0.18) : nil, value: loadedRequest)
+        .task(id: request) {
+            guard let request else { cover = nil; loadedRequest = nil; return }
+            guard loadedRequest != request else { return }
+            // The view already displays a synchronous cache hit; retain it for
+            // crossfades without waiting for the background decoder actor.
+            if let cached { cover = cached; loadedRequest = request; return }
+            // Dwell: only begin a background decode once the cell has been
+            // visible long enough that a fast scroll is unlikely to cancel it.
+            // This prevents a decode storm when flicking through long lists.
+            do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
+            guard !Task.isCancelled else { return }
+            let result = await CoverCache.shared.image(for: request)
+            guard !Task.isCancelled else { return }
+            cover = result; loadedRequest = request
         }
         .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)

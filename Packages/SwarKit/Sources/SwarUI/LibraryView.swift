@@ -108,7 +108,7 @@ public struct LibraryView: View {
         .task {
             while !Task.isCancelled {
                 await player.refreshVolume()
-                do { try await Task.sleep(for: .milliseconds(500)) } catch { break }
+                do { try await Task.sleep(for: .seconds(1)) } catch { break }
             }
         }
         .task {
@@ -135,7 +135,7 @@ public struct LibraryView: View {
         .task(id: player.isPlaying) {
             while player.isPlaying && !Task.isCancelled {
                 await player.refresh()
-                do { try await Task.sleep(for: .milliseconds(200)) }
+                do { try await Task.sleep(for: .milliseconds(400)) }
                 catch { break }
             }
         }

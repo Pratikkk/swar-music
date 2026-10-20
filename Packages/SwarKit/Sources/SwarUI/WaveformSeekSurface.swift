@@ -66,7 +66,16 @@ struct WaveformSeekSurface: View {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let location):
-                    if !dragging { hoverFraction = Self.fraction(location.x, width: width) }
+                    if !dragging {
+                        let newFraction = Self.fraction(location.x, width: width)
+                        // Throttle: only update hover when position changes by
+                        // more than ~3 pixels, avoiding per-pixel view invalidation.
+                        if let current = hoverFraction {
+                            let delta = abs(newFraction - current) * width
+                            guard delta > 3 else { break }
+                        }
+                        hoverFraction = newFraction
+                    }
                 case .ended: hoverFraction = nil
                 }
             }

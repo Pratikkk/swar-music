@@ -31,6 +31,8 @@ public final class LibraryModel {
     public var sortOrder: TrackSortOrder = .album
     public var reverseSort = false
     public private(set) var pageLimit = 500
+    /// Hard cap so "Load More" cannot grow the in-memory track array without bound.
+    private let maxPageLimit = 5000
     public private(set) var artworkDirectory: URL?
     private var customArtworkDirectory: URL?
     private var repository: LibraryRepository?
@@ -325,7 +327,11 @@ public final class LibraryModel {
 
     public func isMonitoring(_ folder: LibraryFolder) -> Bool { watchers[folder.id] != nil }
 
-    public func loadMore() async { pageLimit += 500; await reload() }
+    public func loadMore() async {
+        guard pageLimit < maxPageLimit else { return }
+        pageLimit = min(pageLimit + 500, maxPageLimit)
+        await reload()
+    }
     public func shutdown() {
         isShutDown = true
         watchTask?.cancel()
