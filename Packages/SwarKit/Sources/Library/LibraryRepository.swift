@@ -128,6 +128,10 @@ public actor LibraryRepository {
                 CREATE INDEX listening_popular ON track_listening(playCount DESC, lastPlayed DESC);
                 """)
         }
+        migrator.registerMigration("library-missing-files-v10") { db in
+            try db.alter(table: "tracks") { $0.add(column: "isMissing", .boolean).notNull().defaults(to: false) }
+            try db.create(index: "tracks_location", on: "tracks", columns: ["folderID", "relativePath"], unique: true)
+        }
         try migrator.migrate(database)
     }
 
@@ -144,7 +148,7 @@ public actor LibraryRepository {
     }
 
     func existingTracks(folderID: String) throws -> [String: ScanFingerprint] {
-        let tracks = try database.read { try ScanFingerprint.fetchAll($0, sql: "SELECT relativePath, fileSize, modifiedAt, addedAt, artworkKey, coverStamp, error FROM tracks WHERE folderID = ?", arguments: [folderID]) }
+        let tracks = try database.read { try ScanFingerprint.fetchAll($0, sql: "SELECT id, isMissing, relativePath, fileSize, modifiedAt, addedAt, artworkKey, coverStamp, error FROM tracks WHERE folderID = ?", arguments: [folderID]) }
         return Dictionary(uniqueKeysWithValues: tracks.map { ($0.relativePath, $0) })
     }
 
@@ -171,7 +175,7 @@ public actor LibraryRepository {
         try database.write { db in
             let existing = try Row.fetchAll(db, sql: "SELECT id, relativePath FROM tracks WHERE folderID = ?", arguments: [folderID])
             for row in existing where !seen.contains(row["relativePath"] as String) {
-                try db.execute(sql: "DELETE FROM tracks WHERE id = ?", arguments: [row["id"] as String])
+                try db.execute(sql: "UPDATE tracks SET isMissing = 1, error = ? WHERE id = ? AND isMissing = 0", arguments: ["File is missing. Locate it in Manage Library.", row["id"] as String])
             }
         }
     }
@@ -189,7 +193,7 @@ public actor LibraryRepository {
             arguments += [max(1, limit)]
             let order = (recentFirst ? TrackSortOrder.recentlyAdded : sortOrder).sqlOrder(reversed: recentFirst ? false : reversed)
             let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: arguments)
-            let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL AND " + visible) ?? 0
+            let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL AND isMissing = 0 AND " + visible) ?? 0
             return LibraryPage(tracks: tracks, count: count, unreadableCount: unreadable)
         }
     }
@@ -322,13 +326,13 @@ public actor LibraryRepository {
             let visible = "NOT " + hidden
             let incomplete = "error IS NULL AND (trim(title) = '' OR trim(artist) IN ('', 'Unknown Artist') OR trim(album) = '' OR (NOT EXISTS (SELECT 1 FROM track_metadata m WHERE m.trackID = tracks.id) AND CASE WHEN json_valid(tagsJSON) THEN (NULLIF(trim(json_extract(tagsJSON, '$.title')), '') IS NULL OR NULLIF(trim(json_extract(tagsJSON, '$.artist')), '') IS NULL OR NULLIF(trim(json_extract(tagsJSON, '$.album')), '') IS NULL) ELSE 1 END))"
             let duplicate = "error IS NULL AND duration > 0 AND trim(artist) NOT IN ('', 'Unknown Artist') AND trim(title) != '' AND (lower(trim(title)), lower(trim(artist)), CAST(round(duration) AS INTEGER)) IN (SELECT lower(trim(title)), lower(trim(artist)), CAST(round(duration) AS INTEGER) FROM tracks WHERE " + visible + " AND error IS NULL AND duration > 0 AND trim(artist) NOT IN ('', 'Unknown Artist') AND trim(title) != '' GROUP BY lower(trim(title)), lower(trim(artist)), CAST(round(duration) AS INTEGER) HAVING COUNT(*) > 1)"
-            let conditions: [CollectionFilter: String] = [.all: "1", .incomplete: incomplete, .artwork: "artworkKey IS NULL OR artworkKey = ''", .duplicates: duplicate, .unreadable: "error IS NOT NULL", .removed: "1"]
+            let conditions: [CollectionFilter: String] = [.all: "1", .incomplete: incomplete, .artwork: "artworkKey IS NULL OR artworkKey = ''", .duplicates: duplicate, .missing: "isMissing = 1", .unreadable: "error IS NOT NULL AND isMissing = 0", .removed: "1"]
             func count(_ condition: String, removed: Bool = false) throws -> Int {
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE " + (removed ? hidden : visible) + " AND (" + condition + ")") ?? 0
             }
             let stats = try Row.fetchOne(db, sql: "SELECT COUNT(*) AS songs, COALESCE(SUM(fileSize), 0) AS bytes, COALESCE(SUM(CASE WHEN duration > 0 THEN duration ELSE 0 END), 0) AS duration FROM tracks WHERE " + visible)!
             let albums = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM (SELECT albumArtist, album FROM tracks WHERE " + visible + " GROUP BY albumArtist, album)") ?? 0
-            let summary = try CollectionSummary(songs: stats["songs"], albums: albums, bytes: stats["bytes"], duration: stats["duration"], incomplete: count(incomplete), artwork: count("artworkKey IS NULL OR artworkKey = ''"), duplicates: count(duplicate), unreadable: count("error IS NOT NULL"), removed: count("1", removed: true))
+            let summary = try CollectionSummary(songs: stats["songs"], albums: albums, bytes: stats["bytes"], duration: stats["duration"], incomplete: count(incomplete), artwork: count("artworkKey IS NULL OR artworkKey = ''"), duplicates: count(duplicate), missing: count("isMissing = 1"), unreadable: count("error IS NOT NULL AND isMissing = 0"), removed: count("1", removed: true))
             let condition = " WHERE " + (filter == .removed ? hidden : visible) + " AND (" + (conditions[filter] ?? "1") + ")" + (query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
             let arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
             let total = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0

@@ -5,6 +5,7 @@ public enum CollectionFilter: String, CaseIterable, Identifiable, Sendable {
     case incomplete = "Incomplete Details"
     case artwork = "Missing Artwork"
     case duplicates = "Possible Duplicates"
+    case missing = "Missing Files"
     case unreadable = "Unreadable"
     case removed = "Removed"
     public var id: Self { self }
@@ -18,6 +19,7 @@ public struct CollectionSummary: Sendable {
     public let incomplete: Int
     public let artwork: Int
     public let duplicates: Int
+    public let missing: Int
     public let unreadable: Int
     public let removed: Int
     public func count(_ filter: CollectionFilter) -> Int {
@@ -26,6 +28,7 @@ public struct CollectionSummary: Sendable {
         case .incomplete: incomplete
         case .artwork: artwork
         case .duplicates: duplicates
+        case .missing: missing
         case .unreadable: unreadable
         case .removed: removed
         }

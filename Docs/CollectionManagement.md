@@ -2,9 +2,9 @@
 
 Manage Library in the sidebar provides collection-wide maintenance, independent of
 the Songs page, current search result page, or album browser. The page shows song
-and album totals, indexed file size and duration, monitored-folder status, and six
+and album totals, indexed file size and duration, monitored-folder status, and seven
 review filters: All Songs, Incomplete Details, Missing Artwork, Possible Duplicates,
-Unreadable, and Removed. Counts describe the collection; search narrows the selected
+Missing Files, Unreadable, and Removed. Counts describe the collection; search narrows the selected
 review list. Rows load in pages of 200, with Load More. Small windows use a filter
 menu to leave room for the native selection table.
 
@@ -21,9 +21,11 @@ menu to leave room for the native selection table.
   duration rounded to a second, excluding unreadable/unknown-artist/nonpositive
   duration entries. These are candidates, not byte-identical duplicates. No song is
   removed automatically. Different releases or formats can legitimately match.
+- Missing Files retains songs absent after a complete successful scan. Locate File…
+  reconnects an individual song; Reconnect Folder reauthorises an existing root.
 - Unreadable shows stored decoder/scanner errors. Folder-access failures appear in
-  folder status and settings. Files deleted from disk are still reconciled out by
-  the existing scanner; there is no missing-file relocation workflow yet.
+  folder status and settings. Missing files have a separate review filter and retain their records; see
+  [file recovery](FileRecovery.md).
 - Removed reviews hidden songs and supports restoring a chosen subset. Restoring
   visibility does not recreate previous playlist membership or favourites.
 

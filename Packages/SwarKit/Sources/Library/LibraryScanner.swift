@@ -57,9 +57,10 @@ public struct LibraryScanner: Sendable {
         }
         try Task.checkCancellation()
         let prior = try await repository.existingTracks(folderID: folder.id)
+        let priorIDs = Set(prior.values.map(\.id))
         var pending: [ScanFile] = []
         for file in files {
-            if let old = prior[file.relativePath], old.fileSize == file.size,
+            if let old = prior[file.relativePath], !old.isMissing, old.fileSize == file.size,
                old.modifiedAt.timeIntervalSince1970 == file.modified.timeIntervalSince1970,
                old.coverStamp == file.coverStamp, old.error == nil,
                old.artworkKey.map({ key in
@@ -95,7 +96,9 @@ public struct LibraryScanner: Sendable {
                 }
             }
             while index < min(4, pending.count) { enqueue(pending[index]); index += 1 }
-            while let track = try await group.next() {
+            while var track = try await group.next() {
+                // Reusing a relocated song's original path creates a new song.
+                if prior[track.relativePath] == nil, priorIDs.contains(track.id) { track.id = UUID().uuidString }
                 try Task.checkCancellation()
                 completed += 1
                 if track.error != nil { failed += 1 }

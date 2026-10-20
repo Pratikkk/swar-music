@@ -16,6 +16,8 @@ public final class LibraryModel {
     public private(set) var tracksRevision = 0
     public private(set) var totalCount = 0
     public private(set) var unreadableCount = 0
+    public private(set) var isRecovering = false
+    private var relocatedIDs: [String: String] = [:]
     public private(set) var isScanning = false
     public private(set) var isReady = false
     public private(set) var folderErrors: [String: String] = [:]
@@ -88,7 +90,7 @@ public final class LibraryModel {
     }
 
     public func addFolder(_ url: URL) async {
-        guard let repository else { errorMessage = "The library database is not ready."; return }
+        guard !isRecovering, let repository else { errorMessage = "The library is busy or not ready."; return }
         do {
             let canonical = url.resolvingSymlinksInPath().standardizedFileURL
             guard !folders.contains(where: {
@@ -110,7 +112,7 @@ public final class LibraryModel {
     }
 
     public func removeFolder(_ folder: LibraryFolder) async {
-        guard !isScanning, let repository else { return }
+        guard !isScanning, !isRecovering, let repository else { return }
         do {
             try await repository.removeFolder(folder.id)
             watchers[folder.id] = nil; scopes[folder.id] = nil
@@ -125,7 +127,7 @@ public final class LibraryModel {
 
     public func rescan() async {
         guard !isShutDown, !Task.isCancelled else { return }
-        guard !isScanning else { pendingRescan = true; return }
+        guard !isScanning, !isRecovering else { pendingRescan = true; return }
         guard let repository, let artworkDirectory else { return }
         isScanning = true
         let task = Task { await scanFolders(repository: repository, artworkDirectory: artworkDirectory) }
@@ -182,7 +184,9 @@ public final class LibraryModel {
         do {
             let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed, searchScope: scope)
             let preferences = try await repository.trackPreferences()
+            let relocated = try await repository.relocatedTrackIDs()
             guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, scope == searchScope, onlyFavorites == favoritesOnly, recent == recentFirst, order == sortOrder, reversed == reverseSort else { return }
+            if relocatedIDs != relocated { relocatedIDs = relocated }
             let tracksChanged = tracks != page.tracks
             let overviewChanged = tracksChanged || totalCount != page.count || favoriteTrackIDs != preferences.favorites || hiddenTrackCount != preferences.hiddenCount
             if tracksChanged { tracks = page.tracks; tracksRevision &+= 1 }
@@ -258,7 +262,7 @@ public final class LibraryModel {
     }
 
     public func manageTracks(ids: Set<String>, restore: Bool) async throws {
-        guard let repository, !isScanning else { throw LibraryFailure("Wait for the library scan to finish.") }
+        guard let repository, !isScanning, !isRecovering else { throw LibraryFailure("Wait for the library update to finish.") }
         if restore { try await repository.restoreTracks(ids: ids) }
         else { try await repository.removeTracksFromLibrary(ids: ids) }
         trackActionsRevision += 1; overviewRevision += 1
@@ -514,21 +518,94 @@ public final class LibraryModel {
         for (folderID, access) in scopes {
             let root = access.url.standardizedFileURL.pathComponents
             guard components.count > root.count, components.starts(with: root) else { continue }
-            return folderID + ":" + components.dropFirst(root.count).joined(separator: "/")
+            let locationID = folderID + ":" + components.dropFirst(root.count).joined(separator: "/")
+            return relocatedIDs[locationID] ?? locationID
         }
         return nil
     }
 
     public func location(for track: LibraryTrack) throws -> (file: URL, root: URL) {
-        guard let scope = scopes[track.folderID] else { throw LibraryFailure("The library folder is unavailable. Remove it and add it again to reconnect.") }
+        guard let scope = scopes[track.folderID] else { throw LibraryFailure("The library folder is unavailable. Reconnect it in Manage Library.") }
         return (scope.url.appendingPathComponent(track.relativePath), scope.url)
+    }
+
+    /// Reauthorise a moved/offline root without replacing its database identity.
+    public func reconnectFolder(_ folder: LibraryFolder, to url: URL) async throws {
+        guard !isScanning, !isRecovering, !isShutDown, let repository,
+              folders.contains(where: { $0.id == folder.id }) else { throw LibraryFailure("Wait for the library to finish updating.") }
+        isRecovering = true
+        defer { isRecovering = false }
+        let access = FolderAccess(url)
+        let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+        let isDirectory = try await Task.detached(priority: .utility) {
+            try canonical.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+        }.value
+        guard isDirectory else { throw LibraryFailure("Choose the music folder that contains the original album and song paths.") }
+        guard !folders.contains(where: { $0.id != folder.id && Self.overlaps($0.path, canonical.path) }) else {
+            throw LibraryFailure("This folder overlaps another folder in the library.")
+        }
+        let paths = try await repository.existingTracks(folderID: folder.id).keys.map { $0 }
+        let matches = await Task.detached(priority: .utility) {
+            paths.isEmpty || paths.contains { FileManager.default.fileExists(atPath: canonical.appendingPathComponent($0).path) }
+        }.value
+        guard matches else {
+            throw LibraryFailure("No original song paths were found here. Choose the folder that contains the same album and song structure.")
+        }
+        guard !isShutDown, !Task.isCancelled else { throw CancellationError() }
+        var updated = folder
+        updated.path = canonical.path
+        updated.bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+        try await repository.saveFolder(updated)
+        watchers[folder.id] = nil
+        scopes[folder.id] = access
+        folders = try await repository.folders()
+        folderErrors[folder.id] = nil
+        watch(folder: updated, url: url)
+        errorMessage = nil
+        isRecovering = false
+        await rescan()
+        await reloadPlaylists()
+        trackActionsRevision += 1
+    }
+
+    /// The picker grants file access; the containing watched root grants durable access.
+    public func reconnectTrack(_ track: LibraryTrack, to url: URL) async throws {
+        guard !isScanning, !isRecovering, !isShutDown, let repository, let artworkDirectory else {
+            throw LibraryFailure("Wait for the library to finish updating.")
+        }
+        let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+        guard let folder = folders.first(where: { canonical.path.hasPrefix($0.path.hasSuffix("/") ? $0.path : $0.path + "/") }),
+              let access = scopes[folder.id] else {
+            throw LibraryFailure("Add the file’s containing folder to Music Folders first, then locate the file again. For a moved music folder, use Reconnect Folder instead.")
+        }
+        isRecovering = true
+        defer { isRecovering = false; withExtendedLifetime(access) {} }
+        let inspector = MediaInspector(codecDirectory: codecDirectory, artworkDirectory: artworkDirectory)
+        let replacement = try await Task.detached(priority: .utility) {
+            let values = try canonical.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
+            guard values.isRegularFile == true else { throw LibraryFailure("Choose an audio file.") }
+            let root = URL(fileURLWithPath: folder.path).pathComponents
+            let relative = canonical.pathComponents.dropFirst(root.count).joined(separator: "/")
+            let file = ScanFile(url: canonical, relativePath: relative, size: Int64(values.fileSize ?? 0),
+                                modified: values.contentModificationDate ?? .distantPast, coverURL: nil, coverStamp: "")
+            return inspector.inspect(file: file, folder: folder, prior: nil)
+        }.value
+        if let error = replacement.error { throw LibraryFailure("Could not reconnect this file. " + error) }
+        guard !isShutDown, !Task.isCancelled else { throw CancellationError() }
+        try await repository.reconnectTrack(id: track.id, replacement: replacement)
+        errorMessage = nil
+        await reload()
+        await reloadPlaylists()
+        trackActionsRevision += 1
+        isRecovering = false
+        await rescan()
     }
 
     private func updateProgress(_ update: LibraryProgress) async {
         guard !isShutDown, !Task.isCancelled else { return }
         progress = update
         // The scanner publishes after committed batches; the final reload also
-        // reconciles deletions. Throttle intermediate refreshes so a scan does
+        // marks missing files. Throttle intermediate refreshes so a scan does
         // not re-render and re-sort a large visible list four times a second.
         let now = Date()
         if update.changed > 0, now.timeIntervalSince(lastProgressReload) >= 0.75 {
@@ -557,7 +634,7 @@ public final class LibraryModel {
                 watch(folder: folder, url: url)
             } catch {
                 folderErrors[folder.id] = error.localizedDescription
-                errorMessage = "Reconnect \(URL(fileURLWithPath: folder.path).lastPathComponent) by removing and adding the folder again. \(error.localizedDescription)"
+                errorMessage = "Reconnect \(URL(fileURLWithPath: folder.path).lastPathComponent) in Manage Library. \(error.localizedDescription)"
             }
         }
         folders = try await repository.folders()

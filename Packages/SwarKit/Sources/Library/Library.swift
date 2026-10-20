@@ -45,6 +45,7 @@ public struct LibraryTrack: Codable, FetchableRecord, PersistableRecord, Sendabl
     public var artworkKey: String?
     public var coverStamp: String
     public var error: String?
+    public var isMissing: Bool = false
 
     public var sourceFormat: SourceFormat? {
         guard let codec, let sampleRate, let channels else { return nil }
@@ -69,6 +70,8 @@ public struct LibraryPage: Sendable {
 
 struct ScanFingerprint: Decodable, FetchableRecord, Sendable {
     static func databaseDateDecodingStrategy(for column: String) -> DatabaseDateDecodingStrategy { .timeIntervalSince1970 }
+    let id: String
+    let isMissing: Bool
     let relativePath: String
     let fileSize: Int64
     let modifiedAt: Date

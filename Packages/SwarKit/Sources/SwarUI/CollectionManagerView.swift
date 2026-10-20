@@ -15,6 +15,7 @@ struct CollectionManagerView: View {
     @State private var page: CollectionPage?
     @State private var limit = 200
     @State private var selected = Set<String>()
+    @State private var recoveryRequest: FileRecoveryRequest?
     @State private var editing: LibraryTrack?
     @State private var artworkRequest: ArtworkEditRequest?
     @State private var pendingRemoval = Set<String>()
@@ -74,6 +75,10 @@ struct CollectionManagerView: View {
                     Text("Candidates share title, artist, and rounded duration. Compare format and location before removing.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                if filter == .missing {
+                    Text("Locate a moved song or reconnect its music folder. Playlists, favourites, and listening history are kept.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 if filter == .removed {
                     Text("Restore songs to the library. Previous playlist membership isn’t restored.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -96,6 +101,7 @@ struct CollectionManagerView: View {
         .onChange(of: filter) { selected.removeAll(); limit = 200 }
         .onChange(of: library.search) { selected.removeAll(); limit = 200 }
         .onChange(of: library.searchScope) { selected.removeAll(); limit = 200 }
+        .sheet(item: $recoveryRequest) { request in FileRecoveryView(request: request, library: library) }
         .sheet(item: $artworkRequest) { request in ArtworkEditorView(tracks: request.tracks, library: library, player: player) }
         .sheet(item: $editing) { MetadataEditorView(track: $0, library: library) }
         .alert("New Playlist", isPresented: $showNewPlaylist) {
@@ -127,6 +133,15 @@ struct CollectionManagerView: View {
             Button { Task { await library.rescan() } } label: { Image(systemName: "arrow.clockwise") }
                 .help("Rescan Library").accessibilityLabel("Rescan Library")
                 .disabled(library.isScanning || !library.isReady || library.folders.isEmpty)
+            if !library.folders.isEmpty {
+                Menu {
+                    ForEach(library.folders) { folder in
+                        Button(folder.path) { recoveryRequest = .folder(folder) }
+                    }
+                } label: { Image(systemName: "folder.badge.questionmark") }
+                    .help("Reconnect Folder").accessibilityLabel("Reconnect Folder")
+                    .disabled(library.isScanning || library.isRecovering)
+            }
             SettingsLink { Image(systemName: "gearshape") }.help("Folder Settings").accessibilityLabel("Folder Settings")
         }.buttonStyle(.borderless)
     }
@@ -181,6 +196,8 @@ struct CollectionManagerView: View {
                             Text(library.folderErrors[folder.id] ?? (library.isMonitoring(folder) ? "Watching" : "Needs attention"))
                                 .foregroundStyle(library.folderErrors[folder.id] == nil && library.isMonitoring(folder) ? Color.secondary : .orange)
                                 .lineLimit(2)
+                            Button("Reconnect…") { recoveryRequest = .folder(folder) }
+                                .disabled(library.isScanning || library.isRecovering)
                         }.font(.caption).help(folder.path)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
@@ -196,7 +213,10 @@ struct CollectionManagerView: View {
                 if filter == .removed {
                     Button("Restore") { manage(selected, restore: true) }
                 } else {
-                    if selected.count == 1, let track = selectedTracks.first { Button("Edit Details") { editing = track } }
+                    if selected.count == 1, let track = selectedTracks.first {
+                        if track.isMissing { Button("Locate File…") { recoveryRequest = .track(track) } }
+                        else { Button("Edit Details") { editing = track } }
+                    }
                     Button("Artwork…") { artworkRequest = ArtworkEditRequest(tracks: selectedTracks) }
                     Menu("Add to Playlist") {
                         Button("New Playlist…") {
@@ -217,7 +237,7 @@ struct CollectionManagerView: View {
             Spacer(minLength: 0)
             if library.isScanning { ProgressView().controlSize(.small) }
             if page.tracks.count < page.count { Button("Load More") { limit += 200 } }
-        }.controlSize(.small).disabled(working || library.isScanning || !matchesContext)
+        }.controlSize(.small).disabled(working || library.isScanning || library.isRecovering || !matchesContext)
     }
 
     private func trackTable(_ tracks: [LibraryTrack]) -> some View {
@@ -244,6 +264,7 @@ struct CollectionManagerView: View {
         }
         .contextMenu(forSelectionType: String.self) { ids in
             if ids.count == 1, let track = tracks.first(where: { ids.contains($0.id) }) {
+                if track.isMissing { Button("Locate File…") { recoveryRequest = .track(track) }.disabled(library.isScanning || library.isRecovering) }
                 if filter != .removed {
                     SongNavigationItems(track: track)
                     Divider()
@@ -277,7 +298,9 @@ struct CollectionManagerView: View {
                 else { Button("Remove from Library…", role: .destructive) { pendingRemoval = ids; showRemoval = true } }
             }
         } primaryAction: { ids in
-            if filter != .removed, ids.count == 1 { editing = tracks.first { ids.contains($0.id) } }
+            if filter != .removed, ids.count == 1, let track = tracks.first(where: { ids.contains($0.id) }) {
+                if track.isMissing { recoveryRequest = .track(track) } else { editing = track }
+            }
         }
     }
 

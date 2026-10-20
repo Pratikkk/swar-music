@@ -185,7 +185,7 @@ struct LibraryTests {
         } catch is CancellationError { }
         #expect(try await repository.page().count == 1)
         _ = try await scanner.scan(folder: folder, root: music)
-        #expect(try await repository.page().count == 0)
+        #expect(try await repository.page().tracks.first?.isMissing == true)
     }
 
     private var fixtures: URL {
@@ -252,7 +252,7 @@ struct LibraryTests {
         #expect(try await repository.page().tracks.first?.addedAt == track.addedAt)
         try FileManager.default.removeItem(at: source)
         #expect(try await scanner.scan(folder: folder, root: music).total == 0)
-        #expect(try await repository.page(search: "Special").count == 0)
+        #expect(try await repository.page(search: "Special").tracks.first?.isMissing == true)
     }
 
     @Test func failedFilesStayVisibleAndFolderRemovalLeavesSourceUntouched() async throws {
@@ -635,11 +635,11 @@ extension LibraryTests {
         first.title = "Needle"; first.album = "Same Title"; first.albumArtist = "Artist A"
         first.year = "2020"; first.duration = 30; first.addedAt = Date(timeIntervalSince1970: 10)
         var second = first
-        second.id = "second"; second.title = "Other"; second.trackNumber = 2; second.duration = 60
+        second.id = "second"; second.relativePath = "second.wav"; second.title = "Other"; second.trackNumber = 2; second.duration = 60
         second.error = "Unavailable"; second.artworkKey = "cover"; second.addedAt = Date(timeIntervalSince1970: 20)
         second.isLossless = false
         var third = first
-        third.id = "third"; third.albumArtist = "Artist B"; third.year = nil
+        third.id = "third"; third.relativePath = "third.wav"; third.albumArtist = "Artist B"; third.year = nil
         try await repository.saveTracks([first, second, third])
         let albums = try await repository.albums(search: "Need", searchScope: .title)
         #expect(albums.count == 2)
@@ -733,7 +733,7 @@ extension LibraryTests {
         template.album = "Album"; template.albumArtist = "Artist"
         let tracks = (0..<601).map { i in
             var track = template
-            track.id = "art-\(i)"; track.trackNumber = i + 1
+            track.id = "art-\(i)"; track.relativePath = "art-\(i).wav"; track.trackNumber = i + 1
             return track
         }
         try await repository.saveTracks(tracks)
@@ -765,7 +765,7 @@ extension LibraryTests {
         template.tagsJSON = "{\"title\":\"Shared Song\",\"artist\":\"Singer\",\"album\":\"Album\"}"
         var tracks = (0..<600).map { index in
             var track = template
-            track.id = "review-\(index)"; track.title = "Unique \(index)"; track.trackNumber = index + 1
+            track.id = "review-\(index)"; track.relativePath = "review-\(index).wav"; track.title = "Unique \(index)"; track.trackNumber = index + 1
             return track
         }
         tracks[599].title = " shared song "; tracks[599].artist = " singer "; tracks[599].duration = 60.4
@@ -1030,7 +1030,7 @@ extension LibraryTests {
         try await waitForLibrary { restored.tracks.count == 1 && restored.tracks.first?.codec == "MP3" }
         #expect(restored.tracks.first?.id == id)
         try FileManager.default.removeItem(at: song)
-        try await waitForLibrary { restored.totalCount == 0 }
+        try await waitForLibrary { restored.tracks.first?.isMissing == true }
         #expect(restored.lastScanAt != nil)
         #expect(restored.folderErrors.isEmpty)
         await restored.removeFolder(folder)

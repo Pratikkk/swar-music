@@ -31,7 +31,7 @@ struct MediaInspector: MediaInspecting {
     let artworkDirectory: URL
 
     func inspect(file: ScanFile, folder: LibraryFolder, prior: ScanFingerprint?) -> LibraryTrack {
-        var track = LibraryTrack(id: folder.id + ":" + file.relativePath, folderID: folder.id,
+        var track = LibraryTrack(id: prior?.id ?? folder.id + ":" + file.relativePath, folderID: folder.id,
             relativePath: file.relativePath, title: file.url.deletingPathExtension().lastPathComponent,
             artist: "Unknown Artist", albumArtist: "Unknown Artist", album: file.url.deletingLastPathComponent().lastPathComponent,
             genre: "Unknown Genre", trackNumber: 0, discNumber: 1, year: nil, tagsJSON: nil,
