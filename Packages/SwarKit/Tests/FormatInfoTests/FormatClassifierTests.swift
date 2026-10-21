@@ -15,7 +15,10 @@ struct FormatClassifierTests {
     }
 
     private func verifiedPath() -> SignalPath {
-        SignalPath(output: output(), isExclusive: true, transport: .local,
+        SignalPath(output: output(),
+                   clientPCM: SignalPCM(sampleRate: 96_000, validBits: 24,
+                                        containerBits: 24, channels: 2, isFloat: false),
+                   isExclusive: true, transport: .local,
                    systemVolume: .unity, integrity: .verifiedUnchanged)
     }
 
