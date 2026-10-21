@@ -47,6 +47,15 @@ final class OutputDevice {
         name = label?.takeRetainedValue() as String? ?? "Audio Output"
     }
 
+/// Request or release exclusive (hog) access to the device. While hogged, other
+/// applications cannot open the device; Swar has sole control of sample rate and
+/// physical format. Must be called before configure() and released on close().
+    func hog(_ exclusive: Bool) throws {
+        var value: UInt32 = exclusive ? 1 : 0
+        try Self.set(id, kAudioDevicePropertyHogMode, value: value)
+        deviceLog.info("\(exclusive ? "Hogged" : "Released") \(self.name, privacy: .public) exclusive access")
+    }
+
     func configure(for source: SourceFormat) throws {
         guard source.channels <= 2 else {
             throw AudioFailure("This playback prototype supports mono and stereo. Multichannel routing is not implemented yet.")

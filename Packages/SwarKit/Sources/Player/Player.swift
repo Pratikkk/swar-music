@@ -42,6 +42,8 @@ public final class Player {
     public private(set) var audioOutputs = AudioOutputs()
     public private(set) var preferredOutputUID: String?
     public private(set) var outputNotice: String?
+    public private(set) var exclusiveOutput = false
+    public var canSetExclusiveOutput: Bool { !isBusy && !isSystemSleeping && !isShutDown && currentURL != nil }
     public private(set) var isSystemSleeping = false
     public var canRetryOutput: Bool { !isBusy && !isSystemSleeping && !isShutDown && currentURL != nil }
     private var outputRecoveryNeeded = false
@@ -74,6 +76,7 @@ public final class Player {
     private var volumeDeviceID: UInt32?
     private var describedSource: SourceFormat?
     private var describedOutput: OutputDescription?
+    private var describedExclusive: Bool = false
     @ObservationIgnored private var mediaControls: SystemMediaControls?
 
     @ObservationIgnored public var onQualifiedListen: ((URL, Date) -> Void)?
@@ -415,7 +418,18 @@ public final class Player {
         failedAutomaticRoute = nil
     }
 
-    private func routeOutput(_ id: UInt32, pause: Bool, recover: Bool = false) async {
+    public func setExclusiveOutput(_ enabled: Bool) async {
+        guard canSetExclusiveOutput, exclusiveOutput != enabled else { return }
+        guard let target = routedOutputID else {
+            outputNotice = "No output is open for exclusive mode."
+            return
+        }
+        await routeOutput(target, pause: false, recover: true, exclusive: enabled)
+        guard !isShutDown else { return }
+        exclusiveOutput = enabled
+    }
+
+    private func routeOutput(_ id: UInt32, pause: Bool, recover: Bool = false, exclusive: Bool = false) async {
         guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         isBusy = true; generation += 1
         pendingVolume = nil
@@ -428,7 +442,7 @@ public final class Player {
             var resumeWasCancelled = false
             if recover {
                 // Rebuild paused, then recheck intent and identity before starting audio.
-                snapshot = try await engine.recoverOutput(id, resume: false)
+                snapshot = try await engine.recoverOutput(id, resume: false, exclusive: exclusive)
                 if let target = recoverySeekPosition, snapshot.duration > 0 {
                     snapshot = try await engine.seek(to: target)
                     recoverySeekPosition = nil
@@ -441,7 +455,7 @@ public final class Player {
                         snapshot = try await engine.togglePlayback()
                     } else { playbackIntent = false; resumeWasCancelled = true }
                 }
-            } else { snapshot = try await engine.selectOutput(id, pause: pause) }
+            } else { snapshot = try await engine.selectOutput(id, pause: pause, exclusive: exclusive) }
             guard !isShutDown else { return }
             routedOutputID = id; routedOutputUID = audioOutputs.devices.first { $0.id == id }?.uid
             outputNotice = resumeWasCancelled ? "Output changed. Playback paused." : nil
@@ -1015,9 +1029,11 @@ public final class Player {
 
     private func updateFormat(_ snapshot: PlaybackSnapshot) {
         guard describedSource != snapshot.source || describedOutput != snapshot.output ||
+                describedExclusive != exclusiveOutput ||
                 (formatInfo == nil && snapshot.source != nil) else { return }
         describedSource = snapshot.source
         describedOutput = snapshot.output
+        describedExclusive = exclusiveOutput
         sourceDescription = snapshot.source?.description
         outputDescription = snapshot.output?.text
         let nextInfo = snapshot.source.map { source in
@@ -1033,8 +1049,7 @@ public final class Player {
             case .airPlay: transport = .airPlay
             default: transport = .unknown
             }
-            // Device metadata supplies transport; sample integrity and volume remain unverified.
-            return FormatClassifier.describe(source: source, path: SignalPath(output: output, transport: transport))
+            return FormatClassifier.describe(source: source, path: SignalPath(output: output, isExclusive: exclusiveOutput, transport: transport))
         }
         if formatInfo != nextInfo { formatInfo = nextInfo }
     }

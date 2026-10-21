@@ -6,6 +6,7 @@ struct OutputDevicePicker: View {
     let player: Player
     var expanded = false
     @State private var presented = false
+    @State private var exclusiveMode = false
     var body: some View {
         Button { presented.toggle() } label: {
             HStack(spacing: 5) {
@@ -43,6 +44,19 @@ struct OutputDevicePicker: View {
                     Divider()
                     Button("Reconnect Output") { Task { await player.retryOutputRecovery() } }
                         .disabled(!player.canRetryOutput)
+                    Divider()
+                    Toggle("Exclusive Mode", isOn: $exclusiveMode)
+                        .disabled(!player.canSetExclusiveOutput || player.outputNotice != nil)
+                        .help(player.exclusiveOutput ? "Device is hogged exclusively by Swar" : "Request exclusive (hog) access to this device")
+                        .onChange(of: exclusiveMode) { newValue in
+                            Task { await player.setExclusiveOutput(newValue) }
+                        }
+                        .onChange(of: player.exclusiveOutput) { newValue in
+                            exclusiveMode = newValue
+                        }
+                        .task {
+                            exclusiveMode = player.exclusiveOutput
+                        }
                 }
             }
             .padding(16).frame(width: 280)

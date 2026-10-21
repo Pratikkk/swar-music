@@ -41,8 +41,8 @@ public protocol PlaybackDriving: Sendable {
     func shutdown()
     func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async
     func suspendOutput() async -> PlaybackSnapshot
-    func recoverOutput(_ deviceID: UInt32?, resume: Bool) async throws -> PlaybackSnapshot
-    func selectOutput(_ deviceID: UInt32?, pause: Bool) async throws -> PlaybackSnapshot
+    func recoverOutput(_ deviceID: UInt32?, resume: Bool, exclusive: Bool) async throws -> PlaybackSnapshot
+    func selectOutput(_ deviceID: UInt32?, pause: Bool, exclusive: Bool) async throws -> PlaybackSnapshot
 }
 
 public extension PlaybackDriving {
@@ -53,14 +53,14 @@ public extension PlaybackDriving {
         let state = await snapshot()
         return state.isPlaying ? ((try? await togglePlayback()) ?? state) : state
     }
-    func recoverOutput(_ deviceID: UInt32?, resume: Bool) async throws -> PlaybackSnapshot {
-        var state = try await selectOutput(deviceID, pause: !resume)
+    func recoverOutput(_ deviceID: UInt32?, resume: Bool, exclusive: Bool = false) async throws -> PlaybackSnapshot {
+        var state = try await selectOutput(deviceID, pause: !resume, exclusive: exclusive)
         if resume, !state.isPlaying, state.duration > 0 { state = try await togglePlayback() }
         return state
     }
     func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async {}
     func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot { try await open(url) }
-    func selectOutput(_ deviceID: UInt32?, pause: Bool) async throws -> PlaybackSnapshot { await snapshot() }
+    func selectOutput(_ deviceID: UInt32?, pause: Bool, exclusive: Bool = false) async throws -> PlaybackSnapshot { await snapshot() }
 }
 
 private let engineLog = Logger(subsystem: "catto.swar", category: "AudioEngine")
@@ -161,12 +161,12 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         }
     }
 
-    public func selectOutput(_ deviceID: UInt32?, pause: Bool = false) async throws -> PlaybackSnapshot {
-        try await switchOutput(deviceID, pause: pause, force: false, resumeOverride: nil)
+    public func selectOutput(_ deviceID: UInt32?, pause: Bool = false, exclusive: Bool = false) async throws -> PlaybackSnapshot {
+        try await switchOutput(deviceID, pause: pause, force: false, resumeOverride: nil, exclusive: exclusive)
     }
 
-    public func recoverOutput(_ deviceID: UInt32?, resume: Bool) async throws -> PlaybackSnapshot {
-        try await switchOutput(deviceID, pause: !resume, force: true, resumeOverride: resume)
+    public func recoverOutput(_ deviceID: UInt32?, resume: Bool, exclusive: Bool = false) async throws -> PlaybackSnapshot {
+        try await switchOutput(deviceID, pause: !resume, force: true, resumeOverride: resume, exclusive: exclusive)
     }
 
     public func suspendOutput() async -> PlaybackSnapshot {
@@ -185,14 +185,14 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         }) ?? PlaybackSnapshot()
     }
 
-    private func switchOutput(_ deviceID: UInt32?, pause: Bool, force: Bool, resumeOverride: Bool?) async throws -> PlaybackSnapshot {
+    private func switchOutput(_ deviceID: UInt32?, pause: Bool, force: Bool, resumeOverride: Bool?, exclusive: Bool = false) async throws -> PlaybackSnapshot {
         try await perform { state in
             _ = state.snapshot()
             guard let session = state.session else {
                 state.deviceID = deviceID
                 if let recovery = state.routeRecovery {
                     do {
-                        let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), url: recovery.url, deviceID: deviceID, entryID: recovery.entryID, token: recovery.token)
+                        let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), url: recovery.url, deviceID: deviceID, entryID: recovery.entryID, token: recovery.token, exclusive: exclusive)
                         state.session = replacement; state.url = recovery.url
                         try replacement.seek(recovery.position)
                         if resumeOverride == true { try replacement.play() }
@@ -221,7 +221,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
             let position = audible.position
             state.closeSession()
             do {
-                let replacement = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: deviceID, entryID: entryID, token: playbackToken)
+                let replacement = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: deviceID, entryID: entryID, token: playbackToken, exclusive: exclusive)
                 state.session = replacement; state.url = url
                 try replacement.seek(position)
                 if resume { try replacement.play() }
@@ -376,10 +376,11 @@ private final class OutputSession {
     var duration: Double { pcm.duration }
     var position: Double { pcm.position }
 
-    init(decoder: any AudioDecoding, url: URL, deviceID: UInt32? = nil, entryID: UUID? = nil, token: UUID? = nil) throws {
+    init(decoder: any AudioDecoding, url: URL, deviceID: UInt32? = nil, entryID: UUID? = nil, token: UUID? = nil, exclusive: Bool = false) throws {
         pcm = try GaplessPCM(decoder: decoder, url: url, entryID: entryID, token: token)
         device = try OutputDevice(id: deviceID)
         do {
+            if exclusive { try device.hog(true) }
             try device.configure(for: decoder.source)
             let buffer = self.pcm.ring
             var componentDescription = AudioComponentDescription(componentType: kAudioUnitType_Output,
@@ -477,5 +478,6 @@ private final class OutputSession {
         }
         isPlaying = false
         device.restore()
+        try? device.hog(false)
     }
 }
