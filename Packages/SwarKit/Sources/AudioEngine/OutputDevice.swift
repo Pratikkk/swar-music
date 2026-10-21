@@ -201,7 +201,7 @@ final class OutputDevice {
         }
     }
 
-    func configure(for source: SourceFormat) throws {
+    func configure(for source: SourceFormat, pcmFormat: AudioStreamBasicDescription) throws {
         guard source.channels <= 2 else {
             throw AudioFailure("This playback prototype supports mono and stereo. Multichannel "
                 + "routing is not implemented yet.")
@@ -224,27 +224,47 @@ final class OutputDevice {
         let formats: [AudioStreamRangedDescription] = try propertyBackend.getPropertyArray(
             stream, kAudioStreamPropertyAvailablePhysicalFormats,
             scope: kAudioObjectPropertyScopeOutput)
-        if let match = formats.first(where: {
+        guard let match = formats.first(where: {
             $0.mFormat.mFormatID == kAudioFormatLinearPCM &&
-            Int($0.mFormat.mBitsPerChannel) == source.bitDepth &&
-            ($0.mFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) == source.isFloat &&
+            $0.mFormat.mBitsPerChannel == pcmFormat.mBitsPerChannel &&
+            ($0.mFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) ==\n                (pcmFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) &&
             Int($0.mFormat.mChannelsPerFrame) >= source.channels &&
-            $0.mSampleRateRange.mMinimum <= source.sampleRate
-            && source.sampleRate <= $0.mSampleRateRange.mMaximum
-        }) {
-            var physical = match.mFormat
-            physical.mSampleRate = source.sampleRate
-            try propertyBackend.setProperty(stream, kAudioStreamPropertyPhysicalFormat,
-                value: physical)
-            changedPhysical = true
-            // Readback, rather than assuming the set request completed synchronously.
-            for _ in 0..<100 {
-                let current = try description()
-                if current.sampleRate == source.sampleRate
-                    && current.bitDepth == physical.mBitsPerChannel
-                    && current.isFloat == source.isFloat { break }
-                Thread.sleep(forTimeInterval: 0.01)
+            $0.mSampleRateRange.mMinimum <= source.sampleRate &&
+            source.sampleRate <= $0.mSampleRateRange.mMaximum
+        }) else {
+            throw AudioFailure("\(name) has no compatible physical PCM format for this source.")
+        }
+
+        var physical = match.mFormat
+        physical.mSampleRate = source.sampleRate
+        try propertyBackend.setProperty(stream, kAudioStreamPropertyPhysicalFormat,
+            value: physical)
+        changedPhysical = true
+
+        // HAL format changes are asynchronous. Never silently continue if the
+        // requested representation was not actually accepted by the driver.
+        var confirmed = false
+        for _ in 0..<100 {
+            let actual = try propertyBackend.getProperty(
+                stream, kAudioStreamPropertyPhysicalFormat,
+                initial: AudioStreamBasicDescription())
+            if actual.mFormatID == physical.mFormatID &&
+               actual.mSampleRate == physical.mSampleRate &&
+               actual.mBitsPerChannel == physical.mBitsPerChannel &&
+               (actual.mFormatFlags & kAudioFormatFlagIsFloat) ==
+                   (physical.mFormatFlags & kAudioFormatFlagIsFloat) &&
+               actual.mChannelsPerFrame == physical.mChannelsPerFrame &&
+               actual.mBytesPerFrame == physical.mBytesPerFrame &&
+               actual.mBytesPerPacket == physical.mBytesPerPacket &&
+               actual.mFramesPerPacket == physical.mFramesPerPacket &&
+               actual.mFormatFlags == physical.mFormatFlags {
+                confirmed = true
+                break
             }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        guard confirmed else {
+            throw AudioFailure("\(name) did not accept the requested physical PCM format.")
         }
         try waitForRate(source.sampleRate)
         deviceLog.info("Configured \(self.name, privacy: .public) at \(source.sampleRate) Hz")
