@@ -256,9 +256,6 @@ public final class Player {
     private var completionHandled = false
     private var scopedAccess: ScopedFileAccess?
     private var generation = 0
-    /// Last position published to observers. Prevents sub-second position ticks
-    /// from invalidating all @Observable views during playback.
-    private var lastPublishedPosition: Double = -1
 
     public init(engine: any PlaybackDriving = AudioPlaybackEngine(), sessionStore: PlaybackSessionStore? = nil, volumeController: any OutputVolumeControlling = HardwareVolumeController(), sleepTimer: SleepTimer? = nil, outputsReader: any AudioOutputsReading = SystemAudioOutputs(), outputPreferences: UserDefaults = .standard) {
         self.engine = engine
@@ -781,11 +778,7 @@ public final class Player {
         let revision = generation
         let snapshot = await engine.snapshot()
         guard generation == revision, !isBusy else { return }
-        // Position deadband: only publish position when the playhead moved
-        // meaningfully. Sub-second ticks would invalidate every @Observable view.
-        let positionChanged = abs(snapshot.position - lastPublishedPosition) >= 0.25
-        if positionChanged { lastPublishedPosition = snapshot.position }
-        apply(snapshot, publishPosition: positionChanged)
+        apply(snapshot)
         if let error = snapshot.error, let index = currentQueueIndex { queue[index].error = error }
         if snapshot.didFinish, snapshot.error == nil, !completionHandled {
             completionHandled = true
@@ -990,9 +983,7 @@ public final class Player {
         }
     }
 
-    /// publishPosition=false skips writing the position property (used by the
-    /// polling refresh loop to avoid sub-second view invalidations).
-    private func apply(_ snapshot: PlaybackSnapshot, publishPosition: Bool = true) {
+    private func apply(_ snapshot: PlaybackSnapshot) {
         adoptContinuation(snapshot)
         if snapshot.needsOutputRecovery {
             outputRecoveryNeeded = true
@@ -1008,7 +999,7 @@ public final class Player {
         volumeDeviceID = snapshot.output?.id
         updateFormat(snapshot)
         if duration != snapshot.duration { duration = snapshot.duration }
-        if publishPosition && position != snapshot.position { position = snapshot.position }
+        if position != snapshot.position { position = snapshot.position }
         if isPlaying != snapshot.isPlaying { isPlaying = snapshot.isPlaying }
         if underrunFrames != snapshot.underrunFrames { underrunFrames = snapshot.underrunFrames }
         // Healthy engine state clears playback failures, while file-picker/open

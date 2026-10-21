@@ -596,7 +596,9 @@ public struct LibraryView: View {
 
 }
 
+#if canImport(PreviewsMacros)
 #Preview {
     LibraryView()
         .frame(width: 1100, height: 740)
 }
+#endif

@@ -147,6 +147,7 @@ private struct SignalPathPopover: View {
     }
 }
 
+#if canImport(PreviewsMacros)
 #Preview("Hi-Res, converted output") {
     FormatChip(info: FormatClassifier.describe(
         source: SourceFormat(codec: "ALAC", sampleRate: 96_000, bitDepth: 24, channels: 2, isLossless: true),
@@ -154,3 +155,4 @@ private struct SignalPathPopover: View {
                                             bitDepth: 32, channels: 2, isFloat: true))))
         .padding(30)
 }
+#endif
