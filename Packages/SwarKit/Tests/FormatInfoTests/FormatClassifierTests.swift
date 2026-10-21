@@ -157,6 +157,25 @@ struct FormatClassifierTests {
         #expect(info.status == .unverified)
     }
 
+    @Test func matchingFormatsWithoutIntegrityEvidenceNeverClaimBitPerfect() {
+        let pcm = SignalPCM(sampleRate: 96_000, validBits: 24,
+                            containerBits: 24, channels: 2, isFloat: false)
+        let path = SignalPath(output: output(), clientPCM: pcm,
+                              isExclusive: true, transport: .local,
+                              systemVolume: .unity, integrity: .unverified)
+        let info = FormatClassifier.describe(source: source(), path: path)
+        #expect(info.status == .unverified)
+        #expect(info.conversionReasons.isEmpty)
+    }
+
+    @Test func verifiedSamplesWithUnderrunsDoNotClaimContinuousBitPerfectPlayback() {
+        var path = verifiedPath()
+        path.underrunFrames = 64
+        let info = FormatClassifier.describe(source: source(), path: path)
+        #expect(info.status == .unverified)
+        #expect(info.underrunFrames == 64)
+    }
+
     @Test func losslessCodecAndAccessibleDetailsArePreserved() {
         let info = FormatClassifier.describe(source: source(codec: "FLAC"), path: SignalPath())
         #expect(info.label == "Hi-Res Lossless · FLAC")
