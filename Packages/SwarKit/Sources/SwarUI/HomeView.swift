@@ -75,7 +75,7 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .task(id: "\(library.overviewRevision)-\(library.isReady)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)") { await load() }
-        .onChange(of: player.currentURL) { _ in
+        .onChange(of: player.currentURL) {
             currentSourceInfoCache = Self.sourceInfo(for: player.currentURL, library: library)
         }
         .task {

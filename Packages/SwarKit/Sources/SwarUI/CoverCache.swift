@@ -51,7 +51,7 @@ final class CoverCache: @unchecked Sendable {
         // Coalesce: if a decode for this exact request is already in flight,
         // await it instead of starting a duplicate decode.
         if let existing = inFlightTask(for: request) {
-            return try? await existing.value
+            return await existing.value
         }
         let task: Task<CoverBitmap?, Never> = Task.detached(priority: .utility) { [weak self] in
             guard let self else { return nil }
@@ -60,7 +60,7 @@ final class CoverCache: @unchecked Sendable {
             return await self.decoder.image(for: request, cache: self)
         }
         setInFlight(task, for: request)
-        return try? await task.value
+        return await task.value
     }
 
     private func inFlightTask(for request: CoverRequest) -> Task<CoverBitmap?, Never>? {

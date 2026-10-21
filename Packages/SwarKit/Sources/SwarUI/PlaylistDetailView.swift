@@ -167,7 +167,7 @@ public struct PlaylistDetailView: View {
                 await reloadItems()
             }
         }
-        .onChange(of: player.currentURL) { _ in
+        .onChange(of: player.currentURL) {
             currentTrackIDCache = library.trackID(at: player.currentURL)
         }
         .task {

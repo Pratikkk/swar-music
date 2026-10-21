@@ -62,7 +62,7 @@ struct AlbumBrowserView: View {
         .onChange(of: library.search) { selectedAlbum = nil }
         .onChange(of: library.searchScope) { selectedAlbum = nil }
         .onChange(of: requestedAlbum, initial: true) { openRequestedAlbum() }
-        .onChange(of: player.currentURL) { _ in
+        .onChange(of: player.currentURL) {
             currentTrackIDCache = library.trackID(at: player.currentURL)
         }
         .task {

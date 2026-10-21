@@ -72,7 +72,7 @@ struct LibraryContent: View {
 
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onChange(of: player.currentURL) { _ in
+        .onChange(of: player.currentURL) {
             currentTrackIDCache = library.trackID(at: player.currentURL)
         }
         .task {
