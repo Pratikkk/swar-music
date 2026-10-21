@@ -381,7 +381,7 @@ private final class OutputSession {
         device = try OutputDevice(id: deviceID)
         do {
             if exclusive { try device.setHogged(true) }
-            try device.configure(for: decoder.source)
+            try device.configure(for: decoder.source, pcmFormat: decoder.pcmFormat)
             let buffer = self.pcm.ring
             var componentDescription = AudioComponentDescription(componentType: kAudioUnitType_Output,
                 componentSubType: kAudioUnitSubType_HALOutput, componentManufacturer: kAudioUnitManufacturer_Apple,
