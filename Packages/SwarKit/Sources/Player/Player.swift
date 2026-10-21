@@ -1030,6 +1030,8 @@ public final class Player {
     private func updateFormat(_ snapshot: PlaybackSnapshot) {
         guard describedSource != snapshot.source || describedOutput != snapshot.output ||
                 describedExclusive != exclusiveOutput ||
+                formatInfo?.underrunFrames != snapshot.underrunFrames ||
+                formatInfo?.clientPCM?.sampleRate != snapshot.clientPCM?.sampleRate ||
                 (formatInfo == nil && snapshot.source != nil) else { return }
         describedSource = snapshot.source
         describedOutput = snapshot.output
@@ -1049,7 +1051,15 @@ public final class Player {
             case .airPlay: transport = .airPlay
             default: transport = .unknown
             }
-            return FormatClassifier.describe(source: source, path: SignalPath(output: output, isExclusive: exclusiveOutput, transport: transport))
+            let client = snapshot.clientPCM.map {
+                SignalPCM(sampleRate: $0.sampleRate, validBits: $0.validBits,
+                          containerBits: $0.containerBits, channels: $0.channels,
+                          isFloat: $0.isFloat)
+            }
+            return FormatClassifier.describe(source: source, path: SignalPath(
+                output: output, clientPCM: client,
+                underrunFrames: snapshot.underrunFrames,
+                isExclusive: exclusiveOutput, transport: transport))
         }
         if formatInfo != nextInfo { formatInfo = nextInfo }
     }
