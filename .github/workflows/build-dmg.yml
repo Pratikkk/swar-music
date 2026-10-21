@@ -62,6 +62,15 @@ jobs:
             -o "$RUNNER_TEMP/swar-verify-ring-eof"
           "$RUNNER_TEMP/swar-verify-ring-eof" 2>&1 | tee dist/ring-eof.log
 
+      - name: Verify AUHAL render callback with sanitizers
+        run: |
+          xcrun clang -std=c11 -Wall -Wextra -Werror \\
+            -fsanitize=address,undefined -fno-omit-frame-pointer \\
+            -I Packages/SwarKit/Sources/RealtimeAudio/include \\
+            Tools/verify_render_callback.c -framework AudioUnit -framework AudioToolbox \\
+            -o "$RUNNER_TEMP/swar-verify-render"
+          "$RUNNER_TEMP/swar-verify-render" 2>&1 | tee dist/render-callback.log
+
       - name: Package and verify installer
         run: |
           ./scripts/package-macos.sh dist 2>&1 | tee dist/package.log
