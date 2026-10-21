@@ -27,7 +27,7 @@ public struct FormatChip: View {
                 if accented { Image(systemName: "waveform").accessibilityHidden(true) }
                 Text(info.source.codec + " · " +
                      (info.source.bitDepth.map { "\($0)/" } ?? "") +
-                     String(format: "%g", info.source.sampleRate / 1000))
+                     String(format: "%g kHz", info.source.sampleRate / 1000))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .fixedSize()
