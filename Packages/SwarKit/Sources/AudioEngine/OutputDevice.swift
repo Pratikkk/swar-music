@@ -201,7 +201,7 @@ final class OutputDevice {
         }
     }
 
-    func configure(for source: SourceFormat) throws {
+    func configure(for source: SourceFormat, pcmFormat: AudioStreamBasicDescription) throws {
         guard source.channels <= 2 else {
             throw AudioFailure("This playback prototype supports mono and stereo. Multichannel "
                 + "routing is not implemented yet.")
@@ -226,8 +226,8 @@ final class OutputDevice {
             scope: kAudioObjectPropertyScopeOutput)
         guard let match = formats.first(where: {
             $0.mFormat.mFormatID == kAudioFormatLinearPCM &&
-            Int($0.mFormat.mBitsPerChannel) == source.bitDepth &&
-            ($0.mFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) == source.isFloat &&
+            $0.mFormat.mBitsPerChannel == pcmFormat.mBitsPerChannel &&
+            ($0.mFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) ==\n                (pcmFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) &&
             Int($0.mFormat.mChannelsPerFrame) >= source.channels &&
             $0.mSampleRateRange.mMinimum <= source.sampleRate &&
             source.sampleRate <= $0.mSampleRateRange.mMaximum
