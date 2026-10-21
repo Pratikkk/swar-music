@@ -380,7 +380,7 @@ private final class OutputSession {
         pcm = try GaplessPCM(decoder: decoder, url: url, entryID: entryID, token: token)
         device = try OutputDevice(id: deviceID)
         do {
-            if exclusive { try device.hog(true) }
+            if exclusive { try device.setHogged(true) }
             try device.configure(for: decoder.source)
             let buffer = self.pcm.ring
             var componentDescription = AudioComponentDescription(componentType: kAudioUnitType_Output,
@@ -478,6 +478,6 @@ private final class OutputSession {
         }
         isPlaying = false
         device.restore()
-        try? device.hog(false)
+        try? device.releaseHog()
     }
 }
