@@ -227,7 +227,8 @@ final class OutputDevice {
         guard let match = formats.first(where: {
             $0.mFormat.mFormatID == kAudioFormatLinearPCM &&
             $0.mFormat.mBitsPerChannel == pcmFormat.mBitsPerChannel &&
-            ($0.mFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) ==\n                (pcmFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) &&
+            ($0.mFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) ==
+                (pcmFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) &&
             Int($0.mFormat.mChannelsPerFrame) >= source.channels &&
             $0.mSampleRateRange.mMinimum <= source.sampleRate &&
             source.sampleRate <= $0.mSampleRateRange.mMaximum
