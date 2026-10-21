@@ -147,10 +147,16 @@ final class OutputDevice {
     init(id selectedID: AudioDeviceID? = nil,
          propertyBackend: any AudioObjectPropertyBackend = SystemAudioObjectPropertyBackend()) throws {
         self.propertyBackend = propertyBackend
-        id = try propertyBackend.getProperty(
-            AudioObjectID(kAudioObjectSystemObject),
-            kAudioHardwarePropertyDefaultOutputDevice,
-            initial: AudioDeviceID(0))
+        // A pinned output must take precedence over the system default.
+        // Only consult the default device when no explicit selection was made.
+        if let selectedID {
+            id = selectedID
+        } else {
+            id = try propertyBackend.getProperty(
+                AudioObjectID(kAudioObjectSystemObject),
+                kAudioHardwarePropertyDefaultOutputDevice,
+                initial: AudioDeviceID(0))
+        }
         guard id != kAudioObjectUnknown else {
             throw AudioFailure("No default audio output is available.")
         }
