@@ -6,7 +6,7 @@ import Testing
 
 /// Simulates HAL accepting, rejecting, or ignoring a physical-format request.
 private final class FormatPropertyBackend: @unchecked Sendable, AudioObjectPropertyBackend {
-    let expected: AudioStreamBasicDescription
+    var expected: AudioStreamBasicDescription
     let rate: Double = 44_100
     var supported = true
     var acceptsSet = true
@@ -65,6 +65,36 @@ struct PhysicalFormatValidationTests {
             mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
             mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4,
             mChannelsPerFrame: 2, mBitsPerChannel: 16, mReserved: 0)
+    }
+
+    @Test func lossySourceCanUseDecodedFloat32Format() throws {
+        let backend = FormatPropertyBackend()
+        backend.expected = AudioStreamBasicDescription(
+            mSampleRate: 44_100, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8,
+            mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
+        let lossy = SourceFormat(codec: "MP3", sampleRate: 44_100,
+                                 bitDepth: nil, channels: 2, isLossless: false)
+        let device = try OutputDevice(id: 1, propertyBackend: backend)
+        try device.configure(for: lossy, pcmFormat: backend.expected)
+        #expect(backend.actual.mBitsPerChannel == 32)
+        #expect(backend.actual.mFormatFlags & kAudioFormatFlagIsFloat != 0)
+    }
+
+    @Test func incompatibleFloatingPointRepresentationIsRejected() throws {
+        let backend = FormatPropertyBackend()
+        let floatPCM = AudioStreamBasicDescription(
+            mSampleRate: 44_100, mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 8, mFramesPerPacket: 1, mBytesPerFrame: 8,
+            mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
+        let lossy = SourceFormat(codec: "AAC", sampleRate: 44_100,
+                                 bitDepth: nil, channels: 2, isLossless: false)
+        let device = try OutputDevice(id: 1, propertyBackend: backend)
+        #expect(throws: AudioFailure.self) {
+            try device.configure(for: lossy, pcmFormat: floatPCM)
+        }
     }
 
     @Test func matchingFormatIsAcceptedAfterReadback() throws {
