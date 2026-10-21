@@ -208,7 +208,14 @@ public enum FormatClassifier {
         if path.systemVolume == .unknown { notes.append("System volume applies; its effect on samples has not been measured.") }
         if path.clientPCM == nil { notes.append("AUHAL client PCM format has not been inspected.") }
         if path.integrity == .unverified { notes.append("Sample equality at the output has not been verified.") }
-        let status: SignalStatus = !conversions.isEmpty ? .converted : notes.isEmpty ? .bitPerfect : .unverified
+        // A status label must never infer measured bit-perfect delivery from
+        // matching metadata or the absence of diagnostic warnings.
+        let canClaimVerified = path.integrity == .verifiedUnchanged &&
+            path.output != nil && path.clientPCM != nil &&
+            path.transport == .local && path.isExclusive &&
+            path.systemVolume == .unity && path.underrunFrames == 0
+        let status: SignalStatus = !conversions.isEmpty ? .converted :
+            (canClaimVerified && notes.isEmpty ? .bitPerfect : .unverified)
         return FormatChipInfo(source: source, output: path.output, clientPCM: path.clientPCM, underrunFrames: path.underrunFrames, tier: tier, label: label,
                               status: status, conversionReasons: conversions, verificationNotes: notes,
                               isExclusive: path.isExclusive)
