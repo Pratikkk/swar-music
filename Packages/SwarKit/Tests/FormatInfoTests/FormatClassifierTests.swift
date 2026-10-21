@@ -107,12 +107,12 @@ struct FormatClassifierTests {
         #expect(info.conversionReasons.count == 1)
     }
 
-    @Test func nativeIntegerSourceToFloatDeviceReportsConversion() {
+    @Test func differingPhysicalRepresentationRequiresVerificationNotConversionClaim() {
         let info = FormatClassifier.describe(source: source(), path: SignalPath(output: output(depth: 32, floating: true)))
         #expect(info.label == "Hi-Res Lossless · ALAC")
-        #expect(info.status == .converted)
-        #expect(info.conversionReasons.count == 2)
-        #expect(info.conversionReasons.contains("Integer PCM is converted to floating-point output."))
+        #expect(info.status == .unverified)
+        #expect(info.conversionReasons.isEmpty)
+        #expect(info.verificationNotes.contains("Decoded PCM representation is unavailable."))
         #expect(info.outputDetail.contains("32-bit float"))
         #expect(info.sourceDetail.contains("24-bit"))
     }
@@ -132,6 +132,26 @@ struct FormatClassifierTests {
         #expect(FormatClassifier.describe(source: source(), path: path).status == .unverified)
         path.output = output(rate: .nan)
         #expect(FormatClassifier.describe(source: source(), path: path).status == .unverified)
+    }
+
+    @Test func widerPhysicalContainerDoesNotImplyAlteredSamples() {
+        let pcm = SignalPCM(sampleRate: 96_000, validBits: 24,
+                            containerBits: 32, channels: 2, isFloat: false)
+        let path = SignalPath(output: output(depth: 32), clientPCM: pcm)
+        let info = FormatClassifier.describe(source: source(), path: path)
+        #expect(info.status == .unverified)
+        #expect(info.conversionReasons.isEmpty)
+        #expect(info.clientPCM?.containerBits == 32)
+        #expect(info.clientPCM?.validBits == 24)
+    }
+
+    @Test func underrunsAreReportedWithoutClaimingPCMConversion() {
+        let path = SignalPath(output: output(), underrunFrames: 128)
+        let info = FormatClassifier.describe(source: source(), path: path)
+        #expect(info.underrunFrames == 128)
+        #expect(info.verificationNotes.contains("Playback underruns detected: 128 frames."))
+        #expect(info.conversionReasons.isEmpty)
+        #expect(info.status == .unverified)
     }
 
     @Test func losslessCodecAndAccessibleDetailsArePreserved() {
