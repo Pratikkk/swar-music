@@ -64,10 +64,10 @@ jobs:
 
       - name: Verify AUHAL render callback with sanitizers
         run: |
-          xcrun clang -std=c11 -Wall -Wextra -Werror \\
-            -fsanitize=address,undefined -fno-omit-frame-pointer \\
-            -I Packages/SwarKit/Sources/RealtimeAudio/include \\
-            Tools/verify_render_callback.c -framework AudioUnit -framework AudioToolbox \\
+          xcrun clang -std=c11 -Wall -Wextra -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -I Packages/SwarKit/Sources/RealtimeAudio/include \
+            Tools/verify_render_callback.c -framework AudioUnit -framework AudioToolbox \
             -o "$RUNNER_TEMP/swar-verify-render"
           "$RUNNER_TEMP/swar-verify-render" 2>&1 | tee dist/render-callback.log
 
