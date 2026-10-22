@@ -74,7 +74,7 @@ private struct AlbumContextActions: ViewModifier {
         }
     }
 
-    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal }
+    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal, trash }
     private func perform(_ action: Action) {
         guard !working else { return }
         working = true
