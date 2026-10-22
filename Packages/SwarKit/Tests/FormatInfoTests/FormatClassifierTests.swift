@@ -188,7 +188,7 @@ struct FormatClassifierTests {
         let first = FormatClassifier.describe(source: source(), path: SignalPath(output: output(depth: 32, floating: true)))
         let next = FormatClassifier.describe(source: source(codec: "AAC", depth: nil, rate: 44_100, lossless: false, bitrate: 256_000),
                                              path: SignalPath(output: output(depth: 32, rate: 44_100, floating: true)))
-        #expect(first.status == .converted)
+        #expect(first.status == .unverified)
         #expect(next.label == "AAC · 256 kbps")
         #expect(next.status == .unverified)
         #expect(next.conversionReasons.isEmpty)
