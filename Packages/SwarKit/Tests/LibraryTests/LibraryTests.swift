@@ -243,6 +243,17 @@ struct LibraryTests {
         await model.start()
         defer { model.shutdown() }
         await model.addFolder(music)
+        #expect(model.tracks.count == 2)
+        // File names differ, so give both files explicit matching song metadata.
+        // Duplicate review matches title, artist and rounded duration, not hashes.
+        for song in model.tracks {
+            var metadata = TrackMetadata(track: song)
+            metadata.title = "Duplicate Fixture"
+            metadata.artist = "Test Artist"
+            metadata.albumArtist = "Test Artist"
+            metadata.album = "Test Album"
+            try await model.updateMetadata(song, metadata: metadata)
+        }
         let candidates = try await model.collectionPage(filter: .duplicates, search: "", scope: .all, limit: 200)
         #expect(candidates.count == 2)
         do {
