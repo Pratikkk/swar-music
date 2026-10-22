@@ -22,6 +22,8 @@ struct CollectionManagerView: View {
     @State private var showRemoval = false
     @State private var pendingTrashTrack: LibraryTrack?
     @State private var showTrashConfirmation = false
+    @State private var showBatchTrashConfirmation = false
+    @State private var pendingBatchTrash = Set<String>()
     @State private var error: String?
     @State private var working = false
     @State private var loadedFilter: CollectionFilter?
@@ -117,6 +119,18 @@ struct CollectionManagerView: View {
                 }
             }
             Button("Cancel", role: .cancel) { playlistTracks = [] }
+        }
+        .alert("Move \(pendingBatchTrash.count) Files to Trash?", isPresented: $showBatchTrashConfirmation) {
+            Button("Move to Trash", role: .destructive) {
+                let ids = pendingBatchTrash
+                pendingBatchTrash.removeAll()
+                moveBatchDuplicatesToTrash(ids)
+            }
+            Button("Cancel", role: .cancel) { pendingBatchTrash.removeAll() }
+        } message: {
+            let size = page?.tracks.filter { pendingBatchTrash.contains($0.id) }
+                .reduce(Int64(0)) { $0 + max(0, $1.fileSize) } ?? 0
+            Text("Move \(pendingBatchTrash.count) reviewed files (\(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))) to macOS Trash? Swar checks that an unselected copy remains in every duplicate group. This cannot guarantee the copies contain identical audio. The operation stops on error and any files already moved remain in Trash.")
         }
         .alert("Move Duplicate to Trash?", isPresented: $showTrashConfirmation) {
             Button("Move to Trash", role: .destructive) {
@@ -259,6 +273,13 @@ struct CollectionManagerView: View {
                             showTrashConfirmation = true
                         }
                     }
+                    if filter == .duplicates && selected.count > 1 {
+                        Button("Move Selected Files to Trash…", role: .destructive) {
+                            pendingBatchTrash = selected
+                            showBatchTrashConfirmation = true
+                        }
+                        .disabled(page.tracks.count != page.count || !TrackSearchQuery(library.search).isEmpty)
+                    }
                     Button("Remove…") { pendingRemoval = selected; showRemoval = true }
                 }
                 Button("Clear") { selected.removeAll() }
@@ -360,6 +381,23 @@ struct CollectionManagerView: View {
         } catch is CancellationError { }
         catch { guard !Task.isCancelled, loadGeneration == generation else { return }; self.error = error.localizedDescription }
     }
+    private func moveBatchDuplicatesToTrash(_ ids: Set<String>) {
+        guard !working, filter == .duplicates, !ids.isEmpty else { return }
+        working = true
+        Task {
+            defer { working = false }
+            do {
+                _ = try await library.moveSelectedDuplicatesToTrash(ids: ids)
+                selected.removeAll()
+                await load()
+            } catch {
+                self.error = error.localizedDescription
+                selected.removeAll()
+                await load()
+            }
+        }
+    }
+
     private func moveDuplicateToTrash(_ track: LibraryTrack) {
         guard !working, filter == .duplicates else { return }
         working = true
