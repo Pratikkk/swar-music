@@ -267,6 +267,29 @@ struct LibraryTests {
         #expect(!(try await LibraryModel.filesAreByteIdentical(first, changed)))
     }
 
+    @MainActor @Test func exactDuplicateScanSelectsOnlyByteIdenticalExtraCopies() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        let first = music.appendingPathComponent("exact-one.wav")
+        let second = music.appendingPathComponent("exact-two.wav")
+        let different = music.appendingPathComponent("different.wav")
+        try FileManager.default.copyItem(at: source, to: first)
+        try FileManager.default.copyItem(at: source, to: second)
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("96000-24.flac"), to: different)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        #expect(model.tracks.count == 3)
+        let selected = try await model.selectVerifiedExactDuplicates(model.tracks)
+        #expect(selected.count == 1)
+        #expect(model.exactDuplicateVerifiedGroups == 1)
+        #expect(FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+        #expect(FileManager.default.fileExists(atPath: different.path))
+    }
+
     @MainActor @Test func batchTrashRequiresAnAccessibleRetainedCopy() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
