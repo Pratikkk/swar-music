@@ -72,7 +72,7 @@ struct CollectionManagerView: View {
                 }
                 selectionBar(page)
                 if filter == .duplicates {
-                    Text("Candidates share title, artist, and rounded duration. Compare format and location before removing.")
+                    Text("Possible duplicates share a title, artist, and rounded duration. Compare encoding, bitrate, size, and location; different editions may not be identical.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if filter == .missing {
@@ -253,9 +253,11 @@ struct CollectionManagerView: View {
             }.width(min: 160, ideal: 240)
             TableColumn("Album", value: \.album).width(min: 110, ideal: 170)
             TableColumn("Format") { track in
-                Text([track.codec, track.sampleRate.map { String(format: "%g kHz", $0 / 1000) }].compactMap { $0 }.joined(separator: " · "))
+                Text(filter == .duplicates
+                     ? DuplicateReview.details(for: track)
+                     : [track.codec, track.sampleRate.map { String(format: "%g kHz", $0 / 1000) }].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(.secondary)
-            }.width(min: 80, ideal: 110)
+            }.width(min: 80, ideal: filter == .duplicates ? 270 : 110)
             TableColumn("Location") { track in
                 Text(track.error ?? track.relativePath).lineLimit(1).truncationMode(.middle)
                     .font(.caption).foregroundStyle(track.error == nil ? Color.secondary : .orange)
