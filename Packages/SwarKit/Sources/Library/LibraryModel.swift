@@ -341,7 +341,17 @@ public final class LibraryModel {
                     && $0.duration.isFinite && candidate.duration.isFinite
                     && $0.duration.rounded() == candidate.duration.rounded()
                 }
-                guard peers.contains(where: { !ids.contains($0.id) }) else {
+                guard peers.contains(where: { peer in
+                    guard !ids.contains(peer.id), !peer.isMissing, peer.error == nil,
+                          let location = try? location(for: peer) else { return false }
+                    let file = location.file
+                    let root = location.root.resolvingSymlinksInPath().standardizedFileURL
+                    let resolved = file.resolvingSymlinksInPath().standardizedFileURL
+                    guard resolved.pathComponents.starts(with: root.pathComponents),
+                          let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+                          attributes[.type] as? FileAttributeType == .typeRegular else { return false }
+                    return FileManager.default.isReadableFile(atPath: file.path)
+                }) else {
                     throw LibraryFailure("Refusing to remove the last retained copy of a duplicate group.")
                 }
                 try await moveDuplicateToTrashCore(candidate)
