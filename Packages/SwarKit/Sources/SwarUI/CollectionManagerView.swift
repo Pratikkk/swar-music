@@ -273,7 +273,7 @@ struct CollectionManagerView: View {
                             showTrashConfirmation = true
                         }
                     }
-                    if filter == .duplicates && selected.count > 1 {
+                    if filter == .duplicates && !selected.isEmpty {
                         Button("Move Selected Files to Trash…", role: .destructive) {
                             pendingBatchTrash = selected
                             showBatchTrashConfirmation = true
