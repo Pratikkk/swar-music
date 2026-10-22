@@ -288,6 +288,12 @@ public final class LibraryModel {
               !current.isMissing, current.error == nil else {
             throw LibraryFailure("This song is no longer available. Refresh the review.")
         }
+        guard current.folderID == track.folderID,
+              current.relativePath == track.relativePath,
+              current.fileSize == track.fileSize,
+              current.modifiedAt == track.modifiedAt else {
+            throw LibraryFailure("The song changed since it was selected. Review the list again.")
+        }
         let (file, root) = try location(for: current)
         let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
         let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
