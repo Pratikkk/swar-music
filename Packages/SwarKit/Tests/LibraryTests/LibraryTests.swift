@@ -179,6 +179,25 @@ struct LibraryTests {
         #expect(lossless != lossy)
     }
 
+    @MainActor @Test func trashActionRejectsUnavailableSongsWithoutChangingLibrary() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = music.appendingPathComponent("candidate.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: file)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let song = try #require(model.tracks.first)
+        try FileManager.default.removeItem(at: file)
+        do {
+            try await model.moveDuplicateToTrash(song)
+            Issue.record("Missing source must not be treated as a successful Trash operation")
+        } catch { }
+        #expect(model.totalCount == 1)
+        #expect(model.tracks.first?.id == song.id)
+    }
+
     @Test func exactTrackLookupWorksBeyondTheVisiblePageAndHonoursRemoval() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
