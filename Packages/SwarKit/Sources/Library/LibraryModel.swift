@@ -44,6 +44,7 @@ public final class LibraryModel {
     private var watchTask: Task<Void, Never>?
     private var scanTask: Task<Void, Never>?
     private var trashOperationActive = false
+    private var trashJournalDirectory: URL?
     private var isShutDown = false
     private var started = false
     private let storageDirectory: URL?
@@ -63,6 +64,8 @@ public final class LibraryModel {
             let cache = try storageDirectory?.appendingPathComponent("Artwork") ?? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Swar/Artwork", isDirectory: true)
             try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            trashJournalDirectory = support.appendingPathComponent("TrashJournal", isDirectory: true)
+            try FileManager.default.createDirectory(at: trashJournalDirectory!, withIntermediateDirectories: true)
             artworkDirectory = cache
             let custom = support.appendingPathComponent("CustomArtwork", isDirectory: true)
             customArtworkDirectory = custom
@@ -85,6 +88,7 @@ public final class LibraryModel {
             }.value
             guard !isShutDown else { return }
             try await restoreFolders()
+            await reconcileTrashJournal()
             await reload()
             await reloadPlaylists()
             await rescan()
@@ -308,13 +312,27 @@ public final class LibraryModel {
             throw LibraryFailure("Refusing to move a non-regular file or symlink to Trash.")
         }
         try Task.checkCancellation()
-        try await Task.detached(priority: .userInitiated) {
-            var destination: NSURL?
-            try FileManager.default.trashItem(at: file, resultingItemURL: &destination)
-        }.value
-        // Only update the library after macOS confirms that the file was trashed.
-        // If the database update fails, the original remains recoverable in Trash.
+        // Write-ahead record survives a crash between filesystem and SQLite updates.
+        let journalURL = try recordTrashIntent(trackID: current.id, source: file)
+        let destination: URL
+        do {
+            destination = try await Task.detached(priority: .userInitiated) {
+                var movedURL: NSURL?
+                try FileManager.default.trashItem(at: file, resultingItemURL: &movedURL)
+                guard let movedURL else { throw LibraryFailure("Trash returned no recoverable destination.") }
+                return movedURL as URL
+            }.value
+        } catch {
+            // Only discard the intent if the original file is still present.
+            if FileManager.default.fileExists(atPath: file.path) {
+                try? FileManager.default.removeItem(at: journalURL)
+            }
+            throw error
+        }
+        try recordTrashDestination(destination, in: journalURL, trackID: current.id, source: file)
+        // If this fails, the journal remains for recovery on the next launch.
         try await repository.removeTracksFromLibrary(ids: [current.id])
+        try? FileManager.default.removeItem(at: journalURL)
         trackActionsRevision += 1
         overviewRevision += 1
         await reload()
@@ -394,6 +412,60 @@ public final class LibraryModel {
             }
         }
         return moved
+    }
+
+    private struct TrashJournalRecord: Codable {
+        var trackID: String
+        var sourcePath: String
+        var destinationPath: String?
+    }
+
+    private func recordTrashIntent(trackID: String, source: URL) throws -> URL {
+        guard let trashJournalDirectory else { throw LibraryFailure("Trash recovery journal is not available.") }
+        let entryURL = trashJournalDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        let entry = TrashJournalRecord(trackID: trackID, sourcePath: source.path, destinationPath: nil)
+        try JSONEncoder().encode(entry).write(to: entryURL, options: .atomic)
+        return entryURL
+    }
+
+    private func recordTrashDestination(_ destination: URL, in journalURL: URL, trackID: String, source: URL) throws {
+        let entry = TrashJournalRecord(trackID: trackID, sourcePath: source.path, destinationPath: destination.path)
+        try JSONEncoder().encode(entry).write(to: journalURL, options: .atomic)
+    }
+
+    private func reconcileTrashJournal() async {
+        guard let trashJournalDirectory, let repository,
+              let entries = try? FileManager.default.contentsOfDirectory(
+                at: trashJournalDirectory, includingPropertiesForKeys: nil)
+        else { return }
+        var unresolved = 0
+        for entryURL in entries where entryURL.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: entryURL),
+                  let record = try? JSONDecoder().decode(TrashJournalRecord.self, from: data) else {
+                unresolved += 1
+                continue
+            }
+            // If the source still exists, never hide or delete it on journal recovery.
+            if FileManager.default.fileExists(atPath: record.sourcePath) {
+                try? FileManager.default.removeItem(at: entryURL)
+                continue
+            }
+            // A missing source alone is NOT proof it was successfully trashed.
+            guard let destination = record.destinationPath,
+                  FileManager.default.fileExists(atPath: destination) else {
+                unresolved += 1
+                continue
+            }
+            do {
+                try await repository.removeTracksFromLibrary(ids: [record.trackID])
+                try FileManager.default.removeItem(at: entryURL)
+            } catch {
+                unresolved += 1
+            }
+        }
+        if unresolved > 0 {
+            errorMessage = "\(unresolved) interrupted Trash operation(s) require manual review. Check macOS Trash and your original music folders."
+        }
     }
 
     private func beginTrashOperation() throws {
