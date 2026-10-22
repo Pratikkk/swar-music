@@ -54,16 +54,16 @@ struct ExpandedPlayerControls: View {
 }
 
 /// Clock and drag updates stay inside this small view, outside transport and volume.
-/// Position is read from SeekSliderState (updated via synchronize on player.position
-/// changes) rather than directly from player.position, so the view does not
-/// invalidate on every sub-second playback tick.
+/// Read the live clock here, while retaining the pointer preview during a seek.
+/// Only this small seek view observes position ticks; artwork, transport controls,
+/// and the surrounding library do not need to redraw.
 @MainActor
 private struct ExpandedSeekBar: View {
     let player: Player
     @Environment(\.swarPalette) private var palette
     @State private var seek = SeekSliderState()
     @AppStorage("waveformSeekBar") private var waveformEnabled = true
-    private var displayedPosition: Double { seek.value }
+    private var displayedPosition: Double { seek.displayedPosition(player.position) }
 
     var body: some View {
         VStack(spacing: 2) {
