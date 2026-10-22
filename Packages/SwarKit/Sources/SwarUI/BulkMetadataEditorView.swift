@@ -7,6 +7,10 @@ struct BulkMetadataEditorView: View {
     let tracks: [LibraryTrack]
     let library: LibraryModel
     @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var trackNumber = 0
+    @State private var changeTitle = false
+    @State private var changeTrack = false
     @State private var album = ""
     @State private var albumArtist = ""
     @State private var artist = ""
@@ -23,7 +27,9 @@ struct BulkMetadataEditorView: View {
     @State private var error: String?
 
     private var patch: BulkMetadataPatch {
-        BulkMetadataPatch(album: changeAlbum ? album : nil,
+        BulkMetadataPatch(title: changeTitle ? title : nil,
+                          trackNumber: changeTrack ? trackNumber : nil,
+                          album: changeAlbum ? album : nil,
                           albumArtist: changeAlbumArtist ? albumArtist : nil,
                           artist: changeArtist ? artist : nil,
                           genre: changeGenre ? genre : nil,
@@ -37,6 +43,12 @@ struct BulkMetadataEditorView: View {
             Text("\(tracks.count) selected songs · Library only. Source file tags will not change.")
                 .font(.caption).foregroundStyle(.secondary)
             Form {
+                field("Title", enabled: $changeTitle, value: $title)
+                HStack {
+                    Toggle("Track Number", isOn: $changeTrack).frame(width: 150)
+                    TextField("Track Number", value: $trackNumber, format: .number.grouping(.never))
+                        .disabled(!changeTrack)
+                }
                 field("Album", enabled: $changeAlbum, value: $album)
                 field("Album Artist", enabled: $changeAlbumArtist, value: $albumArtist)
                 field("Artist", enabled: $changeArtist, value: $artist)
