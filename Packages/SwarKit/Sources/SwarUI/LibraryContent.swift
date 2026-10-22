@@ -13,6 +13,7 @@ struct LibraryContent: View {
     /// Cached current track ID; resolved from player.currentURL only when it changes,
     /// not on every LibraryContent body invalidation.
     @State private var currentTrackIDCache: String?
+    @State private var loadingNextPage = false
 
     var body: some View {
         let currentTrackID = currentTrackIDCache
@@ -101,8 +102,34 @@ struct LibraryContent: View {
     private func trackList(_ tracks: [LibraryTrack], currentTrackID: String?) -> some View {
         List {
             ForEach(tracks) { track in trackRow(track, context: tracks, currentTrackID: currentTrackID) }
+            if tracks.count < library.totalCount {
+                HStack {
+                    Spacer()
+                    if loadingNextPage {
+                        ProgressView().controlSize(.small)
+                            .accessibilityLabel("Loading more songs")
+                    } else {
+                        Button("Load More Songs") { loadNextPage() }
+                            .buttonStyle(.borderless)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 12)
+                .onAppear { loadNextPage() }
+            }
             FloatingPlayerScrollSpacer()
         }.listStyle(.inset)
+    }
+
+    /// Load another bounded page only when its footer becomes visible.
+    /// The explicit button remains available if automatic loading is interrupted.
+    private func loadNextPage() {
+        guard !loadingNextPage, library.tracks.count < library.totalCount else { return }
+        loadingNextPage = true
+        Task {
+            await library.loadMore()
+            loadingNextPage = false
+        }
     }
 
     private func trackRow(_ track: LibraryTrack, context: [LibraryTrack], currentTrackID: String?) -> some View {
