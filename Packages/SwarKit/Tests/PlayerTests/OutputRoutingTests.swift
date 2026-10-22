@@ -146,7 +146,7 @@ private actor RoutingEngine: PlaybackDriving {
     func open(_ url: URL, outputDeviceID: UInt32?) -> PlaybackSnapshot { openedOutput = outputDeviceID; return open(url) }
     func togglePlayback() -> PlaybackSnapshot { playing.toggle(); return value() }
     func seek(to seconds: Double) -> PlaybackSnapshot { position = seconds; return value() }
-    func selectOutput(_ id: UInt32?, pause: Bool) throws -> PlaybackSnapshot {
+    func selectOutput(_ id: UInt32?, pause: Bool, exclusive: Bool) throws -> PlaybackSnapshot {
         if failing {
             if dropSession { opened = false; playing = false }
             throw CocoaError(.featureUnsupported)
