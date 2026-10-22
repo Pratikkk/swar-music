@@ -108,7 +108,7 @@ struct CollectionManagerView: View {
         .task(id: refreshKey) { await load() }
         .onChange(of: filter) { selected.removeAll(); exactVerifiedIDs.removeAll(); limit = 200 }
         .onChange(of: library.search) { selected.removeAll(); exactVerifiedIDs.removeAll(); limit = 200 }
-        .onChange(of: library.searchScope) { selected.removeAll(); limit = 200 }
+        .onChange(of: library.searchScope) { selected.removeAll(); exactVerifiedIDs.removeAll(); limit = 200 }
         .sheet(item: $recoveryRequest) { request in FileRecoveryView(request: request, library: library) }
         .sheet(item: $artworkRequest) { request in ArtworkEditorView(tracks: request.tracks, library: library, player: player) }
         .sheet(item: $editing) { MetadataEditorView(track: $0, library: library) }
