@@ -44,7 +44,6 @@ public final class LibraryModel {
     private var watchTask: Task<Void, Never>?
     private var scanTask: Task<Void, Never>?
     private var trashOperationActive = false
-    private var trashOperationDepth = 0
     private var isShutDown = false
     private var started = false
     private let storageDirectory: URL?
@@ -278,6 +277,10 @@ public final class LibraryModel {
     public func moveDuplicateToTrash(_ track: LibraryTrack) async throws {
         try beginTrashOperation()
         defer { finishTrashOperation() }
+        try await moveDuplicateToTrashCore(track)
+    }
+
+    private func moveDuplicateToTrashCore(_ track: LibraryTrack) async throws {
         guard !isShutDown, !isScanning, !isRecovering, let repository else {
             throw LibraryFailure("Wait for the library to finish updating.")
         }
@@ -341,7 +344,7 @@ public final class LibraryModel {
                 guard peers.contains(where: { !ids.contains($0.id) }) else {
                     throw LibraryFailure("Refusing to remove the last retained copy of a duplicate group.")
                 }
-                try await moveDuplicateToTrash(candidate)
+                try await moveDuplicateToTrashCore(candidate)
                 moved += 1
             } catch {
                 throw LibraryFailure("Moved \(moved) of \(ids.count) selected files to Trash. Stopped: \(error.localizedDescription)")
@@ -363,7 +366,7 @@ public final class LibraryModel {
             guard let track = unique[id] else { continue }
             do {
                 try Task.checkCancellation()
-                try await moveDuplicateToTrash(track)
+                try await moveDuplicateToTrashCore(track)
                 moved += 1
             } catch {
                 throw LibraryFailure("Moved \(moved) of \(unique.count) files to Trash. \(error.localizedDescription)")
@@ -372,22 +375,12 @@ public final class LibraryModel {
         return moved
     }
 
-    /// A single actor-isolated admission point prevents overlapping destructive UI requests.
-    /// Nested calls from batch operations share the same operation scope.
     private func beginTrashOperation() throws {
-        if trashOperationDepth == 0 {
-            guard !trashOperationActive else {
-                throw LibraryFailure("Another Trash operation is in progress.")
-            }
-            trashOperationActive = true
-        }
-        trashOperationDepth += 1
+        guard !trashOperationActive else { throw LibraryFailure("Another Trash operation is in progress.") }
+        trashOperationActive = true
     }
 
-    private func finishTrashOperation() {
-        trashOperationDepth -= 1
-        if trashOperationDepth == 0 { trashOperationActive = false }
-    }
+    private func finishTrashOperation() { trashOperationActive = false }
 
     public func dismissError() { errorMessage = nil }
 
