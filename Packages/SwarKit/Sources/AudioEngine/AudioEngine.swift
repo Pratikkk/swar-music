@@ -4,8 +4,26 @@ import Foundation
 import RealtimeAudio
 import os
 
+public struct PlaybackPCMFormat: Sendable, Equatable {
+    public let sampleRate: Double
+    public let validBits: Int
+    public let containerBits: Int
+    public let channels: Int
+    public let isFloat: Bool
+
+    public init(sampleRate: Double, validBits: Int, containerBits: Int,
+                channels: Int, isFloat: Bool) {
+        self.sampleRate = sampleRate
+        self.validBits = validBits
+        self.containerBits = containerBits
+        self.channels = channels
+        self.isFloat = isFloat
+    }
+}
+
 public struct PlaybackSnapshot: Sendable {
     public let source: SourceFormat?
+    public let clientPCM: PlaybackPCMFormat?
     public let output: OutputDescription?
     public let duration: Double
     public let position: Double
@@ -17,10 +35,10 @@ public struct PlaybackSnapshot: Sendable {
     public let continuationID: UUID?
     public let needsOutputRecovery: Bool
 
-    public init(source: SourceFormat? = nil, output: OutputDescription? = nil,
+    public init(source: SourceFormat? = nil, output: OutputDescription? = nil, clientPCM: PlaybackPCMFormat? = nil,
                 duration: Double = 0, position: Double = 0, isPlaying: Bool = false,
                 underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil, needsOutputRecovery: Bool = false) {
-        self.source = source; self.output = output; self.duration = duration
+        self.source = source; self.output = output; self.clientPCM = clientPCM; self.duration = duration
         self.position = position; self.isPlaying = isPlaying
         self.underrunFrames = underrunFrames; self.error = error; self.didFinish = didFinish
         self.playbackToken = playbackToken; self.continuationID = continuationID
@@ -350,6 +368,16 @@ private final class EngineState: @unchecked Sendable {
         if let audible { url = audible.segment.url }
         return PlaybackSnapshot(source: audible?.segment.decoder.source,
                                 output: session?.outputStatus.output,
+                                clientPCM: audible.map { value in
+                                    let pcm = value.segment.decoder.pcmFormat
+                                    let containerBits = Int(pcm.mBytesPerFrame) * 8 / max(1, Int(pcm.mChannelsPerFrame))
+                                    return PlaybackPCMFormat(
+                                        sampleRate: pcm.mSampleRate,
+                                        validBits: Int(pcm.mBitsPerChannel),
+                                        containerBits: containerBits,
+                                        channels: Int(pcm.mChannelsPerFrame),
+                                        isFloat: pcm.mFormatFlags & kAudioFormatFlagIsFloat != 0)
+                                },
                                 duration: audible?.duration ?? 0, position: audible?.position ?? 0,
                                 isPlaying: session?.isPlaying ?? false,
                                 underrunFrames: session.flatMap { $0.ring.map(swar_ring_underruns) } ?? 0,

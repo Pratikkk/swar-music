@@ -272,7 +272,7 @@ private actor RecoveryEngine: PlaybackDriving {
     func failRecoveries(_ value: Bool) { failing = value }
     func suspendOutput() -> PlaybackSnapshot { suspensions += 1; events.append("suspend"); playing = false; return value() }
     func selectOutput(_ id: UInt32?, pause: Bool) -> PlaybackSnapshot { if pause { playing = false }; return value() }
-    func recoverOutput(_ id: UInt32?, resume: Bool) async throws -> PlaybackSnapshot {
+    func recoverOutput(_ id: UInt32?, resume: Bool, exclusive: Bool) async throws -> PlaybackSnapshot {
         recoveries.append(resume); events.append("recover")
         if gated {
             gated = false; entered = true; waiting?.resume(); waiting = nil

@@ -21,6 +21,31 @@ public enum SystemVolumeState: Sendable { case unity, attenuated, unknown }
 /// Source/device metadata equality is not such evidence.
 public enum SampleIntegrity: Sendable { case unverified, verifiedUnchanged }
 
+/// Format of PCM supplied to AUHAL, independent of file encoding and the
+/// physical format advertised by the device driver.
+public struct SignalPCM: Sendable, Equatable {
+    public let sampleRate: Double
+    public let validBits: Int
+    public let containerBits: Int
+    public let channels: Int
+    public let isFloat: Bool
+
+    public init(sampleRate: Double, validBits: Int, containerBits: Int,
+                channels: Int, isFloat: Bool) {
+        self.sampleRate = sampleRate
+        self.validBits = validBits
+        self.containerBits = containerBits
+        self.channels = channels
+        self.isFloat = isFloat
+    }
+
+    public var detail: String {
+        let precision = validBits == containerBits ? "\(validBits)-bit" :
+            "\(validBits)-bit in \(containerBits)-bit container"
+        return "\(precision) \(isFloat ? "float" : "integer") · \(sampleRate / 1000) kHz · \(channels) ch"
+    }
+}
+
 public struct SignalOutput: Sendable, Equatable {
     public let name: String
     public let sampleRate: Double
@@ -39,6 +64,8 @@ public struct SignalOutput: Sendable, Equatable {
 
 public struct SignalPath: Sendable {
     public var output: SignalOutput?
+    public var clientPCM: SignalPCM?
+    public var underrunFrames: UInt64
     public var softwareVolume: Bool
     public var equalizer: Bool
     public var loudnessMatching: Bool
@@ -47,11 +74,13 @@ public struct SignalPath: Sendable {
     public var systemVolume: SystemVolumeState
     public var integrity: SampleIntegrity
 
-    public init(output: SignalOutput? = nil, softwareVolume: Bool = false,
+    public init(output: SignalOutput? = nil, clientPCM: SignalPCM? = nil, underrunFrames: UInt64 = 0, softwareVolume: Bool = false,
                 equalizer: Bool = false, loudnessMatching: Bool = false,
                 isExclusive: Bool = false, transport: OutputTransport = .unknown,
                 systemVolume: SystemVolumeState = .unknown, integrity: SampleIntegrity = .unverified) {
         self.output = output
+        self.clientPCM = clientPCM
+        self.underrunFrames = underrunFrames
         self.softwareVolume = softwareVolume
         self.equalizer = equalizer
         self.loudnessMatching = loudnessMatching
@@ -65,6 +94,8 @@ public struct SignalPath: Sendable {
 public struct FormatChipInfo: Sendable, Equatable {
     public let source: SourceFormat
     public let output: SignalOutput?
+    public let clientPCM: SignalPCM?
+    public let underrunFrames: UInt64
     public let tier: FormatTier
     public let label: String
     public let status: SignalStatus
@@ -132,6 +163,17 @@ public enum FormatClassifier {
         case .unknown: notes.append("Output transport has not been verified.")
         case .local: break
         }
+        if let pcm = path.clientPCM {
+            if pcm.sampleRate != source.sampleRate {
+                conversions.append("Decoder PCM rate differs from source rate.")
+            }
+            if pcm.channels != source.channels {
+                conversions.append("Decoder PCM channel count differs from source.")
+            }
+        }
+        if path.underrunFrames > 0 {
+            notes.append("Playback underruns detected: \(path.underrunFrames) frames.")
+        }
         if let output = path.output {
             if !output.sampleRate.isFinite || output.sampleRate <= 0 {
                 notes.append("Output sample rate is unavailable.")
@@ -141,12 +183,21 @@ public enum FormatClassifier {
             if codec == "DSD" {
                 notes.append("DSD delivery (PCM or DoP) has not been verified.")
             } else if source.isLossless {
-                if let sourceDepth = source.bitDepth, let outputDepth = output.bitDepth, outputDepth > 0 {
-                    if sourceDepth != outputDepth { conversions.append("PCM bit depth changes from \(sourceDepth)-bit to \(outputDepth)-bit.") }
-                    if source.isFloat != output.isFloat {
-                        conversions.append(source.isFloat ? "Floating-point PCM is converted to integer output." : "Integer PCM is converted to floating-point output.")
+                // Physical container width may exceed sample precision without
+                // changing values (for example 24 valid bits in a 32-bit slot).
+                // A mismatch is evidence of a differing representation, not
+                // evidence that the audio samples were changed.
+                if let pcm = path.clientPCM {
+                    if pcm.isFloat != output.isFloat {
+                        notes.append("AUHAL PCM representation differs from the device format.")
                     }
-                } else { notes.append("Source or output bit depth is unavailable.") }
+                    if let depth = output.bitDepth, depth > 0,
+                       depth < pcm.validBits {
+                        notes.append("Device precision is below decoded PCM precision.")
+                    }
+                } else {
+                    notes.append("Decoded PCM representation is unavailable.")
+                }
             }
             if let channels = output.channels, channels > 0 {
                 if channels != source.channels { conversions.append("Channel count changes from \(source.channels) to \(channels).") }
@@ -155,9 +206,17 @@ public enum FormatClassifier {
 
         if !path.isExclusive { notes.append("Shared output: other apps may mix audio or change the device format.") }
         if path.systemVolume == .unknown { notes.append("System volume applies; its effect on samples has not been measured.") }
+        if path.clientPCM == nil { notes.append("AUHAL client PCM format has not been inspected.") }
         if path.integrity == .unverified { notes.append("Sample equality at the output has not been verified.") }
-        let status: SignalStatus = !conversions.isEmpty ? .converted : notes.isEmpty ? .bitPerfect : .unverified
-        return FormatChipInfo(source: source, output: path.output, tier: tier, label: label,
+        // A status label must never infer measured bit-perfect delivery from
+        // matching metadata or the absence of diagnostic warnings.
+        let canClaimVerified = path.integrity == .verifiedUnchanged &&
+            path.output != nil && path.clientPCM != nil &&
+            path.transport == .local && path.isExclusive &&
+            path.systemVolume == .unity && path.underrunFrames == 0
+        let status: SignalStatus = !conversions.isEmpty ? .converted :
+            (canClaimVerified && notes.isEmpty ? .bitPerfect : .unverified)
+        return FormatChipInfo(source: source, output: path.output, clientPCM: path.clientPCM, underrunFrames: path.underrunFrames, tier: tier, label: label,
                               status: status, conversionReasons: conversions, verificationNotes: notes,
                               isExclusive: path.isExclusive)
     }

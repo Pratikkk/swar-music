@@ -1,263 +1,202 @@
+<div align="center">
+
+<img src="swar/Assets.xcassets/AppIcon.appiconset/icon-256.png" alt="Swar app icon" width="144" height="144">
+
 # Swar
 
-A native macOS local music player built with SwiftUI and Swift 6.
+### Your music. Your library. Your listening experience.
 
-Create a **Smart Playlist** from the sidebar’s playlist **+** menu. Combine rules,
-preview matches, choose sorting and an optional song limit. Membership follows
-library changes automatically; see [Smart Playlists](Docs/SmartPlaylists.md).
+**A native macOS music player built for people who love their local music collection.**
 
-Song and album context menus provide playlist creation, queue actions, album/artist
-navigation, editing and Finder access. See [context menus](Docs/ContextMenus.md).
+Organize a library of favorites, explore album artwork, control your listening queue, and inspect the audio path—all in a thoughtfully designed Mac app.
 
-For regular use, install the packaged **Swar.app** in Applications. Build a local
-DMG with `./scripts/package-macos.sh`; see [installation and updates](Docs/Installation.md).
-For an on-demand GitHub build, use **Actions → Build DMG → Run workflow**. The run
-provides a downloadable universal DMG after tests and package verification pass.
-Ordinary pushes do not trigger installer builds.
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)](Docs/Installation.md)
+[![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)](Packages/SwarKit)
+[![Native SwiftUI](https://img.shields.io/badge/UI-SwiftUI-2479C7)](Packages/SwarKit/Sources/SwarUI)
+[![Build DMG](https://img.shields.io/badge/Build-GitHub_Actions-2088FF?logo=githubactions&logoColor=white)](../../actions/workflows/build-dmg.yml)
 
-The library uses a floating glass player, a translucent native sidebar, and artwork-first
-album cards, with a warm canvas, curated accents, and serif Home headings.
-Settings → Appearance offers System/Light/Dark themes, five accent colours, and
-Compact/Comfortable spacing. Changes apply live and persist across launches; see
-[appearance settings](Docs/Appearance.md). The sidebar
-shares this identity with a “स्व” brand header, soft selections, folder status, and a
-compact Settings button. Home
-opens with Continue Listening, favourites, recent albums, and watched folders.
-Recently Added groups albums by month. Albums browse the full library, with adjustable
-cover sizes, saved title/artist/year/recent sorting, and album context menus.
-Song search finds complete albums, and Back preserves the grid position. See
-[album browsing](Docs/AlbumBrowsing.md). See [Swar identity notes](Docs/SwarIdentity.md). Radio is omitted. Open an album by clicking its cover or title, or play it
-using the button over its artwork. Album details show large cover art, artist and
-genre/year tags, Play and Shuffle actions, numbered songs, duration, and queue menus.
-Play starts in disc/track order; Shuffle includes the whole album. Library actions (open file, add folder, rescan)
-are in the menu at the right of the section header. The sidebar uses native macOS
-blur; library surfaces adapt between warm light and dark appearances.
+[**Features**](#what-makes-swar-different) · [**Audio**](#an-audio-engine-that-respects-the-source) · [**Formats**](#supported-audio-formats) · [**Install**](#get-swar) · [**Build**](#build-from-source)
 
-Now Playing offers Artwork or Neutral backgrounds, adjustable blur and optional audio
-format details. Use its palette button to preview changes, or Settings → Now Playing;
-choices are saved. See [Now Playing](Docs/NowPlaying.md).
+</div>
 
-The floating player and expanded player include an output-volume slider. It controls
-the selected playback device (or the default output before playback), follows system
-volume changes, and leaves Swar's PCM samples untouched. This is device-wide volume;
-outputs without an adjustable control show a disabled slider with an explanation.
-See [volume control](Docs/Volume.md).
+> [!IMPORTANT]
+> **Swar is in active development.** Its macOS engine, library, and interface are implemented, but recent audio-fidelity and signal-inspector changes are still undergoing build and real-device validation. **Bit-perfect delivery to a physical DAC is not yet verified.** GitHub Actions builds are ad-hoc signed and not Apple-notarized.
 
-Swar remembers your queue, current song, position, shuffle/repeat settings, and cover
-metadata. On launch it restores a paused session; press **Resume** when ready.
-Restoring does not open an audio device or change its sample rate. Pending queues
-show **Queue Ready** and can be started with Play. See [session restoration](Docs/Sessions.md).
+---
 
-Swar integrates with macOS Now Playing: play/pause, next/previous, and position
-changes use native remote commands, with title, artist, album, cover art, duration,
-and playback state supplied to Control Center. Start playback in Swar first; a
-restored paused session does not claim Now Playing. See [system media controls](Docs/SystemMediaControls.md).
+## What makes Swar different
 
-Covers appear in Songs, artist/genre track lists, albums, the Now Playing bar, and
-Up Next. The player shows title and artist/album, with transport controls and a compact scrubber in the bottom floating bar. Current tracks have a cover badge and a subtle row highlight.
-Missing artwork uses a consistent tinted music-note placeholder. Local thumbnails
-load off the main actor and share a bounded memory cache. Files opened directly also
-read their tags and embedded/folder covers without importing them into the library.
-See [artwork UI notes](Docs/Artwork.md) and [scrolling performance](Docs/ScrollingPerformance.md).
+### 🎼 A home for the music you own
 
-Click the player’s cover, or press **⇧⌘N**, to open Now Playing with larger artwork,
-song details, format information, and playback controls. **Up Next** opens beside
-the artwork in wide windows and switches to a queue view in compact windows.
-Use the queue’s arrow buttons to move tracks earlier/later; Escape returns to the
-library without stopping playback. See [Now Playing notes](Docs/NowPlaying.md).
+Swar is designed around **your local files**, not a streaming catalog. Choose your music folders and let Swar build a browsable collection with album art, artists, genres, tracks, and metadata. Watched folders are rescanned as files change. Your audio files stay where they are, and removing a song from Swar's library doesn't delete it from disk.
 
-Playback starts and seeks use a smaller initial decode buffer, retain song details,
-and coalesce rapid seek requests to the latest position. See [responsiveness notes](Docs/PlaybackResponsiveness.md)
-for hardware timings and remaining limitations.
-Expanded Now Playing uses an artwork-tinted background, artist/album library links, a wide scrubber with remaining time, and unified transport controls. Up Next keeps playback controls visible in compact windows.
+### ✨ Made to feel at home on macOS
 
-## Current milestone: compact library layout
+A floating glass player, translucent sidebar, artwork-led album browsing, rich Now Playing screen, and a carefully tuned light/dark visual language—all built with **SwiftUI**, not a web-based desktop shell.
 
-The app has a native library sidebar and a single-file playback harness. Use
-**File → Open Audio File…** (⌘O), then **Space** to play/pause. Left/Right seek by
-five seconds; the slider scrubs. Opening a file prepares it without autoplay.
-The format chip in album details and expanded Now Playing reports the decoder's source quality and
-codec. Click it for source details, device format, and signal-path status. Hover
-for a compact summary. An orange dot marks a known conversion. Matching formats
-remain **Not verified** until the output path supplies sample-integrity evidence.
-Song ellipsis and right-click menus offer Add to Playlist (including New Playlist),
-Play Next/Last, Get Info, Favourite, Copy, Show in Finder, and Remove from Library.
-Favourites persist locally and have a dedicated sidebar screen with search, Play, and Shuffle. A violet star marks favourite songs. Library removal leaves the original file in place and
-keeps it excluded from folder scans; **Settings → Files → Restore Removed Songs**
-restores visibility. Playlist references are removed when a song is removed from the library.
-Songs and Favourites support saved sorting by title, artist, album, duration, or
-recently added, with Reverse Order in the view-options menu. Sorting applies
-across the database before paging.
-Search covers titles, performers, album artists, albums, genres, years, and file/folder names. Click the search icon to select a field. It matches word prefixes across multiple fields, handles punctuation and Latin accents, and also filters playlist rows.
+Personalize accent colors, spacing, Now Playing backgrounds, and artwork blur. The interface stays focused on the music.
 
-Artists uses a two-pane browser with All Artists and a selectable artist list.
-Album artists keep compilations together, with album covers, numbered songs, and
-Play/Shuffle, queue, and playlist actions. Narrow windows stack the songs below
-the album heading.
+### 🎧 More transparency about what you're hearing
 
-Open **Swar → Settings… → Files** (⌘,) to manage monitored music folders, check
-monitoring status, or rescan. New, modified, and removed files refresh automatically
-while Swar is open; saved folders are checked again at launch.
-Use **Add Folder…** to import a music folder. Swar saves read-only folder access,
-indexes metadata and artwork, and watches nested folders for changes. Browse Albums,
-Artists, Songs, Genres, or Recently Added, and search titles, artists, and albums.
-Use a track’s play button to start playback. Removing a folder from the library leaves its files intact.
-See [library implementation and verification notes](Docs/Library.md).
+Tap a track's format chip to inspect the **source format**, **decoded PCM**, **playback conditions**, and **driver-reported output format**. Swar distinguishes a format match from actual sample-integrity evidence, and can show playback underrun diagnostics.
 
-**Play Album** starts an album in disc/track order. A track’s play button starts at
-that track and queues the remaining tracks in the current view. Right-click a track
-for **Play Next** or **Add to Queue**. The player has previous/next controls
-(⌘← / ⌘→) and a Queue popover with Up Next, drag reordering, removal, and Clear Up Next.
-Previous restarts the current track after three seconds; otherwise it goes back.
-Shuffle mixes upcoming tracks while keeping the current track in place. The Repeat
-button cycles Off → All → One; manual Next still advances in Repeat One.
-The timer icon pauses playback after 15–120 minutes without changing volume or clearing the queue. The timer can be replaced or cancelled and is cleared when Swar quits.
-Queue entries that cannot open keep an error row while the player tries the next.
-See [queue behavior and verification](Docs/Queue.md).
+No marketing-style “bit-perfect” badge based on a file extension or matching numbers alone.
 
-Open `swar.xcodeproj` in Xcode and run the `swar` scheme on My Mac.
-The app supports macOS 14 or later. Signing uses the existing automatic signing
-configuration; select your own team when building on another machine.
+## Explore the app
 
-**Manage Library** provides collection-wide review for incomplete details, missing
-artwork, possible duplicates, unreadable songs, and removed items. Select songs to
-create/add to playlists, remove them from the library, or restore a chosen subset.
-**Edit Details** saves corrections locally in Swar, survives rescans, and supports
-resetting to scanned file details. Original file tags stay untouched.
-Select songs in Manage Library and choose **Artwork…** to preview and replace covers
-for the entire album or selected songs. **Reset Artwork** restores scanned covers.
-Covers persist across rescans and update Now Playing without restarting audio.
-See [collection management](Docs/CollectionManagement.md) and [artwork editing](Docs/ArtworkEditing.md).
+| Your library | Your listening space |
+| --- | --- |
+| **Albums & artists** — cover grids, sorting, search, disc/track ordering, and album actions. | **Now Playing** — large artwork, track details, seeking, and an Up Next queue. |
+| **Playlists & favorites** — manual playlists, smart rules, saved favorites, and queue shortcuts. | **Floating player** — compact transport controls, scrubber, output volume, and track details. |
+| **Library management** — edit local metadata corrections, manage artwork, review duplicates and missing details. | **Appearance** — light/dark modes, accents, spacing, and artwork-based backgrounds. |
 
-## Architecture
+> Screenshots are not included yet. Capturing the actual app on macOS is preferable to showing mockups as product screenshots.
 
-`Packages/SwarKit` is a local Swift package with separate module targets:
+### The listening experience
 
-- `Decoding`: source formats and codec implementations.
-- `AudioEngine` → `Decoding`: AUHAL, device control, PCM buffering.
-- `RealtimeAudio`: C11 atomic PCM ring and AUHAL callback, used by `AudioEngine`.
-- `FormatInfo` → `Decoding`: pure format and signal-path presentation logic.
-- `Library` → `Decoding`, `GRDB`: scanning, tags, artwork, SQLite/FTS5, and folder watching.
-- `Player` → `AudioEngine`, `FormatInfo`, `Library`: observable playback state.
-- `SwarUI` → `Player`, `FormatInfo`, `Decoding`, `Library`: native SwiftUI views and previews.
+- **Queue control:** Play Next, Add to Queue, reorder, remove, clear, shuffle, and Repeat Off / All / One.
+- **Gapless transitions:** Compatible adjacent tracks can share the running audio unit and PCM ring without an inserted gap; incompatible formats use a normal transition.
+- **Resume later:** Session restoration remembers the current song, queue, position, and repeat/shuffle state, and restores playback paused.
+- **Sleep timer:** Stop playback after a selected interval without changing the volume or clearing the queue.
+- **System integration:** macOS Control Center / media-key playback commands, artwork metadata, and transport controls.
+- **Output selection:** Choose System Default or a specific output device. Device selections are persisted by UID, with disconnect and reconnect handling.
+- **Device volume:** Control supported hardware/system output volume without applying a software gain stage to Swar's PCM.
 
-The Xcode app owns the single main window and menus. Decoding and device calls
-run on one background serial queue; the AUHAL callback executes C only, with no
-allocation, locks, logging, or calls into Swift. The main-actor observable player
-polls snapshots. FormatInfo is a pure source-quality and signal-path classifier;
-Library handles background scans and actor-isolated persistence. `DecoderFactory` probes
-with AudioToolbox first and falls back to bundled FFmpeg through a small C bridge.
-Neither routing nor source-quality classification uses filename extensions.
+Learn more: [Queue](Docs/Queue.md) · [Gapless playback](Docs/GaplessPlayback.md) · [Audio outputs](Docs/AudioOutputs.md) · [Sessions](Docs/Sessions.md)
 
-Source quality and output integrity are independent. Lossless sources above
-24-bit or 48 kHz get the hi-res label; these thresholds live in `FormatThresholds`.
-Lossy labels include decoder-reported bitrate when available. Known rate, bit-depth,
-sample-representation, channel, processing, and wireless-output changes are reported
-as Converted. Shared output and unmeasured system volume prevent a verified check.
-The engine reads device transport to identify Bluetooth and AirPlay, although those
-devices have not been manually tested. DSD labels are covered for future decoders;
-DSD playback is not implemented.
+## An audio engine that respects the source
 
-Persistence uses GRDB 7.11.1, pinned through Swift Package Manager. FFmpeg is
-vendored as headers and dynamic libraries. Third-party licenses accompany the app.
-
-## Sandbox and audio verification
-
-The existing app sandbox, read-only user-selected file access, and hardened runtime
-remain enabled. A security-scoped lifetime token keeps an opened file accessible
-until the engine closes it. Imported folders use persistent read-only security-scoped
-bookmarks. Sandboxed DAC/hog-mode behavior still needs validation before the
-distribution decision.
-
-The implemented path is AudioToolbox (`ExtAudioFile`) → native-rate interleaved PCM
-→ one-second atomic ring → AUHAL. Integer lossless PCM stays integer in the decoder
-and ring. There is no software volume or sample-rate fallback. Mono/stereo sources
-are supported; unsupported rates and codecs produce a visible error. The engine
-attempts a matching physical bit depth when the driver advertises one, and shows
-the driver's actual format even when it differs. System mixing and hardware volume
-are still in the signal path. **Bit-perfect output has not been verified.**
-
-Playback uses the default output selected when a file opens. A disconnect or external
-sample-rate change during playback stops playback with an error; reopen the file
-after selecting a working output in macOS Sound settings. An in-app device picker,
-exclusive mode, gapless playback, and automatic device recovery are later work. The previous
-device format is restored on file replacement, session cleanup, or app quit where
-the device still uses the rate Swar requested. Pause retains the current session.
-
-## Verification
-
-Build with Xcode, or from a terminal with Xcode's developer directory selected:
-
-```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
-  -project swar.xcodeproj -scheme swar -destination 'platform=macOS' \
-  -derivedDataPath /tmp/swar-derived CODE_SIGNING_ALLOWED=NO build
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test \
-  --package-path Packages/SwarKit
+```text
+Local music file
+      │
+      ▼
+Native AudioToolbox decoder
+    or bundled FFmpeg fallback
+      │
+      ▼
+Decoded PCM at source sample rate
+      │
+      ▼
+Single-producer/single-consumer
+atomic PCM ring buffer (C11)
+      │
+      ▼
+Core Audio / AUHAL render callback
+      │
+      ▼
+Selected macOS audio output
 ```
 
-The ordinary suite tests byte-exact packed 24-bit decoding and seeking, ALAC
-24-bit/96 kHz round-trip fidelity, content-based detection with a misleading
-extension, corrupt files, ring wraparound, concurrent sample order, end-of-file
-silence, and error-message persistence. Format tests cover quality boundaries,
-custom thresholds, lossy and DSD labels, conversions, unknown output, accessibility
-text, and the evidence required for a verified check. The ALAC test uses macOS's
-`afconvert`. At the format-chip milestone, the ordinary run passed 22 tests with
-hardware playback skipped; the current codec matrix is described below.
+Swar is built around **Core Audio** rather than an embedded browser audio stack.
 
-The hardware test is opt-in: **it briefly plays a quiet generated tone and changes
-the default device rate**. Close other Swar instances before running it:
+- **Native-rate PCM path.** Supported integer lossless sources remain integer through decoding and the ring buffer; floating-point samples are copied without arithmetic in the PCM bridge.
+- **Realtime-aware rendering.** The AUHAL callback is written in C and avoids allocation, locks, logging, and Swift calls on the render thread.
+- **Output-format inspection.** The engine negotiates a compatible physical format when one is advertised and reports mismatches instead of silently treating every device as identical.
+- **Device-aware playback.** Source and output information stay separate, including sample rate, precision, channel count, and physical transport.
+- **Focused regression coverage.** Decoder sample references, PCM ring ordering, EOF handling, gapless boundaries, and callback checks are part of the testing effort.
 
-```sh
-python3 Tools/make_audio_fixtures.py /tmp/swar-audio-fixtures
-SWAR_TEST_AUDIO_FILE=/tmp/swar-audio-fixtures/quiet-24bit-96k.m4a \
-SWAR_TEST_ALTERNATE_FILE=/tmp/swar-audio-fixtures/quiet-16bit-44k.m4a \
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test \
-  --package-path Packages/SwarKit --filter HardwarePlaybackTests
+**An important distinction:** passing decoder and render-buffer sample tests does **not** establish end-to-end bit-perfect output at the DAC. macOS mixing, device behavior, volume and transport can affect the final signal. Swar's inspector deliberately presents *Not verified* when evidence is insufficient.
+
+Read the details in [Audio signal inspector](Docs/AudioSignalInspector.md), [Codec verification](Docs/Codecs.md), and [Audio outputs](Docs/AudioOutputs.md).
+
+## Supported audio formats
+
+| Family | File / codec examples | Decoder path |
+| --- | --- | --- |
+| Lossless | FLAC, ALAC, WAV, AIFF/AIFC, CAF | AudioToolbox |
+| Lossy | MP3, AAC | AudioToolbox |
+| Additional lossless | WavPack, Monkey's Audio (APE), WMA Lossless | Bundled FFmpeg |
+| Additional lossy | Vorbis, Opus, WMA | Bundled FFmpeg |
+
+DecoderFactory tries the native implementation first, then the bundled FFmpeg implementation where appropriate. Bundled codecs do not require a separate Homebrew installation.
+
+**Current limits:** Multichannel output, DSD playback, WavPack correction-file playback, and some less-common format variants remain unsupported or incompletely verified. See [the codec matrix](Docs/Codecs.md) for tested combinations and caveats.
+
+## Take control of your library
+
+**Bring your own folders.** Add read-only monitored music folders; Swar indexes tags and embedded/folder artwork, tracks changes, and supports background rescans.
+
+**Find something worth playing.** Browse albums, artists, genres, songs, favorites, recently added collections, and listening history. Search across titles, artists, albums, genres, and other indexed fields.
+
+**Make it personal.** Organize songs into manual playlists or create **Smart Playlists** with rules, sorting, previews, and optional limits. Smart membership updates when your library changes.
+
+**Keep your originals intact.** Metadata and artwork corrections can be stored locally in Swar without rewriting the underlying audio files. Manage missing artwork, incomplete details, duplicates, and removed items.
+
+Explore [Library](Docs/Library.md) · [Smart Playlists](Docs/SmartPlaylists.md) · [Collection management](Docs/CollectionManagement.md) · [Artwork editing](Docs/ArtworkEditing.md)
+
+## Get Swar
+
+**Requirements:** macOS 14 or later · Apple Silicon or Intel Mac.
+
+### Option A — Build a DMG with GitHub Actions
+
+1. Open [**Actions → Build DMG**](../../actions/workflows/build-dmg.yml).
+2. Select **Run workflow**, choose your branch, and enter a version such as `1.0.0`.
+3. Inspect the tests and packaging steps. If they succeed, download the generated DMG from **Artifacts** or the run summary.
+4. Open the DMG and drag **Swar** to **Applications**.
+
+Workflows are **manual**; pushes do not automatically publish an installer. Artifacts are temporary, and the development builds are **ad-hoc signed, not notarized**. This repository does not currently promise a public, signed release download.
+
+### Option B — Build locally
+
+Install Xcode, clone the repository, and open `swar.xcodeproj`. Select the **swar** scheme and **My Mac**, then build/run.
+
+Run package tests:
+
+```bash
+swift test --no-parallel --package-path Packages/SwarKit
 ```
 
-Verified during the playback milestone: nine tests passed including live 44.1 → 96 kHz switching,
-play/pause, seek while paused and playing, EOF, and original-rate restoration.
-The observed output was External Headphones, 32-bit float at 96 kHz. The sandboxed
-app also opened and played the generated ALAC through its file picker; Space,
-arrow-key seeking, and the accessible slider were checked.
+Build a local installer:
 
-For chip visual checks, Debug builds provide a decode-only harness:
-
-```sh
-open /tmp/swar-derived/Build/Products/Debug/swar.app --args --format-chip-preview
+```bash
+./scripts/package-macos.sh dist
 ```
 
-Quit that copy before launching with the argument. The harness opens real files
-through the sandboxed file picker, decodes on a background task, and offers clearly
-labelled output simulations without opening an audio device. It is excluded from
-Release builds. Light/dark appearance, the stronger chip border, AAC and hi-res ALAC
-labels, conversion explanations, and accessibility labels were checked there.
-Full VoiceOver navigation and physical Bluetooth/AirPlay paths remain untested.
+See [installation and updating](Docs/Installation.md) for packaging, signatures, checksums, and troubleshooting.
 
-Still unverified: physical DAC sample equality, a 24-bit integer-output DAC,
-hot-plug, sleep/wake, and long-running playback.
-Gapless playback and exclusive output remain future work.
+## How Swar is built
 
-## Codec support
+```text
+swar/                    Native macOS app, menus, assets
+Packages/SwarKit/
+  Sources/
+    SwarUI/              SwiftUI library & player interface
+    Player/              Playback state and queue coordination
+    Library/             Library scanning, persistence & search
+    FormatInfo/          Quality labels and signal-path diagnostics
+    Decoding/            Native and FFmpeg decoding
+    AudioEngine/         Core Audio device and session management
+    RealtimeAudio/       C11 atomic PCM ring and render callback
+Docs/                    Design and implementation notes
+Tools/                   Validation and development tools
+scripts/                 Packaging and build scripts
+```
 
-The native decoder covers ALAC, FLAC, integer/float WAV, AIFF/AIFC, CAF, AAC, and
-MP3. Native FLAC precision is recovered from STREAMINFO when AudioToolbox omits
-it. Bundled decoders add Vorbis, Opus, WavPack, Monkey's Audio, and WMA (including
-Lossless). Hybrid WavPack is labelled lossy; correction-file playback is not
-implemented. DSD is still a future feature.
+**Technology:** Swift 6 · SwiftUI · Core Audio / AUHAL · AudioToolbox · C11 atomics · SQLite/FTS5 via GRDB · bundled FFmpeg.
 
-FFmpeg libraries are included in the project and embedded in Contents/Frameworks;
-the app does not require Homebrew or a command-line decoder. Headers and universal
-arm64/x86_64 libraries live in `Packages/SwarKit/Vendor/FFmpeg`. The LGPL-only build
-recipe, exact upstream source archive, notices, and license accompany the app.
-See [codec implementation and verification notes](Docs/Codecs.md).
+Swar uses sandboxed read-only access to user-selected music folders. See [library implementation](Docs/Library.md) and [installation notes](Docs/Installation.md).
 
-The current suite has 80 tests, including twenty device-free queue tests, nine session tests,
-thirteen library tests (covering search, paging across 50,001 stored tracks, and playlists),
-and three device-free volume tests, generated format matrices, and optional
-complete APE/WMA Lossless samples. Lossless decoding is compared against SHA-256
-references and seek positions against original samples. Integer lossless fixtures
-cover 44.1/16, 96/24, and 192/24; float PCM and WavPack are also tested. A signed,
-sandboxed app successfully opened Opus using its embedded libraries. Physical
-playback on every codec/device combination has not been checked.
+## Development status
+
+Swar is evolving through small, reviewable milestones. Implemented capabilities include native library browsing, playlists, queue management, music decoding, audio output controls, and the signal-path interface. Recent changes to output negotiation and the audio inspector are **not yet release-verified across hardware**.
+
+Current validation priorities:
+
+- Passing the full automated macOS test suite on the feature branches.
+- Confirming actual audio output and format negotiation on built-in outputs, USB DACs, Bluetooth, and AirPlay.
+- Testing hot-plug, extended listening sessions, and underrun recovery.
+- Measuring physical-output sample integrity before making bit-perfect claims.
+- Finishing accessibility and visual QA for the expanded audio inspector.
+
+For technical deep dives, browse the [Docs](Docs/) directory.
+
+---
+
+<div align="center">
+
+**Built for the music you return to—not the endless scroll.**
+
+*Swar · स्व*
+
+</div>

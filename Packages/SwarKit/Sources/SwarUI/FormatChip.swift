@@ -25,7 +25,9 @@ public struct FormatChip: View {
         Button { showSignalPath.toggle() } label: {
             HStack(spacing: 5) {
                 if accented { Image(systemName: "waveform").accessibilityHidden(true) }
-                Text(info.label)
+                Text(info.source.codec + " · " +
+                     (info.source.bitDepth.map { "\($0)/" } ?? "") +
+                     String(format: "%g kHz", info.source.sampleRate / 1000))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .fixedSize()
@@ -79,6 +81,23 @@ private struct SignalPathPopover: View {
         }
     }
 
+    private var diagnostics: String {
+        let pcm = info.clientPCM?.detail ?? "Unavailable"
+        let reasons = info.conversionReasons + info.verificationNotes
+        return """
+        Swar audio diagnostics
+        Source: \(info.sourceDetail)
+        Decoded PCM: \(pcm)
+        Output: \(info.output?.name ?? "Unavailable")
+        Physical format: \(info.outputDetail)
+        Status: \(info.status.rawValue)
+        Exclusive requested: \(info.isExclusive)
+        Underrun frames: \(info.underrunFrames)
+        Notes:
+        \(reasons.joined(separator: "\n"))
+        """
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -95,7 +114,15 @@ private struct SignalPathPopover: View {
                         Text(info.source.isLossless ? "Lossless source file" : "Lossy source file")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    stage(2, title: "Playback path", symbol: "waveform") {
+                    stage(2, title: "Decoded PCM → AUHAL", symbol: "waveform") {
+                        if let pcm = info.clientPCM {
+                            Text(pcm.detail).font(.callout.monospacedDigit())
+                        } else {
+                            Text("PCM format not available yet")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                    stage(3, title: "Playback path", symbol: "waveform.path") {
                         if info.output == nil && info.conversionReasons.isEmpty {
                             Text("Start playback to inspect this stage.").font(.callout)
                         } else if info.conversionReasons.isEmpty {
@@ -109,14 +136,25 @@ private struct SignalPathPopover: View {
                         Text(info.output == nil ? "Output path not active" : (info.isExclusive ? "Exclusive device access" : "Shared macOS output"))
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    stage(3, title: "Output", symbol: "speaker.wave.2") {
+                    stage(4, title: "Output device", symbol: "speaker.wave.2") {
                         Text(info.output?.name ?? "Output unavailable").font(.callout.weight(.medium))
                         Text(info.outputDetail).font(.caption).foregroundStyle(.secondary)
+                        Text("Driver-reported physical format, not measured DAC samples.")
+                            .font(.caption2).foregroundStyle(.secondary)
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         Label(info.status.rawValue, systemImage: statusSymbol)
                             .font(.system(size: 14, weight: .semibold)).foregroundStyle(statusColor)
                         Text(explanation).font(.callout)
+                        Label(info.underrunFrames == 0 ?
+                              "No underruns reported in this session" :
+                              "\(info.underrunFrames) underrun frames reported",
+                              systemImage: info.underrunFrames == 0 ? "checkmark.circle" : "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(info.underrunFrames == 0 ? Color.secondary : Color.orange)
+                        ShareLink(item: diagnostics) {
+                            Label("Export audio diagnostics", systemImage: "square.and.arrow.up")
+                        }.font(.caption)
                         ForEach(info.verificationNotes, id: \.self) { note in
                             Text(note).font(.caption).foregroundStyle(.secondary)
                         }
@@ -126,7 +164,7 @@ private struct SignalPathPopover: View {
                 }.padding(.trailing, 4)
             }
         }
-        .padding(20).frame(width: 410, height: 550)
+        .padding(20).frame(width: 430, height: 640)
         .background(SwarTheme.canvas).tint(palette.accent)
         .textSelection(.enabled)
     }
