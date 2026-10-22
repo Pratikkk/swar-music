@@ -132,7 +132,7 @@ struct CollectionManagerView: View {
                 .reduce(Int64(0)) { $0 + max(0, $1.fileSize) } ?? 0
             Text("Move \(pendingBatchTrash.count) reviewed files (\(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))) to macOS Trash? Swar checks that an unselected copy remains in every duplicate group. This cannot guarantee the copies contain identical audio. The operation stops on error and any files already moved remain in Trash.")
         }
-        .alert("Move Duplicate to Trash?", isPresented: $showTrashConfirmation) {
+        .alert("Move Song to Trash?", isPresented: $showTrashConfirmation) {
             Button("Move to Trash", role: .destructive) {
                 if let track = pendingTrashTrack { moveDuplicateToTrash(track) }
                 pendingTrashTrack = nil
@@ -266,14 +266,14 @@ struct CollectionManagerView: View {
                             }
                         }
                     }.fixedSize()
-                    if filter == .duplicates, selected.count == 1,
+                    if filter != .removed, selected.count == 1,
                        let candidate = selectedTracks.first, !candidate.isMissing {
                         Button("Move File to Trash…", role: .destructive) {
                             pendingTrashTrack = candidate
                             showTrashConfirmation = true
                         }
                     }
-                    if filter == .duplicates && selected.count > 1 {
+                    if filter == .duplicates && !selected.isEmpty {
                         Button("Move Selected Files to Trash…", role: .destructive) {
                             pendingBatchTrash = selected
                             showBatchTrashConfirmation = true
@@ -346,7 +346,7 @@ struct CollectionManagerView: View {
                     Divider()
                     Button("Edit Album Artwork…") { artworkRequest = ArtworkEditRequest(tracks: tracks.filter { ids.contains($0.id) }) }
                 }
-                if filter == .duplicates, ids.count == 1,
+                if filter != .removed, ids.count == 1,
                    let candidate = tracks.first(where: { ids.contains($0.id) }),
                    !candidate.isMissing {
                     Button("Move File to Trash…", role: .destructive) {
@@ -399,7 +399,7 @@ struct CollectionManagerView: View {
     }
 
     private func moveDuplicateToTrash(_ track: LibraryTrack) {
-        guard !working, filter == .duplicates else { return }
+        guard !working, filter != .removed else { return }
         working = true
         Task {
             defer { working = false }

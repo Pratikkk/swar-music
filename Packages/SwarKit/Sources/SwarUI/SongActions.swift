@@ -19,6 +19,7 @@ private struct SongActions<Extra: View>: ViewModifier {
     @State private var showInfo = false
     @State private var showEditor = false
     @State private var showRemoval = false
+    @State private var showTrashConfirmation = false
     @State private var showNewPlaylist = false
     @State private var playlistName = ""
     @State private var actionError: String?
@@ -52,6 +53,17 @@ private struct SongActions<Extra: View>: ViewModifier {
                 }
                 .disabled(playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel", role: .cancel) {}
+            }
+            .alert("Move Song to Trash?", isPresented: $showTrashConfirmation) {
+                Button("Move to Trash", role: .destructive) {
+                    Task {
+                        do { _ = try await library.moveTracksToTrash([track]) }
+                        catch { actionError = error.localizedDescription }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Move “\(track.title)” to macOS Trash? This removes the actual audio file from its folder and the song from Swar's library and playlists. You can recover the file from Trash.")
             }
             .alert("Remove from Library?", isPresented: $showRemoval) {
                 Button("Remove", role: .destructive) { Task { await library.removeTrackFromLibrary(track) } }
@@ -122,6 +134,8 @@ private struct SongActions<Extra: View>: ViewModifier {
         items
         extra
         Divider()
+        Button("Move to Trash…", systemImage: "trash", role: .destructive) { showTrashConfirmation = true }
+            .disabled(track.isMissing || track.error != nil || !library.isReady || library.isScanning || library.isRecovering)
         Button("Remove from Library…", systemImage: "minus.circle", role: .destructive) { showRemoval = true }
     }
 }

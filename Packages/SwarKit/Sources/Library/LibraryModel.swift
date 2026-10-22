@@ -344,6 +344,26 @@ public final class LibraryModel {
         return moved
     }
 
+    /// Explicit user-requested Trash action for regular songs or entire albums.
+    /// Each file is validated by moveDuplicateToTrash before filesystem mutation.
+    /// Stops on first failure; previous files remain recoverable in macOS Trash.
+    public func moveTracksToTrash(_ tracks: [LibraryTrack]) async throws -> Int {
+        guard !tracks.isEmpty else { throw LibraryFailure("No songs selected.") }
+        let unique = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var moved = 0
+        for id in unique.keys.sorted() {
+            guard let track = unique[id] else { continue }
+            do {
+                try Task.checkCancellation()
+                try await moveDuplicateToTrash(track)
+                moved += 1
+            } catch {
+                throw LibraryFailure("Moved \(moved) of \(unique.count) files to Trash. \(error.localizedDescription)")
+            }
+        }
+        return moved
+    }
+
     public func dismissError() { errorMessage = nil }
 
     public private(set) var listeningRevision = 0

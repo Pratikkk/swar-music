@@ -12,6 +12,7 @@ private struct AlbumContextActions: ViewModifier {
     @Environment(\.libraryNavigation) private var navigation
     @State private var working = false
     @State private var creatingPlaylist = false
+    @State private var showTrashConfirmation = false
     @State private var name = ""
     @State private var error: String?
 
@@ -26,6 +27,12 @@ private struct AlbumContextActions: ViewModifier {
                 }
             }
             .contextMenu { items }
+            .alert("Move Album to Trash?", isPresented: $showTrashConfirmation) {
+                Button("Move to Trash", role: .destructive) { perform(.trash) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Move all \(album.trackCount) songs in “\(album.title)” to macOS Trash? Audio files will be removed from their folders and their library and playlist entries removed. If one file fails, previously moved files remain recoverable in Trash.")
+            }
             .alert("New Playlist", isPresented: $creatingPlaylist) {
                 TextField("Playlist Name", text: $name)
                 Button("Create") { perform(.create(name.trimmingCharacters(in: .whitespacesAndNewlines))) }
@@ -58,13 +65,16 @@ private struct AlbumContextActions: ViewModifier {
         }.disabled(working || !library.isReady)
         Divider()
         Button("Show in Finder", systemImage: "folder") { perform(.reveal) }.disabled(working)
+        Divider()
+        Button("Move Album to Trash…", systemImage: "trash", role: .destructive) { showTrashConfirmation = true }
+            .disabled(working || !library.isReady || library.isScanning || library.isRecovering || album.trackCount == 0)
         Button("Copy Album Details", systemImage: "doc.on.doc") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(album.title + " — " + album.artist, forType: .string)
         }
     }
 
-    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal }
+    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal, trash }
     private func perform(_ action: Action) {
         guard !working else { return }
         working = true
@@ -84,6 +94,8 @@ private struct AlbumContextActions: ViewModifier {
                     if let playlist = await library.createPlaylist(name: name) { await library.addTracks(tracks, to: playlist) }
                 case .reveal:
                     NSWorkspace.shared.activateFileViewerSelecting(try tracks.map { try library.location(for: $0).file })
+                case .trash:
+                    _ = try await library.moveTracksToTrash(tracks)
                 }
             } catch { self.error = error.localizedDescription }
         }
