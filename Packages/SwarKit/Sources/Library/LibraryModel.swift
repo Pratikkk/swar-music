@@ -271,6 +271,38 @@ public final class LibraryModel {
         await reload(); await reloadPlaylists()
     }
 
+    /// Explicit, recoverable file removal from the duplicate-review UI.
+    /// Never delete permanently or interpret matching tags as proof of identity.
+    public func moveDuplicateToTrash(_ track: LibraryTrack) async throws {
+        guard !isShutDown, !isScanning, !isRecovering, let repository else {
+            throw LibraryFailure("Wait for the library to finish updating.")
+        }
+        guard let current = try await repository.visibleTrack(id: track.id),
+              !current.isMissing, current.error == nil else {
+            throw LibraryFailure("This song is no longer available. Refresh the review.")
+        }
+        let (file, root) = try location(for: current)
+        let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        guard file.isFileURL, parent.pathComponents.starts(with: canonicalRoot.pathComponents),
+              parent.pathComponents.count >= canonicalRoot.pathComponents.count,
+              file.resolvingSymlinksInPath().standardizedFileURL.pathComponents.starts(with: canonicalRoot.pathComponents),
+              FileManager.default.fileExists(atPath: file.path) else {
+            throw LibraryFailure("The song file is missing or outside its authorised library folder.")
+        }
+        try await Task.detached(priority: .userInitiated) {
+            var destination: NSURL?
+            try FileManager.default.trashItem(at: file, resultingItemURL: &destination)
+        }.value
+        // Only update the library after macOS confirms that the file was trashed.
+        // If the database update fails, the original remains recoverable in Trash.
+        try await repository.removeTracksFromLibrary(ids: [current.id])
+        trackActionsRevision += 1
+        overviewRevision += 1
+        await reload()
+        await reloadPlaylists()
+    }
+
     public func dismissError() { errorMessage = nil }
 
     public private(set) var listeningRevision = 0
