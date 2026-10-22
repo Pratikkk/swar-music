@@ -65,8 +65,9 @@ public final class LibraryModel {
             let cache = try storageDirectory?.appendingPathComponent("Artwork") ?? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Swar/Artwork", isDirectory: true)
             try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-            trashJournalDirectory = support.appendingPathComponent("TrashJournal", isDirectory: true)
-            try FileManager.default.createDirectory(at: trashJournalDirectory!, withIntermediateDirectories: true)
+            let journal = support.appendingPathComponent("TrashJournal", isDirectory: true)
+            try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
+            trashJournalDirectory = journal
             artworkDirectory = cache
             let custom = support.appendingPathComponent("CustomArtwork", isDirectory: true)
             customArtworkDirectory = custom
@@ -425,13 +426,13 @@ public final class LibraryModel {
 
     /// SHA-256 is computed incrementally away from the main actor to avoid
     /// loading music files into memory. Matching metadata is never sufficient.
-    private nonisolated static func filesAreByteIdentical(_ first: URL, _ second: URL) async throws -> Bool {
+    nonisolated static func filesAreByteIdentical(_ first: URL, _ second: URL) async throws -> Bool {
         try await Task.detached(priority: .userInitiated) {
             try Self.fileSHA256(first) == Self.fileSHA256(second)
         }.value
     }
 
-    private nonisolated static func fileSHA256(_ url: URL) throws -> [UInt8] {
+    nonisolated private static func fileSHA256(_ url: URL) throws -> [UInt8] {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var hash = SHA256()
