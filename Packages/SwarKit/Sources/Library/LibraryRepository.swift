@@ -402,6 +402,31 @@ public actor LibraryRepository {
         }
     }
 
+    /// Applies all changes in one SQLite transaction, or rolls everything back.
+    /// Validates the entire selection before touching any database row.
+    public func bulkUpdateMetadata(_ updates: [(id: String, metadata: TrackMetadata)]) throws {
+        guard !updates.isEmpty else { throw LibraryFailure("Select songs to edit.") }
+        guard Set(updates.map(\.id)).count == updates.count else {
+            throw LibraryFailure("The selection contains duplicate song IDs.")
+        }
+        let validated = try updates.map { (id: $0.id, metadata: try $0.metadata.validated()) }
+        try database.write { db in
+            for entry in validated {
+                guard var track = try LibraryTrack.fetchOne(db, key: entry.id),
+                      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM track_preferences WHERE trackID = ? AND isHidden = 1", arguments: [entry.id]) == 0 else {
+                    throw LibraryFailure("A selected song is no longer available. Refresh the list.")
+                }
+                let original = try Data.fetchOne(db, sql: "SELECT originalJSON FROM track_metadata WHERE trackID = ?", arguments: [entry.id])
+                    ?? JSONEncoder().encode(TrackMetadata(track: track))
+                let encoded = try JSONEncoder().encode(entry.metadata)
+                try db.execute(sql: "INSERT INTO track_metadata(trackID, originalJSON, editsJSON) VALUES (?, ?, ?) ON CONFLICT(trackID) DO UPDATE SET editsJSON = excluded.editsJSON",
+                    arguments: [entry.id, original, encoded])
+                entry.metadata.apply(to: &track)
+                try track.update(db)
+            }
+        }
+    }
+
     public func hasMetadataEdits(trackID: String) throws -> Bool {
         try database.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM track_metadata WHERE trackID = ?", arguments: [trackID]) == 1 }
     }
