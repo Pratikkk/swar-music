@@ -179,6 +179,58 @@ struct LibraryTests {
         #expect(lossless != lossy)
     }
 
+    @MainActor @Test func trashActionRejectsUnavailableSongsWithoutChangingLibrary() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = music.appendingPathComponent("candidate.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: file)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let song = try #require(model.tracks.first)
+        try FileManager.default.removeItem(at: file)
+        do {
+            try await model.moveDuplicateToTrash(song)
+            Issue.record("Missing source must not be treated as a successful Trash operation")
+        } catch { }
+        #expect(model.totalCount == 1)
+        #expect(model.tracks.first?.id == song.id)
+    }
+
+    @Test func automaticDuplicateSelectionKeepsOneBestCopyPerGroup() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"),
+            to: music.appendingPathComponent("seed.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork,
+                                     codecDirectory: codecs).scan(folder: folder, root: music)
+        var best = try #require(try await repository.page().tracks.first)
+        best.title = "Same Song"; best.artist = "Artist"
+        best.duration = 180
+        best.id = "best"; best.isLossless = true; best.bitDepth = 24; best.sampleRate = 96000
+        var mp3 = best
+        mp3.id = "mp3"; mp3.isLossless = false; mp3.codec = "MP3"; mp3.bitDepth = nil
+        mp3.sampleRate = 44100; mp3.bitRate = 320000
+        var flac = best
+        flac.id = "flac"; flac.bitDepth = 16; flac.sampleRate = 44100
+        var other = best
+        other.id = "other"; other.title = "Different Song"
+        var otherMP3 = other
+        otherMP3.id = "other-mp3"; otherMP3.isLossless = false
+        var missing = best
+        missing.id = "missing"; missing.isMissing = true
+        let candidates = [mp3, otherMP3, flac, missing, best, other]
+        let selection = DuplicateReview.selectKeepingOne(candidates)
+        #expect(selection == Set(["mp3", "flac", "other-mp3"]))
+        #expect(DuplicateReview.selectKeepingOne(Array(candidates.reversed())) == selection)
+        #expect(!selection.contains("best") && !selection.contains("other"))
+        #expect(DuplicateReview.selectKeepingOne([other]).isEmpty)
+    }
+
     @Test func exactTrackLookupWorksBeyondTheVisiblePageAndHonoursRemoval() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

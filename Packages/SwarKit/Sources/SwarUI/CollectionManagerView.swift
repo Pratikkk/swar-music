@@ -20,6 +20,8 @@ struct CollectionManagerView: View {
     @State private var artworkRequest: ArtworkEditRequest?
     @State private var pendingRemoval = Set<String>()
     @State private var showRemoval = false
+    @State private var pendingTrashTrack: LibraryTrack?
+    @State private var showTrashConfirmation = false
     @State private var error: String?
     @State private var working = false
     @State private var loadedFilter: CollectionFilter?
@@ -72,7 +74,7 @@ struct CollectionManagerView: View {
                 }
                 selectionBar(page)
                 if filter == .duplicates {
-                    Text("Possible duplicates share a title, artist, and rounded duration. Compare encoding, bitrate, size, and location; different editions may not be identical.")
+                    Text("Select Duplicates · Keep One retains a preferred-quality copy of each metadata-matched group. Review the selection carefully: editions and masters may differ. Selection never deletes files.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if filter == .missing {
@@ -115,6 +117,15 @@ struct CollectionManagerView: View {
                 }
             }
             Button("Cancel", role: .cancel) { playlistTracks = [] }
+        }
+        .alert("Move Duplicate to Trash?", isPresented: $showTrashConfirmation) {
+            Button("Move to Trash", role: .destructive) {
+                if let track = pendingTrashTrack { moveDuplicateToTrash(track) }
+                pendingTrashTrack = nil
+            }
+            Button("Cancel", role: .cancel) { pendingTrashTrack = nil }
+        } message: {
+            Text("The selected audio file will move to macOS Trash and leave Swar's library and playlists. Other copies stay untouched. Check the file location and quality first.")
         }
         .alert("Remove \(pendingRemoval.count) Songs from Library?", isPresented: $showRemoval) {
             Button("Remove", role: .destructive) { manage(pendingRemoval, restore: false) }
@@ -209,6 +220,17 @@ struct CollectionManagerView: View {
         HStack(spacing: 12) {
             Text(selected.isEmpty ? "\(page.tracks.count) of \(page.count) songs" : "\(selected.count) selected")
                 .font(.caption).foregroundStyle(.secondary)
+            if filter == .duplicates && matchesContext && page.count > 1 {
+                if page.tracks.count == page.count && TrackSearchQuery(library.search).isEmpty {
+                    Button("Select Duplicates · Keep One") {
+                        selected = DuplicateReview.selectKeepingOne(page.tracks)
+                    }
+                    .help("Select possible duplicates while retaining the best-quality copy of each group. Review before removing.")
+                } else {
+                    Text("Load all candidates and clear search to select automatically")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             if !selected.isEmpty {
                 if filter == .removed {
                     Button("Restore") { manage(selected, restore: true) }
@@ -230,6 +252,13 @@ struct CollectionManagerView: View {
                             }
                         }
                     }.fixedSize()
+                    if filter == .duplicates, selected.count == 1,
+                       let candidate = selectedTracks.first, !candidate.isMissing {
+                        Button("Move File to Trash…", role: .destructive) {
+                            pendingTrashTrack = candidate
+                            showTrashConfirmation = true
+                        }
+                    }
                     Button("Remove…") { pendingRemoval = selected; showRemoval = true }
                 }
                 Button("Clear") { selected.removeAll() }
@@ -296,6 +325,14 @@ struct CollectionManagerView: View {
                     Divider()
                     Button("Edit Album Artwork…") { artworkRequest = ArtworkEditRequest(tracks: tracks.filter { ids.contains($0.id) }) }
                 }
+                if filter == .duplicates, ids.count == 1,
+                   let candidate = tracks.first(where: { ids.contains($0.id) }),
+                   !candidate.isMissing {
+                    Button("Move File to Trash…", role: .destructive) {
+                        pendingTrashTrack = candidate
+                        showTrashConfirmation = true
+                    }
+                }
                 if filter == .removed { Button("Restore") { manage(ids, restore: true) } }
                 else { Button("Remove from Library…", role: .destructive) { pendingRemoval = ids; showRemoval = true } }
             }
@@ -323,6 +360,19 @@ struct CollectionManagerView: View {
         } catch is CancellationError { }
         catch { guard !Task.isCancelled, loadGeneration == generation else { return }; self.error = error.localizedDescription }
     }
+    private func moveDuplicateToTrash(_ track: LibraryTrack) {
+        guard !working, filter == .duplicates else { return }
+        working = true
+        Task {
+            defer { working = false }
+            do {
+                try await library.moveDuplicateToTrash(track)
+                selected.removeAll()
+                await load()
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
     private func manage(_ ids: Set<String>, restore: Bool) {
         guard !working, !ids.isEmpty else { return }
         working = true
