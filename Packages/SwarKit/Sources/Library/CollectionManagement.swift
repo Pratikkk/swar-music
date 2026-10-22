@@ -87,6 +87,8 @@ public struct TrackMetadata: Codable, Sendable, Equatable {
 /// Only non-nil fields are overwritten during bulk editing.
 /// No audio-file tags are modified.
 public struct BulkMetadataPatch: Sendable, Equatable {
+    public var title: String?
+    public var trackNumber: Int?
     public var album: String?
     public var albumArtist: String?
     public var artist: String?
@@ -94,19 +96,22 @@ public struct BulkMetadataPatch: Sendable, Equatable {
     public var year: String?
     public var discNumber: Int?
 
-    public init(album: String? = nil, albumArtist: String? = nil, artist: String? = nil,
+    public init(title: String? = nil, trackNumber: Int? = nil, album: String? = nil, albumArtist: String? = nil, artist: String? = nil,
                 genre: String? = nil, year: String? = nil, discNumber: Int? = nil) {
+        self.title = title; self.trackNumber = trackNumber
         self.album = album; self.albumArtist = albumArtist; self.artist = artist
         self.genre = genre; self.year = year; self.discNumber = discNumber
     }
 
     public var isEmpty: Bool {
-        album == nil && albumArtist == nil && artist == nil && genre == nil &&
+        title == nil && trackNumber == nil && album == nil && albumArtist == nil && artist == nil && genre == nil &&
             year == nil && discNumber == nil
     }
 
     public func applying(to track: LibraryTrack) throws -> TrackMetadata {
         var result = TrackMetadata(track: track)
+        if let title { result.title = title }
+        if let trackNumber { result.trackNumber = trackNumber }
         if let album { result.album = album }
         if let albumArtist { result.albumArtist = albumArtist }
         if let artist { result.artist = artist }
