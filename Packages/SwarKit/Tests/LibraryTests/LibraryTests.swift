@@ -638,6 +638,35 @@ extension LibraryTests {
         #expect(try await repository.page(search: "Track 49999").count == 1)
     }
 
+    @Test func suggestionsSearchTheIndexAndExcludeHiddenTracks() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let template = try #require(try await repository.page().tracks.first)
+        let tracks = (0..<600).map { index in
+            var track = template
+            track.id = "suggestion-\(index)"; track.relativePath = "\(index).wav"
+            track.title = "Beacon Song \(index)"; track.artist = "Beacon Artist"
+            track.albumArtist = track.artist; track.album = "Beacon Album"
+            return track
+        }
+        try await repository.saveTracks(tracks)
+        let results = try await repository.searchSuggestions(for: "Beac")
+        #expect(results.contains(.artist("Beacon Artist")))
+        #expect(results.contains(.album(title: "Beacon Album", artist: "Beacon Artist")))
+        #expect(results.filter { if case .song = $0 { true } else { false } }.count == 5)
+        let exact = try await repository.searchSuggestions(for: "Beacon Song 599", scope: .title)
+        #expect(exact.contains(.song(tracks[599])))
+        try await repository.removeTracksFromLibrary(ids: [tracks[599].id])
+        #expect(try await repository.searchSuggestions(for: "Beacon Song 599", scope: .title).isEmpty)
+        #expect(try await repository.searchSuggestions(for: "   ").isEmpty)
+        #expect(try await repository.searchSuggestions(for: "\" OR *").isEmpty)
+    }
+
     @MainActor @Test func modelPagesPastFiveThousandAndResetsForSearch() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

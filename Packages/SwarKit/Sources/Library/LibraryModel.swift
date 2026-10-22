@@ -419,6 +419,11 @@ public final class LibraryModel {
 
     public func isMonitoring(_ folder: LibraryFolder) -> Bool { watchers[folder.id] != nil }
 
+    public func searchSuggestions(for query: String, scope: TrackSearchScope) async throws -> [LibrarySearchSuggestion] {
+        guard let repository, !isShutDown else { return [] }
+        return try await repository.searchSuggestions(for: query, scope: scope)
+    }
+
     public func loadMore() async {
         guard !loadingTrackPage, !isShutDown, !Task.isCancelled,
               tracks.count < totalCount, let repository else { return }

@@ -257,6 +257,21 @@ public struct LibraryView: View {
         }
     }
 
+    private func openSearchSuggestion(_ suggestion: LibrarySearchSuggestion) {
+        switch suggestion {
+        case .artist(let name): navigate(.artist(name))
+        case .album(let title, let artist): navigate(.album(artist: artist, title: title))
+        case .song(let track):
+            guard !player.isBusy else { return }
+            Task {
+                do {
+                    let entries = try LibraryQueueActions.entries([track], library: library)
+                    if !entries.isEmpty { await player.play(entries) }
+                } catch { player.reportImportError(error) }
+            }
+        }
+    }
+
     private var libraryLayout: some View {
         NavigationSplitView {
             sidebar
@@ -269,7 +284,7 @@ public struct LibraryView: View {
 
     private var detailPane: some View {
         VStack(spacing: 0) {
-            sectionHeader
+            sectionHeader.zIndex(1)
             selectedContent
                 .environment(\.floatingPlayerClearance, playerHeight + 36)
         }
@@ -413,7 +428,8 @@ public struct LibraryView: View {
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundStyle(.secondary)
             .help("View and library options").accessibilityLabel("View and library options")
             LibrarySearchField(query: $library.search, scope: $library.searchScope,
-                               focused: $searchFocused, section: sectionTitle,
+                               focused: $searchFocused, library: library, openSuggestion: openSearchSuggestion,
+                               section: sectionTitle,
                                availableWidth: windowWidth - 215)
 
         }
