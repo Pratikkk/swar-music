@@ -231,6 +231,25 @@ struct LibraryTests {
         #expect(DuplicateReview.selectKeepingOne([other]).isEmpty)
     }
 
+    @MainActor @Test func contextMenuTrashRejectsMissingFileAndLeavesLibraryIntact() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        let file = music.appendingPathComponent("context-menu.wav")
+        try FileManager.default.copyItem(at: source, to: file)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let track = try #require(model.tracks.first)
+        try FileManager.default.removeItem(at: file)
+        do {
+            _ = try await model.moveTracksToTrash([track])
+            Issue.record("A missing source file must fail without mutating the library.")
+        } catch { }
+        #expect(model.totalCount == 1)
+    }
+
     @MainActor @Test func batchTrashRefusesSelectionContainingEveryCopy() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
