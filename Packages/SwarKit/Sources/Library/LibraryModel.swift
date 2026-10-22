@@ -303,6 +303,47 @@ public final class LibraryModel {
         await reloadPlaylists()
     }
 
+    /// Moves a reviewed selection to Trash sequentially, revalidating each
+    /// candidate against the complete current set before every operation.
+    /// Stops on the first error; previously trashed files remain in macOS Trash.
+    public func moveSelectedDuplicatesToTrash(ids: Set<String>) async throws -> Int {
+        guard !ids.isEmpty, !isShutDown, !isScanning, !isRecovering,
+              let repository else {
+            throw LibraryFailure("Select at least one duplicate while the library is ready.")
+        }
+        var moved = 0
+        for id in ids.sorted() {
+            do {
+                try Task.checkCancellation()
+                // Ignore the visible/search page: safety requires all indexed candidates.
+                let review = try await repository.collectionPage(filter: .duplicates, limit: 100_000)
+                guard review.count == review.tracks.count else {
+                    throw LibraryFailure("The duplicate list exceeds the review limit; batch cleanup is unavailable.")
+                }
+                guard let candidate = review.tracks.first(where: { $0.id == id }),
+                      !candidate.isMissing, candidate.error == nil else {
+                    throw LibraryFailure("A selected track is no longer a valid duplicate.")
+                }
+                let title = candidate.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let artist = candidate.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+                let peers = review.tracks.filter {
+                    $0.title.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(title) == .orderedSame
+                    && $0.artist.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(artist) == .orderedSame
+                    && $0.duration.isFinite && candidate.duration.isFinite
+                    && $0.duration.rounded() == candidate.duration.rounded()
+                }
+                guard peers.contains(where: { !ids.contains($0.id) }) else {
+                    throw LibraryFailure("Refusing to remove the last retained copy of a duplicate group.")
+                }
+                try await moveDuplicateToTrash(candidate)
+                moved += 1
+            } catch {
+                throw LibraryFailure("Moved \(moved) of \(ids.count) selected files to Trash. Stopped: \(error.localizedDescription)")
+            }
+        }
+        return moved
+    }
+
     public func dismissError() { errorMessage = nil }
 
     public private(set) var listeningRevision = 0
