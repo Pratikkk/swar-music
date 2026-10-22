@@ -20,6 +20,25 @@ struct SeekSliderStateTests {
         #expect(state.displayedPosition(56) == 72)
     }
 
+    @Test func elapsedAndRemainingAdvanceWithoutSynchronizingTheDraft() throws {
+        var state = ready()
+        for position in [11.0, 24.5, 55.0] {
+            #expect(state.displayedPosition(position) == position)
+            #expect(100 - state.displayedPosition(position) == 100 - position)
+        }
+        #expect(state.value == 10, "The clock must not depend on the stale drag draft")
+        state.begin(at: 55)
+        state.change(to: 80)
+        let candidate = state.end()
+        let request = try #require(candidate)
+        let submitted = state.submit(request)
+        #expect(submitted)
+        #expect(state.displayedPosition(56) == 80, "Keep the seek preview until completion")
+        state.finish(request, position: 80, seeking: false)
+        #expect(state.displayedPosition(82) == 82)
+        #expect(100 - state.displayedPosition(82) == 18)
+    }
+
     @Test func liveDragAndReleaseKeepLatestPreviewUntilFinalSeekSettles() throws {
         var state = ready()
         state.begin(); state.change(to: 40)

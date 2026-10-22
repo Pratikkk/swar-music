@@ -128,14 +128,14 @@ struct ToolbarPlayer: View {
 
 /// Playback clock updates only invalidate this small control, leaving the glass
 /// bar, artwork, transport buttons and the scrolling library out of that update.
-/// Position is read from SeekSliderState (updated via synchronize on player.position
-/// changes) rather than directly from player.position, so the view does not
-/// invalidate on every sub-second playback tick.
+/// Read the live clock here, while retaining the pointer preview during a seek.
+/// Only this small seek view observes position ticks; artwork, transport controls,
+/// and the surrounding library do not need to redraw.
 @MainActor
 private struct FloatingPlayerSeekBar: View {
     let player: Player
     @State private var seek = SeekSliderState()
-    private var displayedPosition: Double { seek.value }
+    private var displayedPosition: Double { seek.displayedPosition(player.position) }
 
     var body: some View {
         HStack(spacing: 5) {
