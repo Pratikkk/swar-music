@@ -98,7 +98,7 @@ private struct AlbumContextActions: ViewModifier {
         Task {
             defer { working = false }
             do { _ = try await library.moveTracksToTrash(capturedTracks) }
-            catch { error = error.localizedDescription }
+            catch { self.error = error.localizedDescription }
         }
     }
 
