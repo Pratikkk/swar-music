@@ -243,7 +243,7 @@ struct LibraryTests {
         await model.start()
         defer { model.shutdown() }
         await model.addFolder(music)
-        let candidates = try await model.collectionPage(filter: .duplicates)
+        let candidates = try await model.collectionPage(filter: .duplicates, search: "", scope: .all, limit: 200)
         #expect(candidates.count == 2)
         do {
             _ = try await model.moveSelectedDuplicatesToTrash(ids: Set(candidates.tracks.map(\.id)))
