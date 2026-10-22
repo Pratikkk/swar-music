@@ -78,54 +78,6 @@ struct SystemAudioObjectPropertyBackend: AudioObjectPropertyBackend {
     }
 }
 
-/// Test backend that models `kAudioDevicePropertyHogMode` toggle semantics.
-final class HogModeTestBackend: @unchecked Sendable, AudioObjectPropertyBackend {
-    /// Whether the device is currently hogged by this process (Swar).
-    private(set) var hoggedByUs = false
-    /// Whether another process has hogged the device.
-    private(set) var hoggedByOther = false
-
-    func getProperty<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
-                        initial: T) throws -> T {
-        if selector == kAudioDevicePropertyHogMode {
-            return (hoggedByUs ? UInt32(1) : UInt32(0)) as! T
-        }
-        if selector == kAudioHardwarePropertyDefaultOutputDevice {
-            return UInt32(1) as! T
-        }
-        return initial
-    }
-
-    func setProperty<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
-                        value: T) throws {
-        if selector == kAudioDevicePropertyHogMode {
-            // Core Audio hog mode is a toggle: the value is ignored.
-            // If another process owns it, we cannot hog.
-            if hoggedByOther {
-                throw AudioFailure("Device is hogged by another process.")
-            }
-            hoggedByUs.toggle()
-        }
-    }
-
-    func getPropertyArray<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
-                             scope: AudioObjectPropertyScope) throws -> [T] {
-        if selector == kAudioDevicePropertyStreams {
-            return [AudioStreamID(1)] as! [T]
-        }
-        return []
-    }
-
-    func setHoggedByOther(_ value: Bool) {
-        hoggedByOther = value
-    }
-
-    func reset() {
-        hoggedByUs = false
-        hoggedByOther = false
-    }
-}
-
 /// Configuration/restoration run on the engine queue. Periodic read-only probes
 /// use an independent monitor queue and capture only immutable device identifiers.
 /// No device calls run on the render thread.
@@ -137,10 +89,8 @@ final class OutputDevice {
     private let originalPhysical: AudioStreamBasicDescription
     private var requestedRate: Double?
     private var changedPhysical = false
-    /// Whether this `OutputDevice` instance currently owns hog mode.
-    /// Core Audio's `kAudioDevicePropertyHogMode` is a toggle: the written value
-    /// is ignored, so we track ownership locally to avoid acquiring or releasing
-    /// another process's hog.
+    /// Whether this instance acquired process-wide ownership. Teardown also
+    /// checks the current owner PID before writing the toggle property.
     private var isHogged = false
     private let propertyBackend: any AudioObjectPropertyBackend
 
@@ -178,27 +128,34 @@ final class OutputDevice {
         name = label?.takeRetainedValue() as String? ?? "Audio Output"
     }
 
-    /// Request or release exclusive (hog) access to the device.
-    /// Core Audio's `kAudioDevicePropertyHogMode` is a toggle: the supplied value
-    /// is ignored, and writing toggles hog mode on or off. We track ownership
-    /// locally so we never acquire or release another process's hog.
-    /// - Parameter exclusive: `true` to request hog mode, `false` to release it.
+    /// Hog mode writes toggle process-wide ownership. Verify the actual PID
+    /// instead of treating a successful write as proof of acquisition.
     func setHogged(_ exclusive: Bool) throws {
-        if exclusive == isHogged { return }
-        try propertyBackend.setProperty(id, kAudioDevicePropertyHogMode, value: UInt32(1))
-        isHogged.toggle()
-        deviceLog.info("\(self.isHogged ? "Hogged" : "Released") \(self.name, privacy: .public), exclusive access")
+        guard exclusive else { try releaseHog(); return }
+        let owner = try hogOwner()
+        if owner == getpid() { return }
+        guard owner == -1 else {
+            throw AudioFailure("The output device is exclusively owned by another process.")
+        }
+        try propertyBackend.setProperty(id, kAudioDevicePropertyHogMode, value: pid_t(-1))
+        guard try hogOwner() == getpid() else {
+            throw AudioFailure("The output device did not grant exclusive access.")
+        }
+        isHogged = true
     }
 
-    /// Release hog mode only if this `OutputDevice` owns it. Safe to call on
-    /// shared-session teardown: if we never hogged, this is a no-op and never
-    /// acquires ownership.
+    private func hogOwner() throws -> pid_t {
+        try propertyBackend.getProperty(id, kAudioDevicePropertyHogMode, initial: pid_t(-1))
+    }
+
     func releaseHog() throws {
-        if isHogged {
-            try propertyBackend.setProperty(id, kAudioDevicePropertyHogMode, value: UInt32(1))
-            isHogged = false
-            deviceLog.info("Released \(self.name, privacy: .public) exclusive access")
+        guard isHogged else { return }
+        guard try hogOwner() == getpid() else { isHogged = false; return }
+        try propertyBackend.setProperty(id, kAudioDevicePropertyHogMode, value: pid_t(-1))
+        guard try hogOwner() != getpid() else {
+            throw AudioFailure("The output device did not release exclusive access.")
         }
+        isHogged = false
     }
 
     func configure(for source: SourceFormat, pcmFormat: AudioStreamBasicDescription) throws {
@@ -224,15 +181,23 @@ final class OutputDevice {
         let formats: [AudioStreamRangedDescription] = try propertyBackend.getPropertyArray(
             stream, kAudioStreamPropertyAvailablePhysicalFormats,
             scope: kAudioObjectPropertyScopeOutput)
-        guard let match = formats.first(where: {
+        // AUHAL can convert PCM representation at the source sample rate.
+        // Prefer an exact representation, then lossless integer widening, then
+        // another supported layout. The inspector reports the actual output.
+        let compatible = formats.filter {
             $0.mFormat.mFormatID == kAudioFormatLinearPCM &&
-            $0.mFormat.mBitsPerChannel == pcmFormat.mBitsPerChannel &&
-            ($0.mFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) ==
-                (pcmFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0) &&
             Int($0.mFormat.mChannelsPerFrame) >= source.channels &&
             $0.mSampleRateRange.mMinimum <= source.sampleRate &&
             source.sampleRate <= $0.mSampleRateRange.mMaximum
-        }) else {
+        }
+        func rank(_ format: AudioStreamBasicDescription) -> Int {
+            let sameRepresentation = (format.mFormatFlags & kAudioFormatFlagIsFloat) ==
+                (pcmFormat.mFormatFlags & kAudioFormatFlagIsFloat)
+            if sameRepresentation && format.mBitsPerChannel == pcmFormat.mBitsPerChannel { return 0 }
+            if sameRepresentation && format.mBitsPerChannel > pcmFormat.mBitsPerChannel { return 1 }
+            return 2
+        }
+        guard let match = compatible.min(by: { rank($0.mFormat) < rank($1.mFormat) }) else {
             throw AudioFailure("\(name) has no compatible physical PCM format for this source.")
         }
 

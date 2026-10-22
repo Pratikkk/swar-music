@@ -82,7 +82,7 @@ struct PhysicalFormatValidationTests {
         #expect(backend.actual.mFormatFlags & kAudioFormatFlagIsFloat != 0)
     }
 
-    @Test func incompatibleFloatingPointRepresentationIsRejected() throws {
+    @Test func floatingPointDecoderCanUseIntegerDevice() throws {
         let backend = FormatPropertyBackend()
         let floatPCM = AudioStreamBasicDescription(
             mSampleRate: 44_100, mFormatID: kAudioFormatLinearPCM,
@@ -92,9 +92,20 @@ struct PhysicalFormatValidationTests {
         let lossy = SourceFormat(codec: "AAC", sampleRate: 44_100,
                                  bitDepth: nil, channels: 2, isLossless: false)
         let device = try OutputDevice(id: 1, propertyBackend: backend)
-        #expect(throws: AudioFailure.self) {
-            try device.configure(for: lossy, pcmFormat: floatPCM)
-        }
+        try device.configure(for: lossy, pcmFormat: floatPCM)
+        #expect(backend.actual.mBitsPerChannel == 16)
+        #expect(backend.actual.mFormatFlags & kAudioFormatFlagIsFloat == 0)
+    }
+
+    @Test func integerDecoderCanUseWiderDevicePrecision() throws {
+        let backend = FormatPropertyBackend()
+        backend.expected.mBitsPerChannel = 24
+        backend.expected.mBytesPerFrame = 8
+        backend.expected.mBytesPerPacket = 8
+        let device = try OutputDevice(id: 1, propertyBackend: backend)
+        try device.configure(for: source, pcmFormat: pcm)
+        #expect(backend.actual.mBitsPerChannel == 24)
+        #expect(backend.actual.mSampleRate == source.sampleRate)
     }
 
     @Test func matchingFormatIsAcceptedAfterReadback() throws {

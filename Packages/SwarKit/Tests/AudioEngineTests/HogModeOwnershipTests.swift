@@ -111,6 +111,28 @@ struct HogModeOwnershipTests {
         #expect(backend.hoggedByUs == false)
     }
 
+    @Test func ignoredAcquisitionDoesNotClaimOwnership() throws {
+        let backend = sharedHogBackend()
+        backend.ignoreAcquisition = true
+        let device = try makeDevice(backend: backend)
+        #expect(throws: AudioFailure.self) { try device.setHogged(true) }
+        backend.ignoreAcquisition = false
+        try device.releaseHog()
+        #expect(!backend.hoggedByUs)
+    }
+
+    @Test func existingProcessOwnershipIsNotToggledOrReleasedByAnotherSession() throws {
+        let backend = sharedHogBackend()
+        let first = try makeDevice(backend: backend)
+        let second = try makeDevice(backend: backend)
+        try first.setHogged(true)
+        try second.setHogged(true)
+        try second.releaseHog()
+        #expect(backend.hoggedByUs)
+        try first.releaseHog()
+        #expect(!backend.hoggedByUs)
+    }
+
     @Test func repeatedCloseIsSafe() throws {
         let backend = sharedHogBackend()
         let device = try makeDevice(backend: backend)
@@ -146,5 +168,55 @@ struct HogModeOwnershipTests {
         try device.releaseHog()
         #expect(backend.hoggedByUs == false)
         #expect(backend.hoggedByOther == true)
+    }
+}
+
+/// Test backend that models `kAudioDevicePropertyHogMode` toggle semantics.
+final class HogModeTestBackend: @unchecked Sendable, AudioObjectPropertyBackend {
+    /// Whether the device is currently hogged by this process (Swar).
+    private(set) var hoggedByUs = false
+    var ignoreAcquisition = false
+    /// Whether another process has hogged the device.
+    private(set) var hoggedByOther = false
+
+    func getProperty<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                        initial: T) throws -> T {
+        if selector == kAudioDevicePropertyHogMode {
+            return (hoggedByOther ? pid_t(getpid() + 1) : hoggedByUs ? getpid() : pid_t(-1)) as! T
+        }
+        if selector == kAudioHardwarePropertyDefaultOutputDevice {
+            return UInt32(1) as! T
+        }
+        return initial
+    }
+
+    func setProperty<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                        value: T) throws {
+        if selector == kAudioDevicePropertyHogMode {
+            // Core Audio hog mode is a toggle: the value is ignored.
+            // If another process owns it, we cannot hog.
+            if hoggedByOther {
+                return
+            }
+            if !hoggedByUs && ignoreAcquisition { return }
+            hoggedByUs.toggle()
+        }
+    }
+
+    func getPropertyArray<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector,
+                             scope: AudioObjectPropertyScope) throws -> [T] {
+        if selector == kAudioDevicePropertyStreams {
+            return [AudioStreamID(1)] as! [T]
+        }
+        return []
+    }
+
+    func setHoggedByOther(_ value: Bool) {
+        hoggedByOther = value
+    }
+
+    func reset() {
+        hoggedByUs = false
+        hoggedByOther = false
     }
 }
