@@ -297,6 +297,11 @@ public final class LibraryModel {
               FileManager.default.fileExists(atPath: file.path) else {
             throw LibraryFailure("The song file is missing or outside its authorised library folder.")
         }
+        let fileKind = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard fileKind.isRegularFile == true, fileKind.isSymbolicLink != true else {
+            throw LibraryFailure("Refusing to move a non-regular file or symlink to Trash.")
+        }
+        try Task.checkCancellation()
         try await Task.detached(priority: .userInitiated) {
             var destination: NSURL?
             try FileManager.default.trashItem(at: file, resultingItemURL: &destination)
