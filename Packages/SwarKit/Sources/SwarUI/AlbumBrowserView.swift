@@ -17,6 +17,7 @@ struct AlbumBrowserView: View {
     @Environment(\.floatingPlayerClearance) private var clearance
     @AppStorage("albumViewMode") private var viewMode: AlbumViewMode = .grid
     @AppStorage("albumCoverSize") private var coverSize = 160.0
+    @State private var showsArtworkSize = false
     @State private var albums: [LibraryAlbumSummary] = []
     @State private var detailTracks: [LibraryTrack] = []
     @State private var ready = false
@@ -72,40 +73,18 @@ struct AlbumBrowserView: View {
 
     private var browser: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(recent ? "Recent arrivals" : "Albums")
-                        .font(.system(size: 26, weight: .semibold, design: .serif))
-                    Text(presentation?.summary ?? "")
-                        .font(.caption).foregroundStyle(.secondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) {
+                    browserTitle
+                    Spacer(minLength: 12)
+                    browserControls
                 }
-                Spacer(minLength: 12)
-                ZStack {
-                    if arranging { ProgressView().controlSize(.small).accessibilityLabel("Updating albums") }
-                }.frame(width: 14, height: 14)
-                if !recent {
-                    Menu {
-                        Picker("Sort by", selection: $sortOrder) {
-                            ForEach(AlbumSortOrder.allCases) { Text($0.rawValue).tag($0) }
-                        }.pickerStyle(.inline)
-                        Toggle("Reverse Order", isOn: $reversed)
-                    } label: { Label(sortOrder.rawValue, systemImage: "arrow.up.arrow.down") }
-                    .fixedSize().accessibilityLabel("Sort albums")
+                VStack(alignment: .leading, spacing: 14) {
+                    browserTitle
+                    HStack { browserControls; Spacer(minLength: 0) }
                 }
-                if viewMode == .grid {
-                    HStack(spacing: 8) {
-                        Image(systemName: "square.grid.3x3").foregroundStyle(.secondary)
-                        Slider(value: $coverSize, in: 120...220, step: 20).frame(width: 90)
-                            .accessibilityLabel("Album artwork size").help("Adjust album artwork size")
-                        Image(systemName: "square.grid.2x2").foregroundStyle(.secondary)
-                    }
-                }
-                Picker("Album view", selection: $viewMode) {
-                    Image(systemName: "square.grid.2x2").tag(AlbumViewMode.grid).accessibilityLabel("Grid view")
-                    Image(systemName: "list.bullet").tag(AlbumViewMode.list).accessibilityLabel("List view")
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 76)
-                    .help("Switch between grid and list")
-            }.padding(.horizontal, 28).padding(.vertical, 16)
+            }
+            .padding(.horizontal, 28).padding(.vertical, 16)
             Picker("Filter albums", selection: $filter) {
                 ForEach(AlbumBrowseFilter.allCases) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented).labelsHidden()
@@ -134,6 +113,63 @@ struct AlbumBrowserView: View {
                 albumCollection
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var browserTitle: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(recent ? "Recent arrivals" : "Albums")
+                .font(.system(size: 26, weight: .semibold, design: .serif))
+            Text(presentation?.summary ?? " ")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var browserControls: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                if arranging { ProgressView().controlSize(.small).accessibilityLabel("Updating albums") }
+            }.frame(width: 14, height: 14)
+            if !recent {
+                Menu {
+                    Picker("Sort by", selection: $sortOrder) {
+                        ForEach(AlbumSortOrder.allCases) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.inline)
+                    Toggle("Reverse Order", isOn: $reversed)
+                } label: { Label(sortOrder.rawValue, systemImage: "arrow.up.arrow.down") }
+                .fixedSize().accessibilityLabel("Sort albums")
+                .help("Choose album order")
+            }
+            if viewMode == .grid {
+                Button { showsArtworkSize.toggle() } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Album artwork size")
+                .help("Adjust album artwork size")
+                .popover(isPresented: $showsArtworkSize) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Artwork size").font(.headline)
+                        HStack(spacing: 12) {
+                            Image(systemName: "square.grid.3x3")
+                            Slider(value: $coverSize, in: 120...220, step: 20)
+                                .accessibilityLabel("Album artwork size")
+                                .accessibilityValue("\(Int(coverSize)) points")
+                            Image(systemName: "square.grid.2x2")
+                        }
+                        .foregroundStyle(.secondary)
+                        Button("Reset") { coverSize = 160 }
+                            .disabled(coverSize == 160)
+                    }.padding(18).frame(width: 240)
+                }
+            }
+            Picker("Album view", selection: $viewMode) {
+                Image(systemName: "square.grid.2x2").tag(AlbumViewMode.grid).accessibilityLabel("Grid view")
+                Image(systemName: "list.bullet").tag(AlbumViewMode.list).accessibilityLabel("List view")
+            }.pickerStyle(.segmented).labelsHidden().frame(width: 76)
+                .help("Switch between grid and list")
+        }.fixedSize()
     }
 
     private var albumCollection: some View {

@@ -18,7 +18,7 @@ struct LibraryContent: View {
     var body: some View {
         let currentTrackID = currentTrackIDCache
         VStack(spacing: 0) {
-            LibraryStatusBanner(library: library, inset: 12, detailedProgress: true)
+            LibraryStatusBanner(library: library, inset: 12, dismissibleError: true, detailedProgress: true)
             if library.totalCount > 0 {
                 HStack {
                     Text("\(library.tracks.count) of \(library.totalCount) \(TrackSearchQuery(library.search).isEmpty ? (library.totalCount == 1 ? "track" : "tracks") : "matches")")
@@ -31,7 +31,8 @@ struct LibraryContent: View {
                         favouritePlaybackButtons
                     }
                     if library.tracks.count < library.totalCount {
-                        Button("Load More") { Task { await library.loadMore() } }
+                        Button("Load More") { loadNextPage() }
+                            .disabled(loadingNextPage)
                     }
                 }
                 .font(.caption).padding(12)
@@ -44,6 +45,12 @@ struct LibraryContent: View {
                     Text(library.search.isEmpty
                          ? (section == "Favourites" ? "Choose Favourite from any song’s options menu to keep it here." : "Add a folder to browse your local music. Files stay where they are.")
                          : "Try different words or choose All Fields from the search icon.")
+                } actions: {
+                    if !TrackSearchQuery(library.search).isEmpty {
+                        Button("Clear Search") { library.search = "" }
+                    } else if section != "Favourites" {
+                        SettingsLink { Text("Add Music Folder…") }
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if section == "Artists" {
