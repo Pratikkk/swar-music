@@ -141,6 +141,44 @@ struct LibraryTests {
         #expect(filtered.tracks.count == 520)
     }
 
+    @Test func duplicateReviewShowsEvidenceWithoutClaimingIdenticalAudio() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"),
+            to: music.appendingPathComponent("first.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork,
+                                     codecDirectory: codecs).scan(folder: folder, root: music)
+        var first = try #require(try await repository.page().tracks.first)
+        first.title = "Same Title"
+        first.artist = "Same Artist"
+        first.duration = 184.2
+        first.bitDepth = 16
+        first.sampleRate = 44100
+        first.codec = "FLAC"
+        first.isLossless = true
+        first.fileSize = 12_000_000
+        var second = first
+        second.id = folder.id + ":second.wav"
+        second.relativePath = "second.wav"
+        second.codec = "MP3"
+        second.isLossless = false
+        second.bitRate = 320_000
+        second.fileSize = 7_000_000
+        try await repository.saveTracks([first, second])
+        let review = try await repository.collectionPage(filter: .duplicates)
+        #expect(review.count == 2)
+        #expect(review.tracks.count == 2)
+        let lossless = DuplicateReview.details(for: first)
+        let lossy = DuplicateReview.details(for: second)
+        #expect(lossless.contains("Lossless") && lossless.contains("FLAC"))
+        #expect(lossy.contains("Lossy") && lossy.contains("320 kbps"))
+        #expect(lossless.contains("3:04") && lossy.contains("3:04"))
+        #expect(lossless != lossy)
+    }
+
     @Test func exactTrackLookupWorksBeyondTheVisiblePageAndHonoursRemoval() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
