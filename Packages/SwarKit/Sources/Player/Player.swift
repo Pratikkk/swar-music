@@ -1030,7 +1030,7 @@ public final class Player {
     private func updateFormat(_ snapshot: PlaybackSnapshot) {
         guard describedSource != snapshot.source || describedOutput != snapshot.output ||
                 describedExclusive != exclusiveOutput ||
-                formatInfo?.underrunFrames != snapshot.underrunFrames ||
+                (formatInfo != nil && formatInfo?.underrunFrames != snapshot.underrunFrames) ||
                 formatInfo?.clientPCM?.sampleRate != snapshot.clientPCM?.sampleRate ||
                 (formatInfo == nil && snapshot.source != nil) else { return }
         describedSource = snapshot.source
