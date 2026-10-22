@@ -250,6 +250,31 @@ struct LibraryTests {
         #expect(model.totalCount == 1)
     }
 
+    @MainActor @Test func invalidBulkMetadataRollsBackEveryTrack() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("rollback-one.wav"))
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("rollback-two.wav"))
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let before = model.tracks
+        #expect(before.count == 2)
+        do {
+            try await model.bulkUpdateMetadata(before, patch: BulkMetadataPatch(album: "New Album", discNumber: 0))
+            Issue.record("Invalid disc number must be rejected.")
+        } catch { }
+        let after = try await model.collectionPage(filter: .all, limit: 200)
+        for track in after.tracks {
+            let original = try #require(before.first(where: { $0.id == track.id }))
+            #expect(track.album == original.album)
+            #expect(track.discNumber == original.discNumber)
+        }
+        #expect(!model.canUndoBulkMetadata)
+    }
+
     @MainActor @Test func bulkMetadataEditingPreservesUncheckedFieldsAndSupportsUndo() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
