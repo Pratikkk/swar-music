@@ -77,6 +77,7 @@ struct LibraryContent: View {
                     }
                     FloatingPlayerScrollSpacer()
                 }.listStyle(.inset)
+        .scrollContentBackground(.hidden)
             } else {
                 trackList(library.tracks, currentTrackID: currentTrackID)
             }
@@ -129,6 +130,7 @@ struct LibraryContent: View {
             }
             FloatingPlayerScrollSpacer()
         }.listStyle(.inset)
+        .scrollContentBackground(.hidden)
     }
 
     /// Load another bounded page only when its footer becomes visible.
