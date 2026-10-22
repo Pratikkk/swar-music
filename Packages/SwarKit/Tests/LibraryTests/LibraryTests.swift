@@ -111,6 +111,36 @@ struct LibraryTests {
         #expect(await model.track(at: file)?.id == original.id)
     }
 
+    @Test func songPagesGrowWithoutDuplicatesAndRespectSearchFilters() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"),
+            to: music.appendingPathComponent("seed.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork,
+                                     codecDirectory: codecs).scan(folder: folder, root: music)
+        let seed = try #require(try await repository.page().tracks.first)
+        let songs = (0..<520).map { index in
+            var song = seed
+            song.id = folder.id + ":page-song-\(index).wav"
+            song.relativePath = "page-song-\(index).wav"
+            song.title = String(format: "Scroll Song %04d", index)
+            return song
+        }
+        try await repository.saveTracks(songs)
+        let first = try await repository.page(limit: 500, sortOrder: .title)
+        let expanded = try await repository.page(limit: 1000, sortOrder: .title)
+        #expect(first.tracks.count == 500)
+        #expect(expanded.tracks.count == 521)
+        #expect(Set(expanded.tracks.map(\.id)).count == expanded.tracks.count)
+        #expect(Array(expanded.tracks.prefix(500).map(\.id)) == first.tracks.map(\.id))
+        let filtered = try await repository.page(search: "Scroll Song", limit: 1000, sortOrder: .title)
+        #expect(filtered.count == 520)
+        #expect(filtered.tracks.count == 520)
+    }
+
     @Test func exactTrackLookupWorksBeyondTheVisiblePageAndHonoursRemoval() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
