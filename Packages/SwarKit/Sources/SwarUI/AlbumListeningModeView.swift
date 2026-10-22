@@ -17,13 +17,7 @@ struct AlbumListeningModeView: View {
     let enqueueAlbum: (Bool) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    private var playable: [LibraryTrack] { tracks.filter { $0.error == nil && !$0.isMissing } }
-    private var totalDuration: TimeInterval {
-        playable.reduce(0) { $0 + ( $1.duration.isFinite ? max(0, $1.duration) : 0) }
-    }
-    private var currentIndex: Int? {
-        playable.firstIndex(where: { $0.id == currentTrackID })
-    }
+    private var plan: AlbumListeningPlan { AlbumListeningPlan(tracks: tracks) }
 
     var body: some View {
         GeometryReader { geometry in
@@ -44,11 +38,11 @@ struct AlbumListeningModeView: View {
                         Text(title).font(.system(size: 28, weight: .semibold, design: .serif))
                             .multilineTextAlignment(.center)
                         Text(artist).font(.title3).foregroundStyle(.secondary)
-                        Text("\(playable.count) playable tracks · \(Int(totalDuration / 60)) minutes")
+                        Text("\(plan.playableTracks.count) playable tracks · \(Int(plan.duration / 60)) minutes")
                             .font(.caption).foregroundStyle(.tertiary)
                     }
-                    if let currentIndex {
-                        Text("Track \(currentIndex + 1) of \(playable.count)")
+                    if let currentPosition = plan.position(for: currentTrackID) {
+                        Text("Track \(currentPosition) of \(playable.count)")
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
                     ExpandedPlayerControls(player: player)
@@ -57,7 +51,7 @@ struct AlbumListeningModeView: View {
                         Button("Play in Order", systemImage: "play.fill") { playAlbum(false) }
                         Button("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") { enqueueAlbum(true) }
                     }
-                    .disabled(player.isBusy || playable.isEmpty)
+                    .disabled(player.isBusy || plan.playableTracks.isEmpty)
                     Divider()
                     LazyVStack(spacing: 4) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -72,7 +66,7 @@ struct AlbumListeningModeView: View {
                                     Spacer()
                                     if track.id == currentTrackID {
                                         Image(systemName: player.isPlaying ? "waveform" : "pause.fill")
-                                            .foregroundStyle(.tint)
+                                            .foregroundStyle(Color.accentColor)
                                     }
                                     Text(Self.time(track.duration)).font(.caption.monospacedDigit())
                                         .foregroundStyle(.secondary)
