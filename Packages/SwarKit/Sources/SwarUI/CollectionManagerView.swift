@@ -384,6 +384,7 @@ struct CollectionManagerView: View {
     }
     private func moveBatchDuplicatesToTrash(_ ids: Set<String>) {
         guard !working, filter == .duplicates, !ids.isEmpty else { return }
+        trashActionError = nil
         working = true
         Task {
             defer { working = false }
