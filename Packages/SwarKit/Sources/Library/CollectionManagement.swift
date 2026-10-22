@@ -107,4 +107,43 @@ public enum DuplicateReview {
         }
         return parts.joined(separator: " · ")
     }
+    /// Selects all but the best-quality candidate in every complete metadata group.
+    /// The result is a review selection only: nothing is removed or trashed.
+    /// Callers must supply the entire unfiltered duplicate result, not a partial page.
+    public static func selectKeepingOne(_ tracks: [LibraryTrack]) -> Set<String> {
+        struct Key: Hashable {
+            let title: String
+            let artist: String
+            let seconds: Int
+        }
+        let groups = Dictionary(grouping: tracks.filter {
+            !$0.isMissing && $0.error == nil && $0.duration.isFinite && $0.duration > 0
+                && !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !$0.artist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && $0.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "unknown artist"
+        }) {
+            Key(title: $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                artist: $0.artist.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                seconds: Int($0.duration.rounded()))
+        }
+        var selected = Set<String>()
+        for group in groups.values where group.count > 1 {
+            // Retain lossless first, then higher sample precision/rate or bitrate.
+            // A stable path/ID tie-break ensures repeated selections agree.
+            let ranked = group.sorted { lhs, rhs in
+                if lhs.isLossless != rhs.isLossless { return lhs.isLossless }
+                let leftDepth = lhs.bitDepth ?? 0, rightDepth = rhs.bitDepth ?? 0
+                if leftDepth != rightDepth { return leftDepth > rightDepth }
+                let leftRate = lhs.sampleRate ?? 0, rightRate = rhs.sampleRate ?? 0
+                if leftRate != rightRate { return leftRate > rightRate }
+                let leftBitrate = lhs.bitRate ?? 0, rightBitrate = rhs.bitRate ?? 0
+                if leftBitrate != rightBitrate { return leftBitrate > rightBitrate }
+                if lhs.fileSize != rhs.fileSize { return lhs.fileSize > rhs.fileSize }
+                return lhs.id < rhs.id
+            }
+            selected.formUnion(ranked.dropFirst().map(\.id))
+        }
+        return selected
+    }
+
 }
