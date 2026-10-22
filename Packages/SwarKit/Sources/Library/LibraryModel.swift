@@ -252,6 +252,47 @@ public final class LibraryModel {
         await reload()
     }
 
+    /// Library-only bulk metadata operation with an in-session undo snapshot.
+    public private(set) var canUndoBulkMetadata = false
+    private var bulkMetadataUndo: [(id: String, metadata: TrackMetadata)] = []
+
+    public func bulkUpdateMetadata(_ tracks: [LibraryTrack], patch: BulkMetadataPatch) async throws {
+        guard !isShutDown, !isScanning, !isRecovering, let repository else {
+            throw LibraryFailure("The library is busy or unavailable.")
+        }
+        guard !tracks.isEmpty, !patch.isEmpty else {
+            throw LibraryFailure("Select songs and at least one field to change.")
+        }
+        let ids = Set(tracks.map(\.id))
+        guard ids.count == tracks.count else { throw LibraryFailure("Duplicate song selection.") }
+        var before: [(id: String, metadata: TrackMetadata)] = []
+        var after: [(id: String, metadata: TrackMetadata)] = []
+        for track in tracks {
+            guard let current = try await repository.visibleTrack(id: track.id),
+                  !current.isMissing, current.error == nil else {
+                throw LibraryFailure("A selected song changed or is unavailable. Refresh the list.")
+            }
+            before.append((id: current.id, metadata: TrackMetadata(track: current)))
+            after.append((id: current.id, metadata: try patch.applying(to: current)))
+        }
+        try await repository.bulkUpdateMetadata(after)
+        bulkMetadataUndo = before
+        canUndoBulkMetadata = true
+        trackActionsRevision += 1; overviewRevision += 1
+        await reload()
+    }
+
+    public func undoLastBulkMetadataChange() async throws {
+        guard let repository, canUndoBulkMetadata, !bulkMetadataUndo.isEmpty else {
+            throw LibraryFailure("There is no bulk metadata edit to undo.")
+        }
+        try await repository.bulkUpdateMetadata(bulkMetadataUndo)
+        bulkMetadataUndo = []
+        canUndoBulkMetadata = false
+        trackActionsRevision += 1; overviewRevision += 1
+        await reload()
+    }
+
     public func hasMetadataEdits(_ track: LibraryTrack) async -> Bool {
         (try? await repository?.hasMetadataEdits(trackID: track.id)) ?? false
     }
