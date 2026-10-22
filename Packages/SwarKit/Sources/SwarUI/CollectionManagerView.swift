@@ -17,6 +17,7 @@ struct CollectionManagerView: View {
     @State private var selected = Set<String>()
     @State private var recoveryRequest: FileRecoveryRequest?
     @State private var editing: LibraryTrack?
+    @State private var bulkEditing = false
     @State private var artworkRequest: ArtworkEditRequest?
     @State private var pendingRemoval = Set<String>()
     @State private var showRemoval = false
@@ -108,6 +109,7 @@ struct CollectionManagerView: View {
         .sheet(item: $recoveryRequest) { request in FileRecoveryView(request: request, library: library) }
         .sheet(item: $artworkRequest) { request in ArtworkEditorView(tracks: request.tracks, library: library, player: player) }
         .sheet(item: $editing) { MetadataEditorView(track: $0, library: library) }
+        .sheet(isPresented: $bulkEditing) { BulkMetadataEditorView(tracks: selectedTracks, library: library) }
         .alert("New Playlist", isPresented: $showNewPlaylist) {
             TextField("Playlist Name", text: $playlistName)
             Button("Create") {
@@ -253,6 +255,7 @@ struct CollectionManagerView: View {
                         if track.isMissing { Button("Locate File…") { recoveryRequest = .track(track) } }
                         else { Button("Edit Details") { editing = track } }
                     }
+                    Button("Edit Selected Metadata…") { bulkEditing = true }
                     Button("Artwork…") { artworkRequest = ArtworkEditRequest(tracks: selectedTracks) }
                     Menu("Add to Playlist") {
                         Button("New Playlist…") {
@@ -283,6 +286,14 @@ struct CollectionManagerView: View {
                     Button("Remove…") { pendingRemoval = selected; showRemoval = true }
                 }
                 Button("Clear") { selected.removeAll() }
+            }
+            if library.canUndoBulkMetadata {
+                Button("Undo Bulk Edit") {
+                    Task {
+                        do { try await library.undoLastBulkMetadataChange() }
+                        catch { self.error = error.localizedDescription }
+                    }
+                }
             }
             Spacer(minLength: 0)
             if library.isScanning { ProgressView().controlSize(.small) }
