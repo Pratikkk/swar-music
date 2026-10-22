@@ -250,6 +250,39 @@ struct LibraryTests {
         #expect(model.totalCount == 1)
     }
 
+    @MainActor @Test func bulkMetadataEditingPreservesUncheckedFieldsAndSupportsUndo() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("bulk-a.wav"))
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("bulk-b.wav"))
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let before = model.tracks
+        #expect(before.count == 2)
+        let patch = BulkMetadataPatch(album: "New Album", genre: "Ambient")
+        try await model.bulkUpdateMetadata(before, patch: patch)
+        let changed = try await model.collectionPage(filter: .all, limit: 200)
+        #expect(changed.tracks.count == 2)
+        #expect(changed.tracks.allSatisfy { $0.album == "New Album" && $0.genre == "Ambient" })
+        for track in changed.tracks {
+            let original = try #require(before.first(where: { $0.id == track.id }))
+            #expect(track.artist == original.artist)
+            #expect(track.title == original.title)
+        }
+        #expect(model.canUndoBulkMetadata)
+        try await model.undoLastBulkMetadataChange()
+        let undone = try await model.collectionPage(filter: .all, limit: 200)
+        for track in undone.tracks {
+            let original = try #require(before.first(where: { $0.id == track.id }))
+            #expect(track.album == original.album)
+            #expect(track.genre == original.genre)
+        }
+        #expect(!model.canUndoBulkMetadata)
+    }
+
     @MainActor @Test func batchTrashRefusesSelectionContainingEveryCopy() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
