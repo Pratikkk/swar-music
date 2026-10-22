@@ -25,6 +25,7 @@ struct CollectionManagerView: View {
     @State private var showBatchTrashConfirmation = false
     @State private var pendingBatchTrash = Set<String>()
     @State private var error: String?
+    @State private var trashActionError: String?
     @State private var working = false
     @State private var loadedFilter: CollectionFilter?
     @State private var loadedSearch = ""
@@ -48,7 +49,7 @@ struct CollectionManagerView: View {
         let compact = geometry.size.width < 650 || geometry.size.height < 600
         VStack(alignment: .leading, spacing: 16) {
             header
-            if let error = error ?? library.errorMessage {
+            if let error = trashActionError ?? error ?? library.errorMessage {
                 HStack {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).lineLimit(2)
                     Spacer()
@@ -391,7 +392,7 @@ struct CollectionManagerView: View {
                 selected.removeAll()
                 await load()
             } catch {
-                self.error = error.localizedDescription
+                self.trashActionError = error.localizedDescription
                 selected.removeAll()
                 await load()
             }
