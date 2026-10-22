@@ -42,7 +42,7 @@ struct AlbumListeningModeView: View {
                             .font(.caption).foregroundStyle(.tertiary)
                     }
                     if let currentPosition = plan.position(for: currentTrackID) {
-                        Text("Track \(currentPosition) of \(playable.count)")
+                        Text("Track \(currentPosition) of \(plan.playableTracks.count)")
                             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
                     ExpandedPlayerControls(player: player)
