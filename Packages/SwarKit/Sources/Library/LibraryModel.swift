@@ -43,6 +43,8 @@ public final class LibraryModel {
     private var lastProgressReload = Date.distantPast
     private var watchTask: Task<Void, Never>?
     private var scanTask: Task<Void, Never>?
+    private var trashOperationActive = false
+    private var trashOperationDepth = 0
     private var isShutDown = false
     private var started = false
     private let storageDirectory: URL?
@@ -274,6 +276,8 @@ public final class LibraryModel {
     /// Explicit, recoverable file removal from the duplicate-review UI.
     /// Never delete permanently or interpret matching tags as proof of identity.
     public func moveDuplicateToTrash(_ track: LibraryTrack) async throws {
+        try beginTrashOperation()
+        defer { finishTrashOperation() }
         guard !isShutDown, !isScanning, !isRecovering, let repository else {
             throw LibraryFailure("Wait for the library to finish updating.")
         }
@@ -307,6 +311,8 @@ public final class LibraryModel {
     /// candidate against the complete current set before every operation.
     /// Stops on the first error; previously trashed files remain in macOS Trash.
     public func moveSelectedDuplicatesToTrash(ids: Set<String>) async throws -> Int {
+        try beginTrashOperation()
+        defer { finishTrashOperation() }
         guard !ids.isEmpty, !isShutDown, !isScanning, !isRecovering,
               let repository else {
             throw LibraryFailure("Select at least one duplicate while the library is ready.")
@@ -348,6 +354,8 @@ public final class LibraryModel {
     /// Each file is validated by moveDuplicateToTrash before filesystem mutation.
     /// Stops on first failure; previous files remain recoverable in macOS Trash.
     public func moveTracksToTrash(_ tracks: [LibraryTrack]) async throws -> Int {
+        try beginTrashOperation()
+        defer { finishTrashOperation() }
         guard !tracks.isEmpty else { throw LibraryFailure("No songs selected.") }
         let unique = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var moved = 0
@@ -362,6 +370,23 @@ public final class LibraryModel {
             }
         }
         return moved
+    }
+
+    /// A single actor-isolated admission point prevents overlapping destructive UI requests.
+    /// Nested calls from batch operations share the same operation scope.
+    private func beginTrashOperation() throws {
+        if trashOperationDepth == 0 {
+            guard !trashOperationActive else {
+                throw LibraryFailure("Another Trash operation is in progress.")
+            }
+            trashOperationActive = true
+        }
+        trashOperationDepth += 1
+    }
+
+    private func finishTrashOperation() {
+        trashOperationDepth -= 1
+        if trashOperationDepth == 0 { trashOperationActive = false }
     }
 
     public func dismissError() { errorMessage = nil }
