@@ -31,8 +31,7 @@ public final class LibraryModel {
     public var sortOrder: TrackSortOrder = .album
     public var reverseSort = false
     public private(set) var pageLimit = 500
-    /// Hard cap so "Load More" cannot grow the in-memory track array without bound.
-    private let maxPageLimit = 5000
+    private var loadingTrackPage = false
     public private(set) var artworkDirectory: URL?
     private var customArtworkDirectory: URL?
     private var repository: LibraryRepository?
@@ -421,9 +420,30 @@ public final class LibraryModel {
     public func isMonitoring(_ folder: LibraryFolder) -> Bool { watchers[folder.id] != nil }
 
     public func loadMore() async {
-        guard pageLimit < maxPageLimit else { return }
-        pageLimit = min(pageLimit + 500, maxPageLimit)
-        await reload()
+        guard !loadingTrackPage, !isShutDown, !Task.isCancelled,
+              tracks.count < totalCount, let repository else { return }
+        loadingTrackPage = true
+        defer { loadingTrackPage = false }
+        let revision = refreshRevision
+        let offset = tracks.count
+        let query = search, scope = searchScope
+        let favorites = favoritesOnly, recent = recentFirst
+        let order = sortOrder, reversed = reverseSort
+        do {
+            let page = try await repository.page(search: query, limit: 500, offset: offset,
+                recentFirst: recent, favoritesOnly: favorites, sortOrder: order,
+                reversed: reversed, searchScope: scope)
+            guard !isShutDown, !Task.isCancelled, revision == refreshRevision,
+                  tracks.count == offset, query == search, scope == searchScope,
+                  favorites == favoritesOnly, recent == recentFirst,
+                  order == sortOrder, reversed == reverseSort else { return }
+            tracks.append(contentsOf: page.tracks)
+            pageLimit = max(500, tracks.count)
+            totalCount = page.count
+            unreadableCount = page.unreadableCount
+            if !page.tracks.isEmpty { tracksRevision &+= 1; overviewRevision += 1 }
+        } catch is CancellationError { }
+        catch { errorMessage = error.localizedDescription }
     }
     public func shutdown() {
         isShutDown = true

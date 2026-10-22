@@ -191,7 +191,7 @@ public actor LibraryRepository {
         }
     }
 
-    public func page(search: String = "", limit: Int = 500, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all) throws -> LibraryPage {
+    public func page(search: String = "", limit: Int = 500, offset: Int = 0, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all) throws -> LibraryPage {
         try Task.checkCancellation()
         let query = TrackSearchQuery(search)
         let pattern = query.expression(scope: searchScope)
@@ -201,9 +201,9 @@ public actor LibraryRepository {
             let condition = " WHERE " + visible + (query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
             var arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0
-            arguments += [max(1, limit)]
+            arguments += [max(1, limit), max(0, offset)]
             let order = (recentFirst ? TrackSortOrder.recentlyAdded : sortOrder).sqlOrder(reversed: recentFirst ? false : reversed)
-            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: arguments)
+            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ? OFFSET ?", arguments: arguments)
             let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL AND isMissing = 0 AND " + visible) ?? 0
             return LibraryPage(tracks: tracks, count: count, unreadableCount: unreadable)
         }

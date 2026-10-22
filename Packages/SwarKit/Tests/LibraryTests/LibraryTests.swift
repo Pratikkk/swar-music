@@ -638,6 +638,43 @@ extension LibraryTests {
         #expect(try await repository.page(search: "Track 49999").count == 1)
     }
 
+    @MainActor @Test func modelPagesPastFiveThousandAndResetsForSearch() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let template = try #require(model.tracks.first)
+        let repository = try LibraryRepository(path: storage.appendingPathComponent("Library.sqlite").path)
+        let synthetic = (0..<5201).map { index in
+            var track = template
+            track.id = "page-\(index)"; track.relativePath = "\(index).wav"
+            track.title = String(format: "Synthetic %05d", index)
+            return track
+        }
+        try await repository.saveTracks(synthetic)
+        await model.reload(resetLimit: true)
+        #expect(model.tracks.count == 500 && model.totalCount == 5202)
+        for _ in 0..<11 { await model.loadMore() }
+        #expect(model.tracks.count == 5202)
+        #expect(Set(model.tracks.map(\.id)).count == 5202)
+        #expect(model.tracks.contains { $0.id == "page-5200" })
+        let complete = model.tracks
+        await model.loadMore()
+        #expect(model.tracks == complete)
+        model.search = "Synthetic 05200"
+        await model.reload(resetLimit: true)
+        #expect(model.totalCount == 1 && model.tracks.map(\.id) == ["page-5200"])
+        model.search = ""
+        await model.reload(resetLimit: true)
+        #expect(model.tracks.count == 500)
+        await model.loadMore()
+        #expect(model.tracks.count == 1000)
+    }
+
     @Test func homeOverviewUsesWholeLibraryAndDistinctAlbumsAndExcludesHiddenSongs() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
