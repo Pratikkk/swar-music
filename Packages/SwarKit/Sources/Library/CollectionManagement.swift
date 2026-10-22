@@ -82,3 +82,29 @@ public struct TrackMetadata: Codable, Sendable, Equatable {
         track.year = year.isEmpty ? nil : year; track.trackNumber = trackNumber; track.discNumber = discNumber
     }
 }
+
+        
+/// Information for comparing *candidate* duplicates; metadata similarity is not
+/// proof of identical audio content. Never use these details for auto-deletion.
+public enum DuplicateReview {
+    public static func details(for track: LibraryTrack) -> String {
+        var parts: [String] = []
+        parts.append(track.isLossless ? "Lossless" : "Lossy")
+        if let codec = track.codec, !codec.isEmpty { parts.append(codec) }
+        if let depth = track.bitDepth, depth > 0 { parts.append("\(depth)-bit") }
+        if let rate = track.sampleRate, rate.isFinite, rate > 0 {
+            parts.append(String(format: "%g kHz", rate / 1000))
+        }
+        if let bitrate = track.bitRate, bitrate > 0 {
+            parts.append("\(bitrate / 1000) kbps")
+        }
+        if track.fileSize > 0 {
+            parts.append(ByteCountFormatter.string(fromByteCount: track.fileSize, countStyle: .file))
+        }
+        if track.duration.isFinite, track.duration > 0 {
+            let seconds = Int(track.duration.rounded())
+            parts.append(String(format: "%d:%02d", seconds / 60, seconds % 60))
+        }
+        return parts.joined(separator: " · ")
+    }
+}
