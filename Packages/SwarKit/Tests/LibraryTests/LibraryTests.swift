@@ -250,6 +250,23 @@ struct LibraryTests {
         #expect(model.totalCount == 1)
     }
 
+    @Test func exactDuplicateHashingDistinguishesEqualAndDifferentContent() async throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let first = temporary.appendingPathComponent("one.bin")
+        let equal = temporary.appendingPathComponent("two.bin")
+        let changed = temporary.appendingPathComponent("three.bin")
+        let payload = Data(repeating: 0xA7, count: 1_100_000)
+        try payload.write(to: first)
+        try payload.write(to: equal)
+        var different = payload
+        different[different.count - 1] ^= 1
+        try different.write(to: changed)
+        #expect(try await LibraryModel.filesAreByteIdentical(first, equal))
+        #expect(!(try await LibraryModel.filesAreByteIdentical(first, changed)))
+    }
+
     @MainActor @Test func batchTrashRequiresAnAccessibleRetainedCopy() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
