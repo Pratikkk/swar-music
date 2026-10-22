@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import CryptoKit
 
 @MainActor @Observable
 public final class LibraryModel {
@@ -370,18 +371,26 @@ public final class LibraryModel {
                     && $0.duration.isFinite && candidate.duration.isFinite
                     && $0.duration.rounded() == candidate.duration.rounded()
                 }
-                guard peers.contains(where: { peer in
-                    guard !ids.contains(peer.id), !peer.isMissing, peer.error == nil,
-                          let location = try? location(for: peer) else { return false }
-                    let file = location.file
-                    let root = location.root.resolvingSymlinksInPath().standardizedFileURL
-                    let resolved = file.resolvingSymlinksInPath().standardizedFileURL
+                // Matching titles and durations are only hints, not deletion proof.
+                // Batch cleanup requires an accessible, byte-identical retained file.
+                let selectedFile = try location(for: candidate).file
+                var verifiedRetainedCopy = false
+                for peer in peers where !ids.contains(peer.id)
+                    && !peer.isMissing && peer.error == nil
+                    && peer.fileSize == candidate.fileSize {
+                    guard let retained = try? location(for: peer) else { continue }
+                    let root = retained.root.resolvingSymlinksInPath().standardizedFileURL
+                    let resolved = retained.file.resolvingSymlinksInPath().standardizedFileURL
                     guard resolved.pathComponents.starts(with: root.pathComponents),
-                          let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
-                          attributes[.type] as? FileAttributeType == .typeRegular else { return false }
-                    return FileManager.default.isReadableFile(atPath: file.path)
-                }) else {
-                    throw LibraryFailure("Refusing to remove the last retained copy of a duplicate group.")
+                          (try? retained.file.resourceValues(forKeys: [.isRegularFileKey])).flatMap(\.isRegularFile) == true,
+                          FileManager.default.isReadableFile(atPath: retained.file.path) else { continue }
+                    if try await Self.filesAreByteIdentical(selectedFile, retained.file) {
+                        verifiedRetainedCopy = true
+                        break
+                    }
+                }
+                guard verifiedRetainedCopy else {
+                    throw LibraryFailure("No readable, byte-identical retained copy exists. Review these possible duplicates manually.")
                 }
                 try await moveDuplicateToTrashCore(candidate)
                 moved += 1
@@ -412,6 +421,27 @@ public final class LibraryModel {
             }
         }
         return moved
+    }
+
+    /// SHA-256 is computed incrementally away from the main actor to avoid
+    /// loading music files into memory. Matching metadata is never sufficient.
+    private nonisolated static func filesAreByteIdentical(_ first: URL, _ second: URL) async throws -> Bool {
+        try await Task.detached(priority: .userInitiated) {
+            try Self.fileSHA256(first) == Self.fileSHA256(second)
+        }.value
+    }
+
+    private nonisolated static func fileSHA256(_ url: URL) throws -> [UInt8] {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        while true {
+            try Task.checkCancellation()
+            let chunk = try handle.read(upToCount: 1_048_576) ?? Data()
+            if chunk.isEmpty { break }
+            hash.update(data: chunk)
+        }
+        return Array(hash.finalize())
     }
 
     private struct TrashJournalRecord: Codable {
