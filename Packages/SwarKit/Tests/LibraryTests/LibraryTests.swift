@@ -231,6 +231,29 @@ struct LibraryTests {
         #expect(DuplicateReview.selectKeepingOne([other]).isEmpty)
     }
 
+    @MainActor @Test func batchTrashRefusesSelectionContainingEveryCopy() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        let first = music.appendingPathComponent("duplicate-one.wav")
+        let second = music.appendingPathComponent("duplicate-two.wav")
+        try FileManager.default.copyItem(at: source, to: first)
+        try FileManager.default.copyItem(at: source, to: second)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let candidates = try await model.collectionPage(filter: .duplicates)
+        #expect(candidates.count == 2)
+        do {
+            _ = try await model.moveSelectedDuplicatesToTrash(ids: Set(candidates.tracks.map(\.id)))
+            Issue.record("Batch removal must not trash all copies of the same song.")
+        } catch { }
+        #expect(FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+        #expect(model.totalCount == 2)
+    }
+
     @Test func exactTrackLookupWorksBeyondTheVisiblePageAndHonoursRemoval() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
