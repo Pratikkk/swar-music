@@ -27,6 +27,9 @@ struct CollectionManagerView: View {
     @State private var error: String?
     @State private var trashActionError: String?
     @State private var working = false
+    @State private var exactVerifiedIDs = Set<String>()
+    @State private var exactScanError: String?
+    @State private var verifiedGroupCount = 0
     @State private var loadedFilter: CollectionFilter?
     @State private var loadedSearch = ""
     @State private var loadedScope: TrackSearchScope = .all
@@ -49,12 +52,12 @@ struct CollectionManagerView: View {
         let compact = geometry.size.width < 650 || geometry.size.height < 600
         VStack(alignment: .leading, spacing: 16) {
             header
-            if let error = trashActionError ?? error ?? library.errorMessage {
+            if let error = exactScanError ?? trashActionError ?? error ?? library.errorMessage {
                 HStack {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).lineLimit(2)
                     Spacer()
                     Button("Retry") { Task { await load() } }
-                    Button { self.error = nil; library.dismissError() } label: { Image(systemName: "xmark.circle.fill") }
+                    Button { self.error = nil; exactScanError = nil; trashActionError = nil; library.dismissError() } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).accessibilityLabel("Dismiss library error")
                 }.font(.caption)
             }
@@ -103,8 +106,8 @@ struct CollectionManagerView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .task(id: refreshKey) { await load() }
-        .onChange(of: filter) { selected.removeAll(); limit = 200 }
-        .onChange(of: library.search) { selected.removeAll(); limit = 200 }
+        .onChange(of: filter) { selected.removeAll(); exactVerifiedIDs.removeAll(); limit = 200 }
+        .onChange(of: library.search) { selected.removeAll(); exactVerifiedIDs.removeAll(); limit = 200 }
         .onChange(of: library.searchScope) { selected.removeAll(); limit = 200 }
         .sheet(item: $recoveryRequest) { request in FileRecoveryView(request: request, library: library) }
         .sheet(item: $artworkRequest) { request in ArtworkEditorView(tracks: request.tracks, library: library, player: player) }
@@ -235,6 +238,34 @@ struct CollectionManagerView: View {
         HStack(spacing: 12) {
             Text(selected.isEmpty ? "\(page.tracks.count) of \(page.count) songs" : "\(selected.count) selected")
                 .font(.caption).foregroundStyle(.secondary)
+            if filter == .duplicates && matchesContext && page.count > 1 {
+                Button("Verify Exact Duplicates (SHA-256)") {
+                    let candidates = page.tracks
+                    exactScanError = nil
+                    working = true
+                    Task {
+                        defer { working = false }
+                        do {
+                            let matches = try await library.selectVerifiedExactDuplicates(candidates)
+                            selected = matches
+                            exactVerifiedIDs = matches
+                            verifiedGroupCount = library.exactDuplicateVerifiedGroups
+                        } catch {
+                            exactVerifiedIDs.removeAll()
+                            exactScanError = error.localizedDescription
+                        }
+                    }
+                }
+                .disabled(working || page.tracks.count != page.count ||
+                          !TrackSearchQuery(library.search).isEmpty)
+                if let progress = library.exactDuplicateScanProgress {
+                    ProgressView(value: progress).frame(width: 90)
+                }
+                if !exactVerifiedIDs.isEmpty {
+                    Text("\(verifiedGroupCount) verified groups · \(exactVerifiedIDs.count) extra copies")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             if filter == .duplicates && matchesContext && page.count > 1 {
                 if page.tracks.count == page.count && TrackSearchQuery(library.search).isEmpty {
                     Button("Select Duplicates · Keep One") {
@@ -378,7 +409,7 @@ struct CollectionManagerView: View {
                   requestedFilter == filter, requestedSearch == library.search,
                   requestedScope == library.searchScope, requestedLimit == limit else { return }
             loadedFilter = requestedFilter; loadedSearch = requestedSearch; loadedScope = requestedScope
-            page = result; error = nil; selected.formIntersection(Set(result.tracks.map(\.id)))
+            page = result; error = nil; exactVerifiedIDs.removeAll(); selected.formIntersection(Set(result.tracks.map(\.id)))
         } catch is CancellationError { }
         catch { guard !Task.isCancelled, loadGeneration == generation else { return }; self.error = error.localizedDescription }
     }
