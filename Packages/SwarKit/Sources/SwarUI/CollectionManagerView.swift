@@ -74,7 +74,7 @@ struct CollectionManagerView: View {
                 }
                 selectionBar(page)
                 if filter == .duplicates {
-                    Text("Possible duplicates share a title, artist, and rounded duration. Compare encoding, bitrate, size, and location; different editions may not be identical.")
+                    Text("Select Duplicates · Keep One retains a preferred-quality copy of each metadata-matched group. Review the selection carefully: editions and masters may differ. Selection never deletes files.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if filter == .missing {
@@ -220,6 +220,17 @@ struct CollectionManagerView: View {
         HStack(spacing: 12) {
             Text(selected.isEmpty ? "\(page.tracks.count) of \(page.count) songs" : "\(selected.count) selected")
                 .font(.caption).foregroundStyle(.secondary)
+            if filter == .duplicates && matchesContext && page.count > 1 {
+                if page.tracks.count == page.count && TrackSearchQuery(library.search).isEmpty {
+                    Button("Select Duplicates · Keep One") {
+                        selected = DuplicateReview.selectKeepingOne(page.tracks)
+                    }
+                    .help("Select possible duplicates while retaining the best-quality copy of each group. Review before removing.")
+                } else {
+                    Text("Load all candidates and clear search to select automatically")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             if !selected.isEmpty {
                 if filter == .removed {
                     Button("Restore") { manage(selected, restore: true) }
