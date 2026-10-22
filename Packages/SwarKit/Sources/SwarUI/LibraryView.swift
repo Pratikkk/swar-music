@@ -89,6 +89,18 @@ public struct LibraryView: View {
             }.frame(width: 480, height: 480)
         }
         .task {
+            library.requestFolderWriteAccess = { folder in
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = false; panel.canChooseDirectories = true
+                panel.allowsMultipleSelection = false
+                panel.directoryURL = URL(fileURLWithPath: folder.path)
+                panel.prompt = "Allow Trash"
+                panel.message = "Select “\(URL(fileURLWithPath: folder.path).lastPathComponent)” to allow Swar to move its songs to Trash. Existing folder access was read-only."
+                let response = await withCheckedContinuation { continuation in
+                    panel.begin { continuation.resume(returning: $0) }
+                }
+                return response == .OK ? panel.url : nil
+            }
             player.onQualifiedListen = { [weak library] url, date in
                 Task { await library?.recordListen(at: url, date: date) }
             }

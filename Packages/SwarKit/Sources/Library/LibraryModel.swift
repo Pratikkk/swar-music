@@ -35,6 +35,13 @@ public final class LibraryModel {
     public private(set) var artworkDirectory: URL?
     private var customArtworkDirectory: URL?
     private var repository: LibraryRepository?
+    /// The UI can request a fresh user-selected grant for legacy read-only bookmarks.
+    public var requestFolderWriteAccess: (@MainActor @Sendable (LibraryFolder) async throws -> URL?)?
+    var trashItem: @Sendable (URL) throws -> Void = { file in
+        var destination: NSURL?
+        try FileManager.default.trashItem(at: file, resultingItemURL: &destination)
+    }
+    private var trashOperationDepth = 0
     private var scopes: [String: FolderAccess] = [:]
     private var watchers: [String: FolderWatcher] = [:]
     private var pendingRescan = false
@@ -101,7 +108,7 @@ public final class LibraryModel {
                 throw LibraryFailure("This folder overlaps a folder already in your library.")
             }
             let access = FolderAccess(url)
-            let bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+            let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
             let folder = LibraryFolder(path: canonical.path, bookmark: bookmark)
             try await repository.saveFolder(folder)
             scopes[folder.id] = access
@@ -128,7 +135,7 @@ public final class LibraryModel {
 
     public func rescan() async {
         guard !isShutDown, !Task.isCancelled else { return }
-        guard !isScanning, !isRecovering else { pendingRescan = true; return }
+        guard !isScanning, !isRecovering, trashOperationDepth == 0 else { pendingRescan = true; return }
         guard let repository, let artworkDirectory else { return }
         isScanning = true
         let task = Task { await scanFolders(repository: repository, artworkDirectory: artworkDirectory) }
@@ -277,22 +284,22 @@ public final class LibraryModel {
             throw LibraryFailure("Wait for the library to finish updating.")
         }
         guard let current = try await repository.visibleTrack(id: track.id),
-              !current.isMissing, current.error == nil else {
+              !current.isMissing else {
             throw LibraryFailure("This song is no longer available. Refresh the review.")
         }
-        let (file, root) = try location(for: current)
-        let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
-        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
-        guard file.isFileURL, parent.pathComponents.starts(with: canonicalRoot.pathComponents),
-              parent.pathComponents.count >= canonicalRoot.pathComponents.count,
-              file.resolvingSymlinksInPath().standardizedFileURL.pathComponents.starts(with: canonicalRoot.pathComponents),
-              FileManager.default.fileExists(atPath: file.path) else {
-            throw LibraryFailure("The song file is missing or outside its authorised library folder.")
+        trashOperationDepth += 1
+        defer { finishTrashOperation() }
+        do {
+            try await trashFile(current)
+        } catch {
+            guard Self.isTrashPermissionError(error), let requestFolderWriteAccess,
+                  let folder = folders.first(where: { $0.id == current.folderID }) else {
+                throw error
+            }
+            guard let url = try await requestFolderWriteAccess(folder) else { throw CancellationError() }
+            try await authorizeWriteAccess(to: folder, url: url)
+            try await trashFile(current)
         }
-        try await Task.detached(priority: .userInitiated) {
-            var destination: NSURL?
-            try FileManager.default.trashItem(at: file, resultingItemURL: &destination)
-        }.value
         // Only update the library after macOS confirms that the file was trashed.
         // If the database update fails, the original remains recoverable in Trash.
         try await repository.removeTracksFromLibrary(ids: [current.id])
@@ -300,6 +307,58 @@ public final class LibraryModel {
         overviewRevision += 1
         await reload()
         await reloadPlaylists()
+    }
+
+    static func isTrashPermissionError(_ error: Error) -> Bool {
+        let error = error as NSError
+        if error.domain == NSCocoaErrorDomain &&
+            [NSFileWriteNoPermissionError, NSFileReadNoPermissionError].contains(error.code) { return true }
+        if error.domain == NSPOSIXErrorDomain && [13, 1].contains(error.code) { return true }
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isTrashPermissionError(underlying)
+        }
+        return false
+    }
+
+    private func authorizeWriteAccess(to folder: LibraryFolder, url: URL) async throws {
+        let access = FolderAccess(url)
+        guard url.resolvingSymlinksInPath().standardizedFileURL ==
+                URL(fileURLWithPath: folder.path).resolvingSymlinksInPath().standardizedFileURL,
+              let repository else {
+            throw LibraryFailure("Choose the same music folder to allow moving files to Trash.")
+        }
+        var updated = folder
+        updated.bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        try await repository.saveFolder(updated)
+        scopes[folder.id] = access
+        folders = try await repository.folders()
+    }
+
+    private func trashFile(_ track: LibraryTrack) async throws {
+        guard let access = scopes[track.folderID] else {
+            throw LibraryFailure("Reconnect the music folder in Manage Library.")
+        }
+        let operation = trashItem
+        try await Task.detached(priority: .userInitiated) {
+            try withExtendedLifetime(access) {
+                let root = access.url.resolvingSymlinksInPath().standardizedFileURL
+                let file = access.url.appendingPathComponent(track.relativePath)
+                let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+                guard file.isFileURL, parent.pathComponents.starts(with: root.pathComponents),
+                      file.resolvingSymlinksInPath().standardizedFileURL.pathComponents.starts(with: root.pathComponents),
+                      FileManager.default.fileExists(atPath: file.path) else {
+                    throw LibraryFailure("The song file is missing or outside its authorised library folder.")
+                }
+                try operation(file)
+            }
+        }.value
+    }
+
+    private func finishTrashOperation() {
+        trashOperationDepth -= 1
+        if trashOperationDepth == 0, pendingRescan, !isShutDown {
+            Task { await rescan() }
+        }
     }
 
     /// Moves a reviewed selection to Trash sequentially, revalidating each
@@ -310,6 +369,8 @@ public final class LibraryModel {
               let repository else {
             throw LibraryFailure("Select at least one duplicate while the library is ready.")
         }
+        trashOperationDepth += 1
+        defer { finishTrashOperation() }
         var moved = 0
         for id in ids.sorted() {
             do {
@@ -349,6 +410,8 @@ public final class LibraryModel {
     public func moveTracksToTrash(_ tracks: [LibraryTrack]) async throws -> Int {
         guard !tracks.isEmpty else { throw LibraryFailure("No songs selected.") }
         let unique = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        trashOperationDepth += 1
+        defer { finishTrashOperation() }
         var moved = 0
         for id in unique.keys.sorted() {
             guard let track = unique[id] else { continue }
@@ -678,7 +741,7 @@ public final class LibraryModel {
         guard !isShutDown, !Task.isCancelled else { throw CancellationError() }
         var updated = folder
         updated.path = canonical.path
-        updated.bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+        updated.bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         try await repository.saveFolder(updated)
         watchers[folder.id] = nil
         scopes[folder.id] = access
@@ -748,7 +811,7 @@ public final class LibraryModel {
                 let access = FolderAccess(url)
                 let path = url.resolvingSymlinksInPath().standardizedFileURL.path
                 if stale {
-                    folder.bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+                    folder.bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
                 }
                 if stale || folder.path != path {
                     folder.path = path
@@ -769,7 +832,7 @@ public final class LibraryModel {
         watchers[folder.id] = FolderWatcher(url: url) { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, !self.isShutDown else { return }
-                if self.isScanning {
+                if self.isScanning || self.trashOperationDepth > 0 {
                     self.pendingRescan = true
                     return
                 }

@@ -135,7 +135,7 @@ private struct SongActions<Extra: View>: ViewModifier {
         extra
         Divider()
         Button("Move to Trash…", systemImage: "trash", role: .destructive) { showTrashConfirmation = true }
-            .disabled(track.isMissing || track.error != nil || !library.isReady || library.isScanning || library.isRecovering)
+            .disabled(track.isMissing || !library.isReady || library.isScanning || library.isRecovering)
         Button("Remove from Library…", systemImage: "minus.circle", role: .destructive) { showRemoval = true }
     }
 }

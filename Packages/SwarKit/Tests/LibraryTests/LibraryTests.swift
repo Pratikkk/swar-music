@@ -198,6 +198,70 @@ struct LibraryTests {
         #expect(model.tracks.first?.id == song.id)
     }
 
+    @MainActor @Test func trashRetriesAfterLegacyFolderWriteAuthorization() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = music.appendingPathComponent("candidate.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: file)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let track = try #require(model.tracks.first)
+        let folderID = try #require(model.folders.first?.id)
+        let attempts = OSAllocatedUnfairLock(initialState: 0)
+        let destination = temporary.appendingPathComponent("TestTrash.wav")
+        model.trashItem = { file in
+            let attempt = attempts.withLock { $0 += 1; return $0 }
+            if attempt == 1 { throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError) }
+            try FileManager.default.moveItem(at: file, to: destination)
+        }
+        model.requestFolderWriteAccess = { folder in
+            #expect(folder.id == folderID)
+            return music
+        }
+        let moved = try await model.moveTracksToTrash([track])
+        #expect(moved == 1 && attempts.withLock { $0 } == 2)
+        #expect(FileManager.default.fileExists(atPath: destination.path))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(model.totalCount == 0 && model.folders.first?.id == folderID)
+    }
+
+    @MainActor @Test func duplicateBatchTrashKeepsRetainedFileAndFinishesAllSelectedFiles() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        for index in 0..<3 {
+            try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("copy-\(index).wav"))
+        }
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let repository = try LibraryRepository(path: storage.appendingPathComponent("Library.sqlite").path)
+        let candidates = model.tracks.map { original in
+            var track = original; track.title = "Duplicate"; track.artist = "Artist"; track.duration = 180
+            return track
+        }
+        try await repository.saveTracks(candidates)
+        await model.reload()
+        let chosen = Set(candidates.prefix(2).map(\.id))
+        let retained = try #require(candidates.last)
+        model.trashItem = { file in
+            try FileManager.default.moveItem(at: file, to: temporary.appendingPathComponent(file.lastPathComponent))
+        }
+        let moved = try await model.moveSelectedDuplicatesToTrash(ids: chosen)
+        #expect(moved == 2 && model.totalCount == 1)
+        #expect(model.tracks.first?.id == retained.id)
+        #expect(FileManager.default.fileExists(atPath: music.appendingPathComponent(retained.relativePath).path))
+    }
+
+    @MainActor @Test func trashPermissionClassificationDoesNotRetryMissingOrOtherFailures() {
+        #expect(LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)))
+        #expect(!LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)))
+        #expect(!LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError)))
+    }
+
     @Test func automaticDuplicateSelectionKeepsOneBestCopyPerGroup() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
