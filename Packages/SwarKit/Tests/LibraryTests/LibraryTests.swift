@@ -250,6 +250,38 @@ struct LibraryTests {
         #expect(model.totalCount == 1)
     }
 
+    @MainActor @Test func batchTrashRequiresAnAccessibleRetainedCopy() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let first = music.appendingPathComponent("retained-copy.wav")
+        let second = music.appendingPathComponent("selected-copy.wav")
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: first)
+        try FileManager.default.copyItem(at: source, to: second)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        for track in model.tracks {
+            var metadata = TrackMetadata(track: track)
+            metadata.title = "Same Title"
+            metadata.artist = "Same Artist"
+            metadata.albumArtist = "Same Artist"
+            metadata.album = "Same Album"
+            try await model.updateMetadata(track, metadata: metadata)
+        }
+        let candidates = try await model.collectionPage(filter: .duplicates, search: "", scope: .all, limit: 200)
+        #expect(candidates.count == 2)
+        let selected = try #require(candidates.tracks.first(where: { $0.relativePath == second.lastPathComponent }))
+        // Deliberately leave the database stale to test the keep-one preflight.
+        try FileManager.default.removeItem(at: first)
+        do {
+            _ = try await model.moveSelectedDuplicatesToTrash(ids: [selected.id])
+            Issue.record("Cleanup must refuse an inaccessible retained copy.")
+        } catch { }
+        #expect(FileManager.default.fileExists(atPath: second.path))
+    }
+
     @MainActor @Test func batchTrashRefusesSelectionContainingEveryCopy() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
