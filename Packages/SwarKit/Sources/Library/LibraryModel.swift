@@ -103,7 +103,7 @@ public final class LibraryModel {
                 throw LibraryFailure("This folder overlaps a folder already in your library.")
             }
             let access = FolderAccess(url)
-            let bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+            let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
             let folder = LibraryFolder(path: canonical.path, bookmark: bookmark)
             try await repository.saveFolder(folder)
             scopes[folder.id] = access
@@ -692,7 +692,7 @@ public final class LibraryModel {
         guard !isShutDown, !Task.isCancelled else { throw CancellationError() }
         var updated = folder
         updated.path = canonical.path
-        updated.bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+        updated.bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         try await repository.saveFolder(updated)
         watchers[folder.id] = nil
         scopes[folder.id] = access
@@ -762,7 +762,7 @@ public final class LibraryModel {
                 let access = FolderAccess(url)
                 let path = url.resolvingSymlinksInPath().standardizedFileURL.path
                 if stale {
-                    folder.bookmark = try url.bookmarkData(options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess], includingResourceValuesForKeys: nil, relativeTo: nil)
+                    folder.bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
                 }
                 if stale || folder.path != path {
                     folder.path = path
