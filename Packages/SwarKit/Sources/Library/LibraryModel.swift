@@ -18,6 +18,8 @@ public final class LibraryModel {
     public private(set) var totalCount = 0
     public private(set) var unreadableCount = 0
     public private(set) var isRecovering = false
+    public private(set) var exactDuplicateScanProgress: Double?
+    public private(set) var exactDuplicateVerifiedGroups = 0
     private var relocatedIDs: [String: String] = [:]
     public private(set) var isScanning = false
     public private(set) var isReady = false
@@ -400,6 +402,49 @@ public final class LibraryModel {
             }
         }
         return moved
+    }
+
+    /// Scans a complete, unfiltered candidate page and selects all but one
+    /// byte-identical file from each verified group. No files are modified.
+    /// Hashes are recomputed so a stale cache cannot authorize deletion.
+    public func selectVerifiedExactDuplicates(_ candidates: [LibraryTrack]) async throws -> Set<String> {
+        guard !trashOperationActive, !isScanning, !isRecovering, !isShutDown else {
+            throw LibraryFailure("The library is busy.")
+        }
+        guard exactDuplicateScanProgress == nil else {
+            throw LibraryFailure("A verification scan is already running.")
+        }
+        exactDuplicateScanProgress = 0
+        exactDuplicateVerifiedGroups = 0
+        defer { exactDuplicateScanProgress = nil }
+        struct Key: Hashable { let size: Int64; let hash: [UInt8] }
+        var matches: [Key: [LibraryTrack]] = [:]
+        let eligible = candidates.filter { !$0.isMissing && $0.error == nil && $0.fileSize > 0 }
+        for (index, track) in eligible.enumerated() {
+            try Task.checkCancellation()
+            let (file, root) = try location(for: track)
+            let canonical = file.resolvingSymlinksInPath().standardizedFileURL
+            let safeRoot = root.resolvingSymlinksInPath().standardizedFileURL
+            guard canonical.pathComponents.starts(with: safeRoot.pathComponents),
+                  (try? file.resourceValues(forKeys: [.isRegularFileKey])).flatMap(\.isRegularFile) == true else {
+                throw LibraryFailure("File changed or is outside its authorised folder. Refresh and retry.")
+            }
+            let digest = try await Task.detached(priority: .utility) {
+                try Self.fileSHA256(file)
+            }.value
+            matches[Key(size: track.fileSize, hash: digest), default: []].append(track)
+            exactDuplicateScanProgress = Double(index + 1) / Double(max(1, eligible.count))
+        }
+        var selected = Set<String>()
+        for group in matches.values where group.count > 1 {
+            exactDuplicateVerifiedGroups += 1
+            let ordered = group.sorted { left, right in
+                if left.isLossless != right.isLossless { return left.isLossless }
+                return left.id < right.id
+            }
+            selected.formUnion(ordered.dropFirst().map(\.id))
+        }
+        return selected
     }
 
     /// Explicit user-requested Trash action for regular songs or entire albums.
