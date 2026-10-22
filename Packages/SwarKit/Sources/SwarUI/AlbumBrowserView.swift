@@ -106,8 +106,13 @@ struct AlbumBrowserView: View {
                     Text(filter != .all ? "Try another filter or search." : TrackSearchQuery(library.search).isEmpty ? "Add a music folder to start your collection." : "Try a different album, artist, or song.")
                 } actions: {
                     if filter != .all { Button("Show All Albums") { filter = .all } }
-                    else if !TrackSearchQuery(library.search).isEmpty { Button("Clear Search") { library.search = "" } }
-                    else { SettingsLink { Text("Music Folder Settings…") } }
+                    if !TrackSearchQuery(library.search).isEmpty {
+                        if library.searchScope != .all {
+                            Button("Search All Fields") { library.searchScope = .all }
+                        }
+                        Button("Clear Search") { library.search = "" }
+                    }
+                    else if filter == .all { SettingsLink { Text("Music Folder Settings…") } }
                 }
             } else {
                 albumCollection

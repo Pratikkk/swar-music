@@ -39,14 +39,17 @@ struct LibraryContent: View {
             }
             if library.tracks.isEmpty {
                 ContentUnavailableView {
-                    Label(library.search.isEmpty ? (section == "Favourites" ? "No Favourites Yet" : "Your Music Library") : "No Matching Music",
+                    Label(TrackSearchQuery(library.search).isEmpty ? (section == "Favourites" ? "No Favourites Yet" : "Your Music Library") : "No Matching Music",
                           systemImage: section == "Favourites" ? "star" : "music.note.list")
                 } description: {
-                    Text(library.search.isEmpty
+                    Text(TrackSearchQuery(library.search).isEmpty
                          ? (section == "Favourites" ? "Choose Favourite from any song’s options menu to keep it here." : "Add a folder to browse your local music. Files stay where they are.")
                          : "Try different words or choose All Fields from the search icon.")
                 } actions: {
                     if !TrackSearchQuery(library.search).isEmpty {
+                        if library.searchScope != .all {
+                            Button("Search All Fields") { library.searchScope = .all }
+                        }
                         Button("Clear Search") { library.search = "" }
                     } else if section != "Favourites" {
                         SettingsLink { Text("Add Music Folder…") }

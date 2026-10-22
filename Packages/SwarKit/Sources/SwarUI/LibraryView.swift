@@ -412,32 +412,10 @@ public struct LibraryView: View {
             }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().foregroundStyle(.secondary)
             .help("View and library options").accessibilityLabel("View and library options")
-            HStack(spacing: 6) {
-                Menu {
-                    Picker("Search In", selection: $library.searchScope) {
-                        ForEach(TrackSearchScope.allCases) { scope in Text(scope.rawValue).tag(scope) }
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(library.searchScope == .all ? Color.secondary : palette.accent)
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .accessibilityLabel("Search field: " + library.searchScope.rawValue)
-                .help("Search in " + library.searchScope.rawValue + ". Click to change fields.")
-                TextField(library.searchScope == .all ? "Find in \(sectionTitle)" : "Search \(library.searchScope.rawValue)", text: $library.search)
-                    .textFieldStyle(.plain).focused($searchFocused)
-                    .accessibilityLabel("Search " + library.searchScope.rawValue)
-                    .help("Match the beginning of words in " + library.searchScope.rawValue.lowercased())
-                    .onKeyPress(.escape) { library.search = ""; searchFocused = false; return .handled }
-                if !library.search.isEmpty {
-                    Button { library.search = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.tertiary).accessibilityLabel("Clear search")
-                }
-            }
-            .font(.system(size: 12)).padding(.horizontal, 10).frame(width: 180, height: 30)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.primary.opacity(0.04), lineWidth: 0.5))
+            LibrarySearchField(query: $library.search, scope: $library.searchScope,
+                               focused: $searchFocused, section: sectionTitle,
+                               availableWidth: windowWidth - 215)
+
         }
         .padding(.horizontal, 24).frame(height: 54)
         .background(SwarTheme.canvas)
