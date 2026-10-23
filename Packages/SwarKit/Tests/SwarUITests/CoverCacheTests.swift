@@ -5,6 +5,21 @@ import ImageIO
 import UniformTypeIdentifiers
 @testable import SwarUI
 
+private actor SuspendedCoverDecode {
+    private var released = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    func wait() async {
+        if released { return }
+        await withCheckedContinuation { continuations.append($0) }
+    }
+    func release() {
+        released = true
+        let pending = continuations
+        continuations = []
+        for continuation in pending { continuation.resume() }
+    }
+}
+
 struct CoverCacheTests {
     private func fixture() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")
@@ -70,6 +85,58 @@ struct CoverCacheTests {
         #expect(await work.value == nil)
         #expect(cache.cached(request) == nil)
         #expect(await cache.image(for: request) != nil)
+    }
+
+    private func waitsForCallers(_ count: Int, cache: CoverCache) async throws -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while cache.pendingRequestCount != count, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        return cache.pendingRequestCount == count
+    }
+
+    @Test func cancellingOneCellKeepsSharedArtworkForAnother() async throws {
+        let url = try fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let request = CoverRequest(url: url, pixels: 128)
+        let bitmap = try #require(await CoverCache().image(for: request))
+        let gate = SuspendedCoverDecode()
+        let cache = CoverCache(decode: { _ in await gate.wait(); return bitmap })
+        let first = Task { await cache.image(for: request) }
+        let second = Task { await cache.image(for: request) }
+        let joined = try await waitsForCallers(2, cache: cache)
+        #expect(joined)
+        first.cancel()
+        #expect(await first.value == nil)
+        #expect(cache.pendingRequestCount == 1)
+        await gate.release()
+        #expect(await second.value === bitmap)
+        #expect(cache.cached(request) === bitmap)
+        #expect(cache.pendingRequestCount == 0)
+    }
+
+    @Test func lastCancellationReleasesCallerAndNewRequestSurvivesOldCompletion() async throws {
+        let url = try fixture()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let request = CoverRequest(url: url, pixels: 128)
+        let bitmap = try #require(await CoverCache().image(for: request))
+        let gate = SuspendedCoverDecode()
+        let cache = CoverCache(decode: { _ in await gate.wait(); return bitmap })
+        let offscreen = Task { await cache.image(for: request) }
+        let joined = try await waitsForCallers(1, cache: cache)
+        #expect(joined)
+        offscreen.cancel()
+        // Cancellation must finish without waiting for a blocked decoder.
+        #expect(await offscreen.value == nil)
+        #expect(cache.pendingRequestCount == 0)
+        #expect(cache.cached(request) == nil)
+        let visible = Task { await cache.image(for: request) }
+        let rejoined = try await waitsForCallers(1, cache: cache)
+        #expect(rejoined)
+        await gate.release()
+        #expect(await visible.value === bitmap)
+        #expect(cache.cached(request) === bitmap)
+        #expect(cache.pendingRequestCount == 0)
     }
 
     @Test func invalidImagesAndRemoteURLsDoNotEnterTheCache() async throws {

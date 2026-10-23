@@ -198,6 +198,70 @@ struct LibraryTests {
         #expect(model.tracks.first?.id == song.id)
     }
 
+    @MainActor @Test func trashRetriesAfterLegacyFolderWriteAuthorization() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = music.appendingPathComponent("candidate.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: file)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let track = try #require(model.tracks.first)
+        let folderID = try #require(model.folders.first?.id)
+        let attempts = OSAllocatedUnfairLock(initialState: 0)
+        let destination = temporary.appendingPathComponent("TestTrash.wav")
+        model.trashItem = { file in
+            let attempt = attempts.withLock { $0 += 1; return $0 }
+            if attempt == 1 { throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError) }
+            try FileManager.default.moveItem(at: file, to: destination)
+        }
+        model.requestFolderWriteAccess = { folder in
+            #expect(folder.id == folderID)
+            return music
+        }
+        let moved = try await model.moveTracksToTrash([track])
+        #expect(moved == 1 && attempts.withLock { $0 } == 2)
+        #expect(FileManager.default.fileExists(atPath: destination.path))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(model.totalCount == 0 && model.folders.first?.id == folderID)
+    }
+
+    @MainActor @Test func duplicateBatchTrashKeepsRetainedFileAndFinishesAllSelectedFiles() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        for index in 0..<3 {
+            try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("copy-\(index).wav"))
+        }
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let repository = try LibraryRepository(path: storage.appendingPathComponent("Library.sqlite").path)
+        let candidates = model.tracks.map { original in
+            var track = original; track.title = "Duplicate"; track.artist = "Artist"; track.duration = 180
+            return track
+        }
+        try await repository.saveTracks(candidates)
+        await model.reload()
+        let chosen = Set(candidates.prefix(2).map(\.id))
+        let retained = try #require(candidates.last)
+        model.trashItem = { file in
+            try FileManager.default.moveItem(at: file, to: temporary.appendingPathComponent(file.lastPathComponent))
+        }
+        let moved = try await model.moveSelectedDuplicatesToTrash(ids: chosen)
+        #expect(moved == 2 && model.totalCount == 1)
+        #expect(model.tracks.first?.id == retained.id)
+        #expect(FileManager.default.fileExists(atPath: music.appendingPathComponent(retained.relativePath).path))
+    }
+
+    @MainActor @Test func trashPermissionClassificationDoesNotRetryMissingOrOtherFailures() {
+        #expect(LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)))
+        #expect(!LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)))
+        #expect(!LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError)))
+    }
+
     @Test func automaticDuplicateSelectionKeepsOneBestCopyPerGroup() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -636,6 +700,72 @@ extension LibraryTests {
         #expect(try await repository.page(limit: 50_500).tracks.count == 50_001)
         #expect(try await repository.collectionPage(limit: 50).summary.songs == 50_001)
         #expect(try await repository.page(search: "Track 49999").count == 1)
+    }
+
+    @Test func suggestionsSearchTheIndexAndExcludeHiddenTracks() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let template = try #require(try await repository.page().tracks.first)
+        let tracks = (0..<600).map { index in
+            var track = template
+            track.id = "suggestion-\(index)"; track.relativePath = "\(index).wav"
+            track.title = "Beacon Song \(index)"; track.artist = "Beacon Artist"
+            track.albumArtist = track.artist; track.album = "Beacon Album"
+            return track
+        }
+        try await repository.saveTracks(tracks)
+        let results = try await repository.searchSuggestions(for: "Beac")
+        #expect(results.contains(.artist("Beacon Artist")))
+        #expect(results.contains(.album(title: "Beacon Album", artist: "Beacon Artist")))
+        #expect(results.filter { if case .song = $0 { true } else { false } }.count == 5)
+        let exact = try await repository.searchSuggestions(for: "Beacon Song 599", scope: .title)
+        #expect(exact.contains(.song(tracks[599])))
+        try await repository.removeTracksFromLibrary(ids: [tracks[599].id])
+        #expect(try await repository.searchSuggestions(for: "Beacon Song 599", scope: .title).isEmpty)
+        #expect(try await repository.searchSuggestions(for: "   ").isEmpty)
+        #expect(try await repository.searchSuggestions(for: "\" OR *").isEmpty)
+    }
+
+    @MainActor @Test func modelPagesPastFiveThousandAndResetsForSearch() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let template = try #require(model.tracks.first)
+        let repository = try LibraryRepository(path: storage.appendingPathComponent("Library.sqlite").path)
+        let synthetic = (0..<5201).map { index in
+            var track = template
+            track.id = "page-\(index)"; track.relativePath = "\(index).wav"
+            track.title = String(format: "Synthetic %05d", index)
+            return track
+        }
+        try await repository.saveTracks(synthetic)
+        await model.reload(resetLimit: true)
+        #expect(model.tracks.count == 500 && model.totalCount == 5202)
+        for _ in 0..<11 { await model.loadMore() }
+        #expect(model.tracks.count == 5202)
+        #expect(Set(model.tracks.map(\.id)).count == 5202)
+        #expect(model.tracks.contains { $0.id == "page-5200" })
+        let complete = model.tracks
+        await model.loadMore()
+        #expect(model.tracks == complete)
+        model.search = "Synthetic 05200"
+        await model.reload(resetLimit: true)
+        #expect(model.totalCount == 1 && model.tracks.map(\.id) == ["page-5200"])
+        model.search = ""
+        await model.reload(resetLimit: true)
+        #expect(model.tracks.count == 500)
+        await model.loadMore()
+        #expect(model.tracks.count == 1000)
     }
 
     @Test func homeOverviewUsesWholeLibraryAndDistinctAlbumsAndExcludesHiddenSongs() async throws {
