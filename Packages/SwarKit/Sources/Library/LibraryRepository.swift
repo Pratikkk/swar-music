@@ -191,7 +191,7 @@ public actor LibraryRepository {
         }
     }
 
-    public func page(search: String = "", limit: Int = 500, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all) throws -> LibraryPage {
+    public func page(search: String = "", limit: Int = 500, offset: Int = 0, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all) throws -> LibraryPage {
         try Task.checkCancellation()
         let query = TrackSearchQuery(search)
         let pattern = query.expression(scope: searchScope)
@@ -201,9 +201,9 @@ public actor LibraryRepository {
             let condition = " WHERE " + visible + (query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
             var arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0
-            arguments += [max(1, limit)]
+            arguments += [max(1, limit), max(0, offset)]
             let order = (recentFirst ? TrackSortOrder.recentlyAdded : sortOrder).sqlOrder(reversed: recentFirst ? false : reversed)
-            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: arguments)
+            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ? OFFSET ?", arguments: arguments)
             let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL AND isMissing = 0 AND " + visible) ?? 0
             return LibraryPage(tracks: tracks, count: count, unreadableCount: unreadable)
         }
@@ -399,6 +399,31 @@ public actor LibraryRepository {
             try db.execute(sql: "INSERT INTO track_metadata(trackID, originalJSON, editsJSON) VALUES (?, ?, ?) ON CONFLICT(trackID) DO UPDATE SET editsJSON = excluded.editsJSON", arguments: [trackID, original, encoded])
             edits.apply(to: &track)
             try track.update(db)
+        }
+    }
+
+    /// Applies all changes in one SQLite transaction, or rolls everything back.
+    /// Validates the entire selection before touching any database row.
+    public func bulkUpdateMetadata(_ updates: [(id: String, metadata: TrackMetadata)]) throws {
+        guard !updates.isEmpty else { throw LibraryFailure("Select songs to edit.") }
+        guard Set(updates.map(\.id)).count == updates.count else {
+            throw LibraryFailure("The selection contains duplicate song IDs.")
+        }
+        let validated = try updates.map { (id: $0.id, metadata: try $0.metadata.validated()) }
+        try database.write { db in
+            for entry in validated {
+                guard var track = try LibraryTrack.fetchOne(db, key: entry.id),
+                      try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM track_preferences WHERE trackID = ? AND isHidden = 1", arguments: [entry.id]) == 0 else {
+                    throw LibraryFailure("A selected song is no longer available. Refresh the list.")
+                }
+                let original = try Data.fetchOne(db, sql: "SELECT originalJSON FROM track_metadata WHERE trackID = ?", arguments: [entry.id])
+                    ?? JSONEncoder().encode(TrackMetadata(track: track))
+                let encoded = try JSONEncoder().encode(entry.metadata)
+                try db.execute(sql: "INSERT INTO track_metadata(trackID, originalJSON, editsJSON) VALUES (?, ?, ?) ON CONFLICT(trackID) DO UPDATE SET editsJSON = excluded.editsJSON",
+                    arguments: [entry.id, original, encoded])
+                entry.metadata.apply(to: &track)
+                try track.update(db)
+            }
         }
     }
 

@@ -198,6 +198,102 @@ struct LibraryTests {
         #expect(model.tracks.first?.id == song.id)
     }
 
+    @MainActor @Test func trashRetriesAfterLegacyFolderWriteAuthorization() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let file = music.appendingPathComponent("candidate.wav")
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: file)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let track = try #require(model.tracks.first)
+        let folderID = try #require(model.folders.first?.id)
+        let attempts = OSAllocatedUnfairLock(initialState: 0)
+        let destination = temporary.appendingPathComponent("TestTrash.wav")
+        model.trashItem = { file in
+            let attempt = attempts.withLock { $0 += 1; return $0 }
+            if attempt == 1 { throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError) }
+            try FileManager.default.moveItem(at: file, to: destination)
+            return destination
+        }
+        model.requestFolderWriteAccess = { folder in
+            #expect(folder.id == folderID)
+            return music
+        }
+        let moved = try await model.moveTracksToTrash([track])
+        #expect(moved == 1 && attempts.withLock { $0 } == 2)
+        #expect(FileManager.default.fileExists(atPath: destination.path))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(model.totalCount == 0 && model.folders.first?.id == folderID)
+    }
+
+    @MainActor @Test func duplicateBatchTrashKeepsRetainedFileAndFinishesAllSelectedFiles() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        for index in 0..<3 {
+            try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("copy-\(index).wav"))
+        }
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let repository = try LibraryRepository(path: storage.appendingPathComponent("Library.sqlite").path)
+        let candidates = model.tracks.map { original in
+            var track = original; track.title = "Duplicate"; track.artist = "Artist"; track.duration = 180
+            return track
+        }
+        try await repository.saveTracks(candidates)
+        await model.reload()
+        let chosen = Set(candidates.prefix(2).map(\.id))
+        let retained = try #require(candidates.last)
+        model.trashItem = { file in
+            let destination = temporary.appendingPathComponent(file.lastPathComponent)
+            try FileManager.default.moveItem(at: file, to: destination)
+            return destination
+        }
+        let moved = try await model.moveSelectedDuplicatesToTrash(ids: chosen)
+        #expect(moved == 2 && model.totalCount == 1)
+        #expect(model.tracks.first?.id == retained.id)
+        #expect(FileManager.default.fileExists(atPath: music.appendingPathComponent(retained.relativePath).path))
+    }
+
+    @MainActor @Test func albumTrashRemovesAvailableFileAndStaleMissingEntry() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        for name in ["a-available.wav", "z-missing.wav"] {
+            try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent(name))
+        }
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let album = model.tracks
+        try FileManager.default.removeItem(at: music.appendingPathComponent("z-missing.wav"))
+        // Marking a file missing during a scan must not stop whole-album cleanup.
+        let repository = try LibraryRepository(path: storage.appendingPathComponent("Library.sqlite").path)
+        let folder = try #require(model.folders.first)
+        try await repository.reconcile(folderID: folder.id, seen: ["a-available.wav"])
+        let destination = temporary.appendingPathComponent("TestTrash.wav")
+        model.trashItem = { file in
+            try FileManager.default.moveItem(at: file, to: destination)
+            return destination
+        }
+        let moved = try await model.moveAlbumToTrash(album)
+        #expect(moved == 1)
+        #expect(FileManager.default.fileExists(atPath: destination.path))
+        #expect(model.totalCount == 0)
+        #expect(try await repository.trackPreferences().hiddenCount == 2)
+    }
+
+    @MainActor @Test func trashPermissionClassificationDoesNotRetryMissingOrOtherFailures() {
+        #expect(LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)))
+        #expect(!LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)))
+        #expect(!LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError)))
+    }
+
     @Test func automaticDuplicateSelectionKeepsOneBestCopyPerGroup() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -248,6 +344,161 @@ struct LibraryTests {
             Issue.record("A missing source file must fail without mutating the library.")
         } catch { }
         #expect(model.totalCount == 1)
+    }
+
+    @Test func exactDuplicateHashingDistinguishesEqualAndDifferentContent() async throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let first = temporary.appendingPathComponent("one.bin")
+        let equal = temporary.appendingPathComponent("two.bin")
+        let changed = temporary.appendingPathComponent("three.bin")
+        let payload = Data(repeating: 0xA7, count: 1_100_000)
+        try payload.write(to: first)
+        try payload.write(to: equal)
+        var different = payload
+        different[different.count - 1] ^= 1
+        try different.write(to: changed)
+        #expect(try await LibraryModel.filesAreByteIdentical(first, equal))
+        #expect(!(try await LibraryModel.filesAreByteIdentical(first, changed)))
+    }
+
+    @MainActor @Test func exactDuplicateScanSelectsOnlyByteIdenticalExtraCopies() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        let first = music.appendingPathComponent("exact-one.wav")
+        let second = music.appendingPathComponent("exact-two.wav")
+        let different = music.appendingPathComponent("different.wav")
+        try FileManager.default.copyItem(at: source, to: first)
+        try FileManager.default.copyItem(at: source, to: second)
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("96000-24.flac"), to: different)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        #expect(model.tracks.count == 3)
+        let selected = try await model.selectVerifiedExactDuplicates(model.tracks)
+        #expect(selected.count == 1)
+        #expect(model.exactDuplicateVerifiedGroups == 1)
+        #expect(FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+        #expect(FileManager.default.fileExists(atPath: different.path))
+    }
+
+    @MainActor @Test func batchTrashRequiresAnAccessibleRetainedCopy() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let first = music.appendingPathComponent("retained-copy.wav")
+        let second = music.appendingPathComponent("selected-copy.wav")
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: first)
+        try FileManager.default.copyItem(at: source, to: second)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        for track in model.tracks {
+            var metadata = TrackMetadata(track: track)
+            metadata.title = "Same Title"
+            metadata.artist = "Same Artist"
+            metadata.albumArtist = "Same Artist"
+            metadata.album = "Same Album"
+            try await model.updateMetadata(track, metadata: metadata)
+        }
+        let candidates = try await model.collectionPage(filter: .duplicates, search: "", scope: .all, limit: 200)
+        #expect(candidates.count == 2)
+        let selected = try #require(candidates.tracks.first(where: { $0.relativePath == second.lastPathComponent }))
+        // Deliberately leave the database stale to test the keep-one preflight.
+        try FileManager.default.removeItem(at: first)
+        do {
+            _ = try await model.moveSelectedDuplicatesToTrash(ids: [selected.id])
+            Issue.record("Cleanup must refuse an inaccessible retained copy.")
+        } catch { }
+        #expect(FileManager.default.fileExists(atPath: second.path))
+    }
+
+    @MainActor @Test func invalidBulkMetadataRollsBackEveryTrack() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("rollback-one.wav"))
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("rollback-two.wav"))
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let before = model.tracks
+        #expect(before.count == 2)
+        do {
+            try await model.bulkUpdateMetadata(before, patch: BulkMetadataPatch(album: "New Album", discNumber: 0))
+            Issue.record("Invalid disc number must be rejected.")
+        } catch { }
+        let after = try await model.collectionPage(filter: .all, search: "", scope: .all, limit: 200)
+        for track in after.tracks {
+            let original = try #require(before.first(where: { $0.id == track.id }))
+            #expect(track.album == original.album)
+            #expect(track.discNumber == original.discNumber)
+        }
+        #expect(!model.canUndoBulkMetadata)
+    }
+
+    @MainActor @Test func bulkMetadataEditingPreservesUncheckedFieldsAndSupportsUndo() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("bulk-a.wav"))
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("bulk-b.wav"))
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let before = model.tracks
+        #expect(before.count == 2)
+        let patch = BulkMetadataPatch(album: "New Album", genre: "Ambient")
+        try await model.bulkUpdateMetadata(before, patch: patch)
+        let changed = try await model.collectionPage(filter: .all, search: "", scope: .all, limit: 200)
+        #expect(changed.tracks.count == 2)
+        #expect(changed.tracks.allSatisfy { $0.album == "New Album" && $0.genre == "Ambient" })
+        for track in changed.tracks {
+            let original = try #require(before.first(where: { $0.id == track.id }))
+            #expect(track.artist == original.artist)
+            #expect(track.title == original.title)
+        }
+        #expect(model.canUndoBulkMetadata)
+        try await model.undoLastBulkMetadataChange()
+        let undone = try await model.collectionPage(filter: .all, search: "", scope: .all, limit: 200)
+        for track in undone.tracks {
+            let original = try #require(before.first(where: { $0.id == track.id }))
+            #expect(track.album == original.album)
+            #expect(track.genre == original.genre)
+        }
+        #expect(!model.canUndoBulkMetadata)
+    }
+
+    @MainActor @Test func albumListeningPlanPreservesOrderAndCountsPlayableTracks() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("listen-one.wav"))
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("listen-two.wav"))
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let indexed = model.tracks
+        #expect(indexed.count == 2)
+        let plan = AlbumListeningPlan(tracks: indexed)
+        #expect(plan.playableTracks.map(\.id) == indexed.map(\.id))
+        #expect(plan.position(for: indexed[0].id) == 1)
+        #expect(plan.position(for: indexed[1].id) == 2)
+        #expect(plan.position(for: nil) == nil)
+        #expect(plan.duration >= 0)
+        var unavailable = indexed[1]
+        unavailable.isMissing = true
+        let playableOnly = AlbumListeningPlan(tracks: [indexed[0], unavailable])
+        #expect(playableOnly.playableTracks.count == 1)
+        #expect(playableOnly.position(for: unavailable.id) == nil)
     }
 
     @MainActor @Test func batchTrashRefusesSelectionContainingEveryCopy() async throws {
@@ -636,6 +887,72 @@ extension LibraryTests {
         #expect(try await repository.page(limit: 50_500).tracks.count == 50_001)
         #expect(try await repository.collectionPage(limit: 50).summary.songs == 50_001)
         #expect(try await repository.page(search: "Track 49999").count == 1)
+    }
+
+    @Test func suggestionsSearchTheIndexAndExcludeHiddenTracks() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        _ = try await LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs).scan(folder: folder, root: music)
+        let template = try #require(try await repository.page().tracks.first)
+        let tracks = (0..<600).map { index in
+            var track = template
+            track.id = "suggestion-\(index)"; track.relativePath = "\(index).wav"
+            track.title = "Beacon Song \(index)"; track.artist = "Beacon Artist"
+            track.albumArtist = track.artist; track.album = "Beacon Album"
+            return track
+        }
+        try await repository.saveTracks(tracks)
+        let results = try await repository.searchSuggestions(for: "Beac")
+        #expect(results.contains(.artist("Beacon Artist")))
+        #expect(results.contains(.album(title: "Beacon Album", artist: "Beacon Artist")))
+        #expect(results.filter { if case .song = $0 { true } else { false } }.count == 5)
+        let exact = try await repository.searchSuggestions(for: "Beacon Song 599", scope: .title)
+        #expect(exact.contains(.song(tracks[599])))
+        try await repository.removeTracksFromLibrary(ids: [tracks[599].id])
+        #expect(try await repository.searchSuggestions(for: "Beacon Song 599", scope: .title).isEmpty)
+        #expect(try await repository.searchSuggestions(for: "   ").isEmpty)
+        #expect(try await repository.searchSuggestions(for: "\" OR *").isEmpty)
+    }
+
+    @MainActor @Test func modelPagesPastFiveThousandAndResetsForSearch() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("song.wav"))
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let template = try #require(model.tracks.first)
+        let repository = try LibraryRepository(path: storage.appendingPathComponent("Library.sqlite").path)
+        let synthetic = (0..<5201).map { index in
+            var track = template
+            track.id = "page-\(index)"; track.relativePath = "\(index).wav"
+            track.title = String(format: "Synthetic %05d", index)
+            return track
+        }
+        try await repository.saveTracks(synthetic)
+        await model.reload(resetLimit: true)
+        #expect(model.tracks.count == 500 && model.totalCount == 5202)
+        for _ in 0..<11 { await model.loadMore() }
+        #expect(model.tracks.count == 5202)
+        #expect(Set(model.tracks.map(\.id)).count == 5202)
+        #expect(model.tracks.contains { $0.id == "page-5200" })
+        let complete = model.tracks
+        await model.loadMore()
+        #expect(model.tracks == complete)
+        model.search = "Synthetic 05200"
+        await model.reload(resetLimit: true)
+        #expect(model.totalCount == 1 && model.tracks.map(\.id) == ["page-5200"])
+        model.search = ""
+        await model.reload(resetLimit: true)
+        #expect(model.tracks.count == 500)
+        await model.loadMore()
+        #expect(model.tracks.count == 1000)
     }
 
     @Test func homeOverviewUsesWholeLibraryAndDistinctAlbumsAndExcludesHiddenSongs() async throws {

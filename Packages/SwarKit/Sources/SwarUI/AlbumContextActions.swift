@@ -12,7 +12,10 @@ private struct AlbumContextActions: ViewModifier {
     @Environment(\.libraryNavigation) private var navigation
     @State private var working = false
     @State private var creatingPlaylist = false
+    @State private var editAlbumTracks: [LibraryTrack] = []
+    @State private var showBulkEditor = false
     @State private var showTrashConfirmation = false
+    @State private var pendingTrashTracks: [LibraryTrack] = []
     @State private var name = ""
     @State private var error: String?
 
@@ -27,11 +30,14 @@ private struct AlbumContextActions: ViewModifier {
                 }
             }
             .contextMenu { items }
+            .sheet(isPresented: $showBulkEditor) {
+                BulkMetadataEditorView(tracks: editAlbumTracks, library: library)
+            }
             .alert("Move Album to Trash?", isPresented: $showTrashConfirmation) {
-                Button("Move to Trash", role: .destructive) { perform(.trash) }
+                Button("Move to Trash", role: .destructive) { confirmTrash() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Move all \(album.trackCount) songs in “\(album.title)” to macOS Trash? Audio files will be removed from their folders and their library and playlist entries removed. If one file fails, previously moved files remain recoverable in Trash.")
+                Text("Move \(pendingTrashTracks.count) indexed songs (\(ByteCountFormatter.string(fromByteCount: pendingTrashTracks.reduce(Int64(0)) { $0 + max(0, $1.fileSize) }, countStyle: .file))) from “\(album.title)” to macOS Trash? This selection was captured before confirmation. Unavailable song entries will be removed from the library after existing files are moved. Previously moved files remain recoverable in Trash if a later file fails.")
             }
             .alert("New Playlist", isPresented: $creatingPlaylist) {
                 TextField("Playlist Name", text: $name)
@@ -64,9 +70,11 @@ private struct AlbumContextActions: ViewModifier {
             }
         }.disabled(working || !library.isReady)
         Divider()
+        Button("Edit Album Metadata…", systemImage: "pencil") { prepareBulkEdit() }
+            .disabled(working || !library.isReady)
         Button("Show in Finder", systemImage: "folder") { perform(.reveal) }.disabled(working)
         Divider()
-        Button("Move Album to Trash…", systemImage: "trash", role: .destructive) { showTrashConfirmation = true }
+        Button("Move Album to Trash…", systemImage: "trash", role: .destructive) { prepareTrash() }
             .disabled(working || !library.isReady || library.isScanning || library.isRecovering || album.trackCount == 0)
         Button("Copy Album Details", systemImage: "doc.on.doc") {
             NSPasteboard.general.clearContents()
@@ -74,7 +82,49 @@ private struct AlbumContextActions: ViewModifier {
         }
     }
 
-    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal, trash }
+    private func prepareTrash() {
+        guard !working else { return }
+        working = true
+        Task {
+            defer { working = false }
+            let candidates = await library.tracks(in: album)
+            guard !candidates.isEmpty else {
+                error = "There are no available songs in this album."
+                return
+            }
+            pendingTrashTracks = candidates
+            showTrashConfirmation = true
+        }
+    }
+
+    private func confirmTrash() {
+        guard !working, !pendingTrashTracks.isEmpty else { return }
+        let capturedTracks = pendingTrashTracks
+        pendingTrashTracks = []
+        working = true
+        Task {
+            defer { working = false }
+            do { _ = try await library.moveAlbumToTrash(capturedTracks) }
+            catch { self.error = error.localizedDescription }
+        }
+    }
+
+    private func prepareBulkEdit() {
+        guard !working else { return }
+        working = true
+        Task {
+            defer { working = false }
+            let tracks = await library.tracks(in: album)
+            guard !tracks.isEmpty else {
+                error = "No editable tracks were found in this album."
+                return
+            }
+            editAlbumTracks = tracks
+            showBulkEditor = true
+        }
+    }
+
+    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal }
     private func perform(_ action: Action) {
         guard !working else { return }
         working = true
@@ -94,8 +144,6 @@ private struct AlbumContextActions: ViewModifier {
                     if let playlist = await library.createPlaylist(name: name) { await library.addTracks(tracks, to: playlist) }
                 case .reveal:
                     NSWorkspace.shared.activateFileViewerSelecting(try tracks.map { try library.location(for: $0).file })
-                case .trash:
-                    _ = try await library.moveTracksToTrash(tracks)
                 }
             } catch { self.error = error.localizedDescription }
         }
