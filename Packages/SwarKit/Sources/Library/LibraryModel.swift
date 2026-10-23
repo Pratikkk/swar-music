@@ -853,9 +853,10 @@ public final class LibraryModel {
     public func previewPlaylistImport(from url: URL) async throws -> PlaylistImportPreview {
         guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
         let roots = scopes.mapValues(\.url)
+        let relocated = try await repository.relocatedTrackIDs()
         let task = Task.detached(priority: .utility) {
             let entries = try PlaylistFile.read(url)
-            return (entries, try PlaylistFile.trackIDs(for: entries, roots: roots))
+            return (entries, try PlaylistFile.trackIDs(for: entries, roots: roots, relocatedIDs: relocated))
         }
         let (entries, ids) = try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
         try Task.checkCancellation()
@@ -879,15 +880,16 @@ public final class LibraryModel {
 
     public func queuePlaylistDraft(urls: [URL]) async throws -> QueuePlaylistDraft {
         guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
-        let roots = scopes.map { ($0.key, $0.value.url.standardizedFileURL.pathComponents) }
-        let ids = urls.compactMap { url -> String? in
-            guard url.isFileURL else { return nil }
-            let path = url.standardizedFileURL.pathComponents
-            for (folderID, root) in roots where path.count > root.count && path.starts(with: root) {
-                return folderID + ":" + path.dropFirst(root.count).joined(separator: "/")
+        let access = scopes
+        let relocated = try await repository.relocatedTrackIDs()
+        let task = Task.detached(priority: .utility) {
+            try withExtendedLifetime(access) {
+                let entries = urls.enumerated().map { PlaylistFileEntry(id: $0.offset, source: $0.element.path, url: $0.element) }
+                return try PlaylistFile.trackIDs(for: entries, roots: access.mapValues(\.url), relocatedIDs: relocated).compactMap { $0 }
             }
-            return nil
         }
+        let ids = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+        guard !isShutDown, !Task.isCancelled else { throw CancellationError() }
         return try await repository.queuePlaylistDraft(trackIDs: ids, sourceCount: urls.count)
     }
 

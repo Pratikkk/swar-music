@@ -424,12 +424,11 @@ public final class Player {
             outputNotice = "No output is open for exclusive mode."
             return
         }
-        await routeOutput(target, pause: false, recover: true, exclusive: enabled)
-        guard !isShutDown else { return }
-        exclusiveOutput = enabled
+        await routeOutput(target, pause: false, exclusive: enabled)
     }
 
-    private func routeOutput(_ id: UInt32, pause: Bool, recover: Bool = false, exclusive: Bool = false) async {
+    private func routeOutput(_ id: UInt32, pause: Bool, recover: Bool = false, exclusive requestedExclusive: Bool? = nil) async {
+        let exclusive = requestedExclusive ?? exclusiveOutput
         guard !isBusy, !isShutDown, !isSystemSleeping else { return }
         isBusy = true; generation += 1
         pendingVolume = nil
@@ -457,6 +456,7 @@ public final class Player {
                 }
             } else { snapshot = try await engine.selectOutput(id, pause: pause, exclusive: exclusive) }
             guard !isShutDown else { return }
+            exclusiveOutput = exclusive
             routedOutputID = id; routedOutputUID = audioOutputs.devices.first { $0.id == id }?.uid
             outputNotice = resumeWasCancelled ? "Output changed. Playback paused." : nil
             outputRecoveryNeeded = false; wakeRecoveryPending = false; recoveryPolicy.succeeded()
@@ -1029,13 +1029,13 @@ public final class Player {
 
     private func updateFormat(_ snapshot: PlaybackSnapshot) {
         guard describedSource != snapshot.source || describedOutput != snapshot.output ||
-                describedExclusive != exclusiveOutput ||
+                describedExclusive != snapshot.isExclusive ||
                 (formatInfo != nil && formatInfo?.underrunFrames != snapshot.underrunFrames) ||
                 formatInfo?.clientPCM?.sampleRate != snapshot.clientPCM?.sampleRate ||
                 (formatInfo == nil && snapshot.source != nil) else { return }
         describedSource = snapshot.source
         describedOutput = snapshot.output
-        describedExclusive = exclusiveOutput
+        describedExclusive = snapshot.isExclusive
         sourceDescription = snapshot.source?.description
         outputDescription = snapshot.output?.text
         let nextInfo = snapshot.source.map { source in
@@ -1059,7 +1059,7 @@ public final class Player {
             return FormatClassifier.describe(source: source, path: SignalPath(
                 output: output, clientPCM: client,
                 underrunFrames: snapshot.underrunFrames,
-                isExclusive: exclusiveOutput, transport: transport))
+                isExclusive: snapshot.isExclusive, transport: transport))
         }
         if formatInfo != nextInfo { formatInfo = nextInfo }
     }

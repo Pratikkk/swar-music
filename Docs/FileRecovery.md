@@ -54,3 +54,9 @@ its bundled codec decode/seek/EOF check. Installed build 100 was checked for the
 Missing Files filter and empty state, folder recovery sheet, native folder picker,
 and cancellation. The real collection remained at 328 songs and 209 albums; no
 files were moved or recovery mutations applied during native UI review.
+
+Playlist import and Save Queue use the current location-to-track-ID mapping after
+reconnection. Renaming a song preserves its identity; a different song later using
+the old path resolves to its own identity. Both paths continue matching correctly
+after relaunch. Queue path resolution runs away from the UI thread and retains
+folder access until it finishes.

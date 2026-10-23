@@ -1,4 +1,5 @@
 import AudioEngine
+import Decoding
 import Foundation
 import Player
 import Testing
@@ -8,6 +9,59 @@ struct OutputRoutingTests {
     private let speakers = AudioOutputDevice(id: 1, uid: "speakers", name: "Speakers")
     private let dac = AudioOutputDevice(id: 2, uid: "dac", name: "USB DAC")
     private func preferences() -> UserDefaults { UserDefaults(suiteName: "OutputRoutingTests." + UUID().uuidString)! }
+
+    @Test func failedExclusiveRequestsDoNotChangeTheSetting() async {
+        let engine = RoutingEngine()
+        let player = Player(engine: engine,
+            outputsReader: RoutingOutputs(AudioOutputs(devices: [speakers, dac], defaultID: 1)),
+            outputPreferences: preferences())
+        defer { player.shutdown() }
+        await player.open(URL(fileURLWithPath: "/test/song.wav"))
+        await engine.fail(true)
+        await player.setExclusiveOutput(true)
+        #expect(!player.exclusiveOutput && player.outputNotice != nil)
+        await engine.fail(false)
+        await player.setExclusiveOutput(true)
+        #expect(player.exclusiveOutput && player.outputNotice == nil)
+        await engine.fail(true)
+        await player.setExclusiveOutput(false)
+        #expect(player.exclusiveOutput && player.outputNotice != nil)
+    }
+
+    @Test func exclusiveChoiceSurvivesRoutingRecoveryAndNewSongs() async {
+        let engine = RoutingEngine()
+        let reader = RoutingOutputs(AudioOutputs(devices: [speakers, dac], defaultID: 1))
+        let player = Player(engine: engine, outputsReader: reader, outputPreferences: preferences())
+        defer { player.shutdown() }
+        await player.open(URL(fileURLWithPath: "/test/first.wav"))
+        await player.setExclusiveOutput(true)
+        await player.selectOutput(uid: "dac")
+        #expect(await engine.exclusiveRequests == [true, true])
+        await player.open(URL(fileURLWithPath: "/test/second.wav"))
+        #expect(await engine.exclusive)
+        await reader.change(AudioOutputs(devices: [speakers], defaultID: 1))
+        await player.refreshOutputs(force: true)
+        #expect(await engine.exclusiveRequests.last == true)
+        #expect(player.exclusiveOutput)
+        await player.setExclusiveOutput(false)
+        #expect(!player.exclusiveOutput)
+        #expect(await engine.exclusiveRequests.last == false)
+    }
+
+    @Test func signalInspectorUsesReportedOwnershipInsteadOfTheSetting() async {
+        let engine = RoutingEngine()
+        let player = Player(engine: engine,
+            outputsReader: RoutingOutputs(AudioOutputs(devices: [speakers], defaultID: 1)),
+            outputPreferences: preferences())
+        defer { player.shutdown() }
+        await player.open(URL(fileURLWithPath: "/test/song.wav"))
+        await player.setExclusiveOutput(true)
+        #expect(player.formatInfo?.isExclusive == true)
+        await engine.reportOwnership(false)
+        await player.refresh()
+        #expect(player.exclusiveOutput)
+        #expect(player.formatInfo?.isExclusive == false)
+    }
 
     @Test func selectionPersistsUIDAndDefaultClearsPreferenceWithoutChangingSong() async {
         let prefs = preferences(), engine = RoutingEngine()
@@ -139,6 +193,10 @@ private actor RoutingEngine: PlaybackDriving {
     var opened = false
     var failing = false
     var dropSession = false
+    private(set) var exclusive = false
+    private var reportedOwnership: Bool?
+    func reportOwnership(_ value: Bool) { reportedOwnership = value }
+    private(set) var exclusiveRequests: [Bool] = []
     private(set) var selected: [UInt32] = []
     private(set) var openedOutput: UInt32?
     func fail(_ value: Bool, dropSession: Bool = false) { failing = value; if value { self.dropSession = dropSession } }
@@ -151,12 +209,16 @@ private actor RoutingEngine: PlaybackDriving {
             if dropSession { opened = false; playing = false }
             throw CocoaError(.featureUnsupported)
         }
+        self.exclusive = exclusive
+        exclusiveRequests.append(exclusive)
         if dropSession { opened = true }
         if let id { selected.append(id) }
         if pause { playing = false }
         return value()
     }
     func snapshot() -> PlaybackSnapshot { value() }
-    private func value() -> PlaybackSnapshot { PlaybackSnapshot(duration: opened ? 180 : 0, position: position, isPlaying: playing) }
+    private func value() -> PlaybackSnapshot { PlaybackSnapshot(source: opened ? SourceFormat(codec: "PCM", sampleRate: 44_100, bitDepth: 16, channels: 2, isLossless: true) : nil,
+        duration: opened ? 180 : 0, position: position, isPlaying: playing,
+        isExclusive: (reportedOwnership ?? exclusive) && opened) }
     nonisolated func shutdown() {}
 }

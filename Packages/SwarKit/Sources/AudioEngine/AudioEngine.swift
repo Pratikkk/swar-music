@@ -34,15 +34,17 @@ public struct PlaybackSnapshot: Sendable {
     public let playbackToken: UUID?
     public let continuationID: UUID?
     public let needsOutputRecovery: Bool
+    public let isExclusive: Bool
 
     public init(source: SourceFormat? = nil, output: OutputDescription? = nil, clientPCM: PlaybackPCMFormat? = nil,
                 duration: Double = 0, position: Double = 0, isPlaying: Bool = false,
-                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil, needsOutputRecovery: Bool = false) {
+                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil, needsOutputRecovery: Bool = false, isExclusive: Bool = false) {
         self.source = source; self.output = output; self.clientPCM = clientPCM; self.duration = duration
         self.position = position; self.isPlaying = isPlaying
         self.underrunFrames = underrunFrames; self.error = error; self.didFinish = didFinish
         self.playbackToken = playbackToken; self.continuationID = continuationID
         self.needsOutputRecovery = needsOutputRecovery
+        self.isExclusive = isExclusive
     }
 }
 
@@ -120,7 +122,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     private static func open(_ url: URL, on state: EngineState) throws -> PlaybackSnapshot {
         state.closeSession()
         do {
-            state.session = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: state.deviceID)
+            state.session = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: state.deviceID, exclusive: state.exclusiveOutput)
             state.url = url
             state.error = nil; state.needsRecovery = false
             return state.snapshot()
@@ -215,14 +217,16 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                         try replacement.seek(recovery.position)
                         if resumeOverride == true { try replacement.play() }
                         state.routeRecovery = nil; state.error = nil; state.needsRecovery = false
+                        state.exclusiveOutput = exclusive
                     } catch {
                         state.closeSession(); state.routeRecovery = recovery; state.needsRecovery = true
                         throw error
                     }
                 }
+                state.exclusiveOutput = exclusive
                 return state.snapshot()
             }
-            if !force, session.device.id == deviceID, session.outputStatus.error == nil, state.error == nil {
+            if !force, state.exclusiveOutput == exclusive, session.device.id == deviceID, session.outputStatus.error == nil, state.error == nil {
                 state.error = nil; state.needsRecovery = false
                 if pause { try session.pause() }
                 state.deviceID = deviceID
@@ -244,6 +248,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 try replacement.seek(position)
                 if resume { try replacement.play() }
                 state.deviceID = deviceID
+                state.exclusiveOutput = exclusive
                 return state.snapshot()
             } catch {
                 let failure = error
@@ -251,7 +256,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 // Best-effort rollback retains the song and position on an incompatible output.
                 do {
                     guard !force else { throw failure }
-                    let old = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: previous, entryID: entryID, token: playbackToken)
+                    let old = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: previous, entryID: entryID, token: playbackToken, exclusive: state.exclusiveOutput)
                     state.session = old; state.url = url
                     try old.seek(position)
                     if resume { try old.play() }
@@ -325,6 +330,7 @@ private final class EngineState: @unchecked Sendable {
     let preparer = ContinuationPreparer()
     var preparation = UUID()
     var deviceID: UInt32?
+    var exclusiveOutput = false
     var url: URL?
     var routeRecovery: (url: URL, position: Double, entryID: UUID?, token: UUID)?
     var error: String?
@@ -383,7 +389,8 @@ private final class EngineState: @unchecked Sendable {
                                 underrunFrames: session.flatMap { $0.ring.map(swar_ring_underruns) } ?? 0,
                                 error: error, didFinish: session?.didFinish ?? false,
                                 playbackToken: audible?.segment.token, continuationID: audible?.segment.entryID,
-                                needsOutputRecovery: needsRecovery || session?.outputStatus.error != nil)
+                                needsOutputRecovery: needsRecovery || session?.outputStatus.error != nil,
+                                isExclusive: session?.exclusive ?? false)
     }
 
     func closeSession() { preparer.invalidate(); preparation = UUID(); session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil; needsRecovery = false }
@@ -404,7 +411,10 @@ private final class OutputSession {
     var duration: Double { pcm.duration }
     var position: Double { pcm.position }
 
+    let exclusive: Bool
+
     init(decoder: any AudioDecoding, url: URL, deviceID: UInt32? = nil, entryID: UUID? = nil, token: UUID? = nil, exclusive: Bool = false) throws {
+        self.exclusive = exclusive
         pcm = try GaplessPCM(decoder: decoder, url: url, entryID: entryID, token: token)
         device = try OutputDevice(id: deviceID)
         do {
