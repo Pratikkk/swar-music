@@ -259,6 +259,35 @@ struct LibraryTests {
         #expect(FileManager.default.fileExists(atPath: music.appendingPathComponent(retained.relativePath).path))
     }
 
+    @MainActor @Test func albumTrashRemovesAvailableFileAndStaleMissingEntry() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        for name in ["a-available.wav", "z-missing.wav"] {
+            try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent(name))
+        }
+        let storage = temporary.appendingPathComponent("Store")
+        let model = LibraryModel(storageDirectory: storage, codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let album = model.tracks
+        try FileManager.default.removeItem(at: music.appendingPathComponent("z-missing.wav"))
+        // Marking a file missing during a scan must not stop whole-album cleanup.
+        let repository = try LibraryRepository(path: storage.appendingPathComponent("Library.sqlite").path)
+        let folder = try #require(model.folders.first)
+        try await repository.reconcile(folderID: folder.id, seen: ["a-available.wav"])
+        let destination = temporary.appendingPathComponent("TestTrash.wav")
+        model.trashItem = { file in
+            try FileManager.default.moveItem(at: file, to: destination)
+            return destination
+        }
+        let moved = try await model.moveAlbumToTrash(album)
+        #expect(moved == 1)
+        #expect(FileManager.default.fileExists(atPath: destination.path))
+        #expect(model.totalCount == 0)
+        #expect(try await repository.trackPreferences().hiddenCount == 2)
+    }
+
     @MainActor @Test func trashPermissionClassificationDoesNotRetryMissingOrOtherFailures() {
         #expect(LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)))
         #expect(!LibraryModel.isTrashPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)))
@@ -405,7 +434,7 @@ struct LibraryTests {
             try await model.bulkUpdateMetadata(before, patch: BulkMetadataPatch(album: "New Album", discNumber: 0))
             Issue.record("Invalid disc number must be rejected.")
         } catch { }
-        let after = try await model.collectionPage(filter: .all, limit: 200)
+        let after = try await model.collectionPage(filter: .all, search: "", scope: .all, limit: 200)
         for track in after.tracks {
             let original = try #require(before.first(where: { $0.id == track.id }))
             #expect(track.album == original.album)
@@ -428,7 +457,7 @@ struct LibraryTests {
         #expect(before.count == 2)
         let patch = BulkMetadataPatch(album: "New Album", genre: "Ambient")
         try await model.bulkUpdateMetadata(before, patch: patch)
-        let changed = try await model.collectionPage(filter: .all, limit: 200)
+        let changed = try await model.collectionPage(filter: .all, search: "", scope: .all, limit: 200)
         #expect(changed.tracks.count == 2)
         #expect(changed.tracks.allSatisfy { $0.album == "New Album" && $0.genre == "Ambient" })
         for track in changed.tracks {
@@ -438,7 +467,7 @@ struct LibraryTests {
         }
         #expect(model.canUndoBulkMetadata)
         try await model.undoLastBulkMetadataChange()
-        let undone = try await model.collectionPage(filter: .all, limit: 200)
+        let undone = try await model.collectionPage(filter: .all, search: "", scope: .all, limit: 200)
         for track in undone.tracks {
             let original = try #require(before.first(where: { $0.id == track.id }))
             #expect(track.album == original.album)

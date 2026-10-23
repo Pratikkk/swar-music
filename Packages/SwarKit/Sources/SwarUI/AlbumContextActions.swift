@@ -37,7 +37,7 @@ private struct AlbumContextActions: ViewModifier {
                 Button("Move to Trash", role: .destructive) { confirmTrash() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Move \(pendingTrashTracks.count) indexed songs (\(ByteCountFormatter.string(fromByteCount: pendingTrashTracks.reduce(Int64(0)) { $0 + max(0, $1.fileSize) }, countStyle: .file))) from “\(album.title)” to macOS Trash? This selection was captured before confirmation. Previously moved files remain recoverable in Trash if a later file fails.")
+                Text("Move \(pendingTrashTracks.count) indexed songs (\(ByteCountFormatter.string(fromByteCount: pendingTrashTracks.reduce(Int64(0)) { $0 + max(0, $1.fileSize) }, countStyle: .file))) from “\(album.title)” to macOS Trash? This selection was captured before confirmation. Unavailable song entries will be removed from the library after existing files are moved. Previously moved files remain recoverable in Trash if a later file fails.")
             }
             .alert("New Playlist", isPresented: $creatingPlaylist) {
                 TextField("Playlist Name", text: $name)
@@ -104,7 +104,7 @@ private struct AlbumContextActions: ViewModifier {
         working = true
         Task {
             defer { working = false }
-            do { _ = try await library.moveTracksToTrash(capturedTracks) }
+            do { _ = try await library.moveAlbumToTrash(capturedTracks) }
             catch { self.error = error.localizedDescription }
         }
     }

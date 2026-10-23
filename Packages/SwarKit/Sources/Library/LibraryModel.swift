@@ -417,7 +417,7 @@ public final class LibraryModel {
                 let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true,
                       Int64(values.fileSize ?? -1) == track.fileSize,
-                      values.contentModificationDate == track.modifiedAt else {
+                      values.contentModificationDate?.timeIntervalSince1970 == track.modifiedAt.timeIntervalSince1970 else {
                     throw LibraryFailure("The song file changed or is not a regular file. Refresh the review.")
                 }
                 try Task.checkCancellation()
@@ -536,6 +536,10 @@ public final class LibraryModel {
     public func moveTracksToTrash(_ tracks: [LibraryTrack]) async throws -> Int {
         try beginTrashOperation()
         defer { finishTrashOperation() }
+        return try await moveTracksToTrashCore(tracks)
+    }
+
+    private func moveTracksToTrashCore(_ tracks: [LibraryTrack]) async throws -> Int {
         guard !tracks.isEmpty else { throw LibraryFailure("No songs selected.") }
         let unique = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var moved = 0
@@ -630,6 +634,67 @@ public final class LibraryModel {
     private func beginTrashOperation() throws {
         guard !trashOperationActive else { throw LibraryFailure("Another Trash operation is in progress.") }
         trashOperationActive = true
+    }
+
+    private nonisolated static func validatedTrashSource(relativePath: String, root: URL) throws -> URL {
+        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let file = root.appendingPathComponent(relativePath)
+        let canonicalFile = file.resolvingSymlinksInPath().standardizedFileURL
+        let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        guard file.isFileURL, parent.pathComponents.starts(with: canonicalRoot.pathComponents),
+              canonicalFile.pathComponents.count > canonicalRoot.pathComponents.count,
+              canonicalFile.pathComponents.starts(with: canonicalRoot.pathComponents) else {
+            throw LibraryFailure("The song file is outside its authorised library folder.")
+        }
+        let kind = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard kind.isRegularFile == true, kind.isSymbolicLink != true else {
+            throw LibraryFailure("The song path does not refer to an audio file.")
+        }
+        return file
+    }
+
+    /// An album may contain stale missing entries. Preflight every path before
+    /// moving anything; clean up unavailable entries only after available files succeed.
+    public func moveAlbumToTrash(_ tracks: [LibraryTrack]) async throws -> Int {
+        guard !tracks.isEmpty, !isShutDown, !isScanning, !isRecovering, let repository else {
+            throw LibraryFailure("Wait for the library to finish updating.")
+        }
+        try beginTrashOperation()
+        defer { finishTrashOperation() }
+        var available: [LibraryTrack] = []
+        var missing = Set<String>()
+        for id in Set(tracks.map(\.id)).sorted() {
+            try Task.checkCancellation()
+            guard let current = try await repository.visibleTrack(id: id) else { continue }
+            guard let selected = tracks.first(where: { $0.id == id }),
+                  selected.folderID == current.folderID, selected.relativePath == current.relativePath,
+                  selected.fileSize == current.fileSize, selected.modifiedAt == current.modifiedAt else {
+                throw LibraryFailure("The album changed since confirmation. Review it again.")
+            }
+            guard let access = scopes[current.folderID] else {
+                throw LibraryFailure("Reconnect the album’s music folder in Manage Library.")
+            }
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try withExtendedLifetime(access) {
+                        _ = try Self.validatedTrashSource(relativePath: current.relativePath, root: access.url)
+                    }
+                }.value
+                available.append(current)
+            } catch {
+                let failure = error as NSError
+                guard failure.domain == NSCocoaErrorDomain,
+                      [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(failure.code) else { throw error }
+                missing.insert(current.id)
+            }
+        }
+        let moved = available.isEmpty ? 0 : try await moveTracksToTrashCore(available)
+        if !missing.isEmpty {
+            try await repository.removeTracksFromLibrary(ids: missing)
+            trackActionsRevision += 1; overviewRevision += 1
+            await reload(); await reloadPlaylists()
+        }
+        return moved
     }
 
     private func finishTrashOperation() {
