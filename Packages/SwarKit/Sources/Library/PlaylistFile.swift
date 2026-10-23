@@ -65,14 +65,15 @@ public enum PlaylistFile {
     }
 
     /// Resolve aliases off the main actor; matching never falls back to ambiguous song titles.
-    static func trackIDs(for entries: [PlaylistFileEntry], roots: [String: URL]) throws -> [String?] {
+    static func trackIDs(for entries: [PlaylistFileEntry], roots: [String: URL], relocatedIDs: [String: String] = [:]) throws -> [String?] {
         let folders = roots.map { ($0.key, $0.value.resolvingSymlinksInPath().standardizedFileURL.pathComponents) }
         return try entries.enumerated().map { index, entry in
             if index.isMultiple(of: 256) { try Task.checkCancellation() }
-            guard let url = entry.url else { return nil }
+            guard let url = entry.url, url.isFileURL else { return nil }
             let path = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
             for (id, root) in folders where path.count > root.count && path.starts(with: root) {
-                return id + ":" + path.dropFirst(root.count).joined(separator: "/")
+                let location = id + ":" + path.dropFirst(root.count).joined(separator: "/")
+                return relocatedIDs[location] ?? location
             }
             return nil
         }

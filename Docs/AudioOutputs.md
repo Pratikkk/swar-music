@@ -28,3 +28,12 @@ Tests use an injected catalogue and engine to cover UID persistence across chang
 numeric IDs, default routing, disconnect fallback, reconnect, no-output handling,
 failed/unavailable selections and position/play-state preservation. Hardware tests
 require a real Mac and available devices; no exclusive/hog mode is introduced.
+
+## Exclusive mode state
+
+The exclusive-output choice survives song opens, output changes and recovery within
+one player session. A failed mode change retains the previous setting and the
+engine attempts to restore the previous route with its previous mode. Selecting
+the same device still rebuilds output when its mode changes. The signal inspector
+uses the active session's reported exclusive state, rather than treating the UI
+setting as proof that an output is open exclusively.
