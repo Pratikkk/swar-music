@@ -12,6 +12,8 @@ private struct AlbumContextActions: ViewModifier {
     @Environment(\.libraryNavigation) private var navigation
     @State private var working = false
     @State private var creatingPlaylist = false
+    @State private var editAlbumTracks: [LibraryTrack] = []
+    @State private var showBulkEditor = false
     @State private var showTrashConfirmation = false
     @State private var pendingTrashTracks: [LibraryTrack] = []
     @State private var name = ""
@@ -28,6 +30,9 @@ private struct AlbumContextActions: ViewModifier {
                 }
             }
             .contextMenu { items }
+            .sheet(isPresented: $showBulkEditor) {
+                BulkMetadataEditorView(tracks: editAlbumTracks, library: library)
+            }
             .alert("Move Album to Trash?", isPresented: $showTrashConfirmation) {
                 Button("Move to Trash", role: .destructive) { confirmTrash() }
                 Button("Cancel", role: .cancel) {}
@@ -65,6 +70,8 @@ private struct AlbumContextActions: ViewModifier {
             }
         }.disabled(working || !library.isReady)
         Divider()
+        Button("Edit Album Metadata…", systemImage: "pencil") { prepareBulkEdit() }
+            .disabled(working || !library.isReady)
         Button("Show in Finder", systemImage: "folder") { perform(.reveal) }.disabled(working)
         Divider()
         Button("Move Album to Trash…", systemImage: "trash", role: .destructive) { prepareTrash() }
@@ -102,7 +109,22 @@ private struct AlbumContextActions: ViewModifier {
         }
     }
 
-    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal, trash }
+    private func prepareBulkEdit() {
+        guard !working else { return }
+        working = true
+        Task {
+            defer { working = false }
+            let tracks = await library.tracks(in: album)
+            guard !tracks.isEmpty else {
+                error = "No editable tracks were found in this album."
+                return
+            }
+            editAlbumTracks = tracks
+            showBulkEditor = true
+        }
+    }
+
+    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal }
     private func perform(_ action: Action) {
         guard !working else { return }
         working = true
