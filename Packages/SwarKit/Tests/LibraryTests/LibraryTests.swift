@@ -447,6 +447,31 @@ struct LibraryTests {
         #expect(!model.canUndoBulkMetadata)
     }
 
+    @MainActor @Test func albumListeningPlanPreservesOrderAndCountsPlayableTracks() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("listen-one.wav"))
+        try FileManager.default.copyItem(at: source, to: music.appendingPathComponent("listen-two.wav"))
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        let indexed = model.tracks
+        #expect(indexed.count == 2)
+        let plan = AlbumListeningPlan(tracks: indexed)
+        #expect(plan.playableTracks.map(\.id) == indexed.map(\.id))
+        #expect(plan.position(for: indexed[0].id) == 1)
+        #expect(plan.position(for: indexed[1].id) == 2)
+        #expect(plan.position(for: nil) == nil)
+        #expect(plan.duration >= 0)
+        var unavailable = indexed[1]
+        unavailable.isMissing = true
+        let playableOnly = AlbumListeningPlan(tracks: [indexed[0], unavailable])
+        #expect(playableOnly.playableTracks.count == 1)
+        #expect(playableOnly.position(for: unavailable.id) == nil)
+    }
+
     @MainActor @Test func batchTrashRefusesSelectionContainingEveryCopy() async throws {
         let (temporary, music, _) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }

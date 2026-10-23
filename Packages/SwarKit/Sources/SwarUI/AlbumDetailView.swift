@@ -22,6 +22,8 @@ struct AlbumDetailView: View {
     let enqueueAlbum: (Bool) -> Void
     var addAlbumToPlaylist: ((LibraryPlaylist) -> Void)? = nil
 
+    @State private var showListeningMode = false
+
     private var albumSummary: LibraryAlbumSummary {
         LibraryAlbumSummary(title: title, artist: artist, artworkKey: tracks.first?.artworkKey,
             trackCount: tracks.count, playableCount: tracks.filter { $0.error == nil }.count)
@@ -79,6 +81,13 @@ struct AlbumDetailView: View {
                         .frame(maxWidth: .infinity, minHeight: coverSize, alignment: .leading)
                     }
                     HStack {
+                        Button("Focus on Album", systemImage: "headphones") { showListeningMode = true }
+                            .disabled(!canPlay)
+                        Spacer()
+                        Button("Play Album Next", systemImage: "text.line.first.and.arrowtriangle.forward") { enqueueAlbum(true) }
+                            .disabled(player.isBusy || !canPlay)
+                    }.buttonStyle(.bordered)
+                    HStack {
                         Text("\(tracks.count) \(tracks.count == 1 ? "song" : "songs") · \(durationDescription)")
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
@@ -103,6 +112,11 @@ struct AlbumDetailView: View {
                 .padding(.horizontal, inset).padding(.top, 12).padding(.bottom, 32 + playerClearance)
             }
 
+        }
+        .sheet(isPresented: $showListeningMode) {
+            AlbumListeningModeView(title: title, artist: artist, tracks: tracks,
+                artworkURL: artworkURL, currentTrackID: currentTrackID, player: player,
+                playAlbum: playAlbum, playTrack: playTrack, enqueueAlbum: enqueueAlbum)
         }
     }
 
