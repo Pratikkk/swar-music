@@ -215,6 +215,7 @@ struct LibraryTests {
             let attempt = attempts.withLock { $0 += 1; return $0 }
             if attempt == 1 { throw NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError) }
             try FileManager.default.moveItem(at: file, to: destination)
+            return destination
         }
         model.requestFolderWriteAccess = { folder in
             #expect(folder.id == folderID)
@@ -248,7 +249,9 @@ struct LibraryTests {
         let chosen = Set(candidates.prefix(2).map(\.id))
         let retained = try #require(candidates.last)
         model.trashItem = { file in
-            try FileManager.default.moveItem(at: file, to: temporary.appendingPathComponent(file.lastPathComponent))
+            let destination = temporary.appendingPathComponent(file.lastPathComponent)
+            try FileManager.default.moveItem(at: file, to: destination)
+            return destination
         }
         let moved = try await model.moveSelectedDuplicatesToTrash(ids: chosen)
         #expect(moved == 2 && model.totalCount == 1)
@@ -312,6 +315,78 @@ struct LibraryTests {
             Issue.record("A missing source file must fail without mutating the library.")
         } catch { }
         #expect(model.totalCount == 1)
+    }
+
+    @Test func exactDuplicateHashingDistinguishesEqualAndDifferentContent() async throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let first = temporary.appendingPathComponent("one.bin")
+        let equal = temporary.appendingPathComponent("two.bin")
+        let changed = temporary.appendingPathComponent("three.bin")
+        let payload = Data(repeating: 0xA7, count: 1_100_000)
+        try payload.write(to: first)
+        try payload.write(to: equal)
+        var different = payload
+        different[different.count - 1] ^= 1
+        try different.write(to: changed)
+        #expect(try await LibraryModel.filesAreByteIdentical(first, equal))
+        #expect(!(try await LibraryModel.filesAreByteIdentical(first, changed)))
+    }
+
+    @MainActor @Test func exactDuplicateScanSelectsOnlyByteIdenticalExtraCopies() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        let first = music.appendingPathComponent("exact-one.wav")
+        let second = music.appendingPathComponent("exact-two.wav")
+        let different = music.appendingPathComponent("different.wav")
+        try FileManager.default.copyItem(at: source, to: first)
+        try FileManager.default.copyItem(at: source, to: second)
+        try FileManager.default.copyItem(at: fixtures.appendingPathComponent("96000-24.flac"), to: different)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        #expect(model.tracks.count == 3)
+        let selected = try await model.selectVerifiedExactDuplicates(model.tracks)
+        #expect(selected.count == 1)
+        #expect(model.exactDuplicateVerifiedGroups == 1)
+        #expect(FileManager.default.fileExists(atPath: first.path))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+        #expect(FileManager.default.fileExists(atPath: different.path))
+    }
+
+    @MainActor @Test func batchTrashRequiresAnAccessibleRetainedCopy() async throws {
+        let (temporary, music, _) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let first = music.appendingPathComponent("retained-copy.wav")
+        let second = music.appendingPathComponent("selected-copy.wav")
+        let source = fixtures.appendingPathComponent("44100-16.wav")
+        try FileManager.default.copyItem(at: source, to: first)
+        try FileManager.default.copyItem(at: source, to: second)
+        let model = LibraryModel(storageDirectory: temporary.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        defer { model.shutdown() }
+        await model.addFolder(music)
+        for track in model.tracks {
+            var metadata = TrackMetadata(track: track)
+            metadata.title = "Same Title"
+            metadata.artist = "Same Artist"
+            metadata.albumArtist = "Same Artist"
+            metadata.album = "Same Album"
+            try await model.updateMetadata(track, metadata: metadata)
+        }
+        let candidates = try await model.collectionPage(filter: .duplicates, search: "", scope: .all, limit: 200)
+        #expect(candidates.count == 2)
+        let selected = try #require(candidates.tracks.first(where: { $0.relativePath == second.lastPathComponent }))
+        // Deliberately leave the database stale to test the keep-one preflight.
+        try FileManager.default.removeItem(at: first)
+        do {
+            _ = try await model.moveSelectedDuplicatesToTrash(ids: [selected.id])
+            Issue.record("Cleanup must refuse an inaccessible retained copy.")
+        } catch { }
+        #expect(FileManager.default.fileExists(atPath: second.path))
     }
 
     @MainActor @Test func batchTrashRefusesSelectionContainingEveryCopy() async throws {

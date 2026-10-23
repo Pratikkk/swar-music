@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import CryptoKit
 
 @MainActor @Observable
 public final class LibraryModel {
@@ -17,6 +18,8 @@ public final class LibraryModel {
     public private(set) var totalCount = 0
     public private(set) var unreadableCount = 0
     public private(set) var isRecovering = false
+    public private(set) var exactDuplicateScanProgress: Double?
+    public private(set) var exactDuplicateVerifiedGroups = 0
     private var relocatedIDs: [String: String] = [:]
     public private(set) var isScanning = false
     public private(set) var isReady = false
@@ -37,11 +40,12 @@ public final class LibraryModel {
     private var repository: LibraryRepository?
     /// The UI can request a fresh user-selected grant for legacy read-only bookmarks.
     public var requestFolderWriteAccess: (@MainActor @Sendable (LibraryFolder) async throws -> URL?)?
-    var trashItem: @Sendable (URL) throws -> Void = { file in
+    var trashItem: @Sendable (URL) throws -> URL = { file in
         var destination: NSURL?
         try FileManager.default.trashItem(at: file, resultingItemURL: &destination)
+        guard let destination else { throw LibraryFailure("Trash returned no recoverable destination.") }
+        return destination as URL
     }
-    private var trashOperationDepth = 0
     private var scopes: [String: FolderAccess] = [:]
     private var watchers: [String: FolderWatcher] = [:]
     private var pendingRescan = false
@@ -49,6 +53,8 @@ public final class LibraryModel {
     private var lastProgressReload = Date.distantPast
     private var watchTask: Task<Void, Never>?
     private var scanTask: Task<Void, Never>?
+    private var trashOperationActive = false
+    private var trashJournalDirectory: URL?
     private var isShutDown = false
     private var started = false
     private let storageDirectory: URL?
@@ -68,6 +74,9 @@ public final class LibraryModel {
             let cache = try storageDirectory?.appendingPathComponent("Artwork") ?? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Swar/Artwork", isDirectory: true)
             try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            let journal = support.appendingPathComponent("TrashJournal", isDirectory: true)
+            try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
+            trashJournalDirectory = journal
             artworkDirectory = cache
             let custom = support.appendingPathComponent("CustomArtwork", isDirectory: true)
             customArtworkDirectory = custom
@@ -90,6 +99,7 @@ public final class LibraryModel {
             }.value
             guard !isShutDown else { return }
             try await restoreFolders()
+            await reconcileTrashJournal()
             await reload()
             await reloadPlaylists()
             await rescan()
@@ -135,7 +145,7 @@ public final class LibraryModel {
 
     public func rescan() async {
         guard !isShutDown, !Task.isCancelled else { return }
-        guard !isScanning, !isRecovering, trashOperationDepth == 0 else { pendingRescan = true; return }
+        guard !isScanning, !isRecovering, !trashOperationActive else { pendingRescan = true; return }
         guard let repository, let artworkDirectory else { return }
         isScanning = true
         let task = Task { await scanFolders(repository: repository, artworkDirectory: artworkDirectory) }
@@ -280,6 +290,12 @@ public final class LibraryModel {
     /// Explicit, recoverable file removal from the duplicate-review UI.
     /// Never delete permanently or interpret matching tags as proof of identity.
     public func moveDuplicateToTrash(_ track: LibraryTrack) async throws {
+        try beginTrashOperation()
+        defer { finishTrashOperation() }
+        try await moveDuplicateToTrashCore(track)
+    }
+
+    private func moveDuplicateToTrashCore(_ track: LibraryTrack) async throws {
         guard !isShutDown, !isScanning, !isRecovering, let repository else {
             throw LibraryFailure("Wait for the library to finish updating.")
         }
@@ -287,22 +303,30 @@ public final class LibraryModel {
               !current.isMissing else {
             throw LibraryFailure("This song is no longer available. Refresh the review.")
         }
-        trashOperationDepth += 1
-        defer { finishTrashOperation() }
-        do {
-            try await trashFile(current)
-        } catch {
-            guard Self.isTrashPermissionError(error), let requestFolderWriteAccess,
-                  let folder = folders.first(where: { $0.id == current.folderID }) else {
-                throw error
-            }
-            guard let url = try await requestFolderWriteAccess(folder) else { throw CancellationError() }
-            try await authorizeWriteAccess(to: folder, url: url)
-            try await trashFile(current)
+        guard current.folderID == track.folderID, current.relativePath == track.relativePath,
+              current.fileSize == track.fileSize, current.modifiedAt == track.modifiedAt else {
+            throw LibraryFailure("The song changed since it was selected. Review the list again.")
         }
-        // Only update the library after macOS confirms that the file was trashed.
-        // If the database update fails, the original remains recoverable in Trash.
+        let file = try location(for: current).file
+        let journalURL = try recordTrashIntent(trackID: current.id, source: file)
+        let destination: URL
+        do {
+            do { destination = try await trashFile(current) }
+            catch {
+                guard Self.isTrashPermissionError(error), let requestFolderWriteAccess,
+                      let folder = folders.first(where: { $0.id == current.folderID }) else { throw error }
+                guard let url = try await requestFolderWriteAccess(folder) else { throw CancellationError() }
+                try await authorizeWriteAccess(to: folder, url: url)
+                destination = try await trashFile(current)
+            }
+        } catch {
+            if FileManager.default.fileExists(atPath: file.path) { try? FileManager.default.removeItem(at: journalURL) }
+            throw error
+        }
+        try recordTrashDestination(destination, in: journalURL, trackID: current.id, source: file)
+
         try await repository.removeTracksFromLibrary(ids: [current.id])
+        try? FileManager.default.removeItem(at: journalURL)
         trackActionsRevision += 1
         overviewRevision += 1
         await reload()
@@ -334,12 +358,12 @@ public final class LibraryModel {
         folders = try await repository.folders()
     }
 
-    private func trashFile(_ track: LibraryTrack) async throws {
+    private func trashFile(_ track: LibraryTrack) async throws -> URL {
         guard let access = scopes[track.folderID] else {
             throw LibraryFailure("Reconnect the music folder in Manage Library.")
         }
         let operation = trashItem
-        try await Task.detached(priority: .userInitiated) {
+        return try await Task.detached(priority: .userInitiated) {
             try withExtendedLifetime(access) {
                 let root = access.url.resolvingSymlinksInPath().standardizedFileURL
                 let file = access.url.appendingPathComponent(track.relativePath)
@@ -349,28 +373,28 @@ public final class LibraryModel {
                       FileManager.default.fileExists(atPath: file.path) else {
                     throw LibraryFailure("The song file is missing or outside its authorised library folder.")
                 }
-                try operation(file)
+                let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
+                guard values.isRegularFile == true, values.isSymbolicLink != true,
+                      Int64(values.fileSize ?? -1) == track.fileSize,
+                      values.contentModificationDate == track.modifiedAt else {
+                    throw LibraryFailure("The song file changed or is not a regular file. Refresh the review.")
+                }
+                try Task.checkCancellation()
+                return try operation(file)
             }
         }.value
-    }
-
-    private func finishTrashOperation() {
-        trashOperationDepth -= 1
-        if trashOperationDepth == 0, pendingRescan, !isShutDown {
-            Task { await rescan() }
-        }
     }
 
     /// Moves a reviewed selection to Trash sequentially, revalidating each
     /// candidate against the complete current set before every operation.
     /// Stops on the first error; previously trashed files remain in macOS Trash.
     public func moveSelectedDuplicatesToTrash(ids: Set<String>) async throws -> Int {
+        try beginTrashOperation()
+        defer { finishTrashOperation() }
         guard !ids.isEmpty, !isShutDown, !isScanning, !isRecovering,
               let repository else {
             throw LibraryFailure("Select at least one duplicate while the library is ready.")
         }
-        trashOperationDepth += 1
-        defer { finishTrashOperation() }
         var moved = 0
         for id in ids.sorted() {
             do {
@@ -392,10 +416,28 @@ public final class LibraryModel {
                     && $0.duration.isFinite && candidate.duration.isFinite
                     && $0.duration.rounded() == candidate.duration.rounded()
                 }
-                guard peers.contains(where: { !ids.contains($0.id) }) else {
-                    throw LibraryFailure("Refusing to remove the last retained copy of a duplicate group.")
+                // Matching titles and durations are only hints, not deletion proof.
+                // Batch cleanup requires an accessible, byte-identical retained file.
+                let selectedFile = try location(for: candidate).file
+                var verifiedRetainedCopy = false
+                for peer in peers where !ids.contains(peer.id)
+                    && !peer.isMissing && peer.error == nil
+                    && peer.fileSize == candidate.fileSize {
+                    guard let retained = try? location(for: peer) else { continue }
+                    let root = retained.root.resolvingSymlinksInPath().standardizedFileURL
+                    let resolved = retained.file.resolvingSymlinksInPath().standardizedFileURL
+                    guard resolved.pathComponents.starts(with: root.pathComponents),
+                          (try? retained.file.resourceValues(forKeys: [.isRegularFileKey])).flatMap(\.isRegularFile) == true,
+                          FileManager.default.isReadableFile(atPath: retained.file.path) else { continue }
+                    if try await Self.filesAreByteIdentical(selectedFile, retained.file) {
+                        verifiedRetainedCopy = true
+                        break
+                    }
                 }
-                try await moveDuplicateToTrash(candidate)
+                guard verifiedRetainedCopy else {
+                    throw LibraryFailure("No readable, byte-identical retained copy exists. Review these possible duplicates manually.")
+                }
+                try await moveDuplicateToTrashCore(candidate)
                 moved += 1
             } catch {
                 throw LibraryFailure("Moved \(moved) of \(ids.count) selected files to Trash. Stopped: \(error.localizedDescription)")
@@ -404,26 +446,154 @@ public final class LibraryModel {
         return moved
     }
 
+    /// Scans a complete, unfiltered candidate page and selects all but one
+    /// byte-identical file from each verified group. No files are modified.
+    /// Hashes are recomputed so a stale cache cannot authorize deletion.
+    public func selectVerifiedExactDuplicates(_ candidates: [LibraryTrack]) async throws -> Set<String> {
+        guard !trashOperationActive, !isScanning, !isRecovering, !isShutDown else {
+            throw LibraryFailure("The library is busy.")
+        }
+        guard exactDuplicateScanProgress == nil else {
+            throw LibraryFailure("A verification scan is already running.")
+        }
+        exactDuplicateScanProgress = 0
+        exactDuplicateVerifiedGroups = 0
+        defer { exactDuplicateScanProgress = nil }
+        struct Key: Hashable { let size: Int64; let hash: [UInt8] }
+        var matches: [Key: [LibraryTrack]] = [:]
+        let eligible = candidates.filter { !$0.isMissing && $0.error == nil && $0.fileSize > 0 }
+        for (index, track) in eligible.enumerated() {
+            try Task.checkCancellation()
+            let (file, root) = try location(for: track)
+            let canonical = file.resolvingSymlinksInPath().standardizedFileURL
+            let safeRoot = root.resolvingSymlinksInPath().standardizedFileURL
+            guard canonical.pathComponents.starts(with: safeRoot.pathComponents),
+                  (try? file.resourceValues(forKeys: [.isRegularFileKey])).flatMap(\.isRegularFile) == true else {
+                throw LibraryFailure("File changed or is outside its authorised folder. Refresh and retry.")
+            }
+            let digest = try await Task.detached(priority: .utility) {
+                try Self.fileSHA256(file)
+            }.value
+            matches[Key(size: track.fileSize, hash: digest), default: []].append(track)
+            exactDuplicateScanProgress = Double(index + 1) / Double(max(1, eligible.count))
+        }
+        var selected = Set<String>()
+        for group in matches.values where group.count > 1 {
+            exactDuplicateVerifiedGroups += 1
+            let ordered = group.sorted { left, right in
+                if left.isLossless != right.isLossless { return left.isLossless }
+                return left.id < right.id
+            }
+            selected.formUnion(ordered.dropFirst().map(\.id))
+        }
+        return selected
+    }
+
     /// Explicit user-requested Trash action for regular songs or entire albums.
     /// Each file is validated by moveDuplicateToTrash before filesystem mutation.
     /// Stops on first failure; previous files remain recoverable in macOS Trash.
     public func moveTracksToTrash(_ tracks: [LibraryTrack]) async throws -> Int {
+        try beginTrashOperation()
+        defer { finishTrashOperation() }
         guard !tracks.isEmpty else { throw LibraryFailure("No songs selected.") }
         let unique = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        trashOperationDepth += 1
-        defer { finishTrashOperation() }
         var moved = 0
         for id in unique.keys.sorted() {
             guard let track = unique[id] else { continue }
             do {
                 try Task.checkCancellation()
-                try await moveDuplicateToTrash(track)
+                try await moveDuplicateToTrashCore(track)
                 moved += 1
             } catch {
                 throw LibraryFailure("Moved \(moved) of \(unique.count) files to Trash. \(error.localizedDescription)")
             }
         }
         return moved
+    }
+
+    /// SHA-256 is computed incrementally away from the main actor to avoid
+    /// loading music files into memory. Matching metadata is never sufficient.
+    nonisolated static func filesAreByteIdentical(_ first: URL, _ second: URL) async throws -> Bool {
+        try await Task.detached(priority: .userInitiated) {
+            try Self.fileSHA256(first) == Self.fileSHA256(second)
+        }.value
+    }
+
+    nonisolated private static func fileSHA256(_ url: URL) throws -> [UInt8] {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        while true {
+            try Task.checkCancellation()
+            let chunk = try handle.read(upToCount: 1_048_576) ?? Data()
+            if chunk.isEmpty { break }
+            hash.update(data: chunk)
+        }
+        return Array(hash.finalize())
+    }
+
+    private struct TrashJournalRecord: Codable {
+        var trackID: String
+        var sourcePath: String
+        var destinationPath: String?
+    }
+
+    private func recordTrashIntent(trackID: String, source: URL) throws -> URL {
+        guard let trashJournalDirectory else { throw LibraryFailure("Trash recovery journal is not available.") }
+        let entryURL = trashJournalDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        let entry = TrashJournalRecord(trackID: trackID, sourcePath: source.path, destinationPath: nil)
+        try JSONEncoder().encode(entry).write(to: entryURL, options: .atomic)
+        return entryURL
+    }
+
+    private func recordTrashDestination(_ destination: URL, in journalURL: URL, trackID: String, source: URL) throws {
+        let entry = TrashJournalRecord(trackID: trackID, sourcePath: source.path, destinationPath: destination.path)
+        try JSONEncoder().encode(entry).write(to: journalURL, options: .atomic)
+    }
+
+    private func reconcileTrashJournal() async {
+        guard let trashJournalDirectory, let repository,
+              let entries = try? FileManager.default.contentsOfDirectory(
+                at: trashJournalDirectory, includingPropertiesForKeys: nil)
+        else { return }
+        var unresolved = 0
+        for entryURL in entries where entryURL.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: entryURL),
+                  let record = try? JSONDecoder().decode(TrashJournalRecord.self, from: data) else {
+                unresolved += 1
+                continue
+            }
+            // If the source still exists, never hide or delete it on journal recovery.
+            if FileManager.default.fileExists(atPath: record.sourcePath) {
+                try? FileManager.default.removeItem(at: entryURL)
+                continue
+            }
+            // A missing source alone is NOT proof it was successfully trashed.
+            guard let destination = record.destinationPath,
+                  FileManager.default.fileExists(atPath: destination) else {
+                unresolved += 1
+                continue
+            }
+            do {
+                try await repository.removeTracksFromLibrary(ids: [record.trackID])
+                try FileManager.default.removeItem(at: entryURL)
+            } catch {
+                unresolved += 1
+            }
+        }
+        if unresolved > 0 {
+            errorMessage = "\(unresolved) interrupted Trash operation(s) require manual review. Check macOS Trash and your original music folders."
+        }
+    }
+
+    private func beginTrashOperation() throws {
+        guard !trashOperationActive else { throw LibraryFailure("Another Trash operation is in progress.") }
+        trashOperationActive = true
+    }
+
+    private func finishTrashOperation() {
+        trashOperationActive = false
+        if pendingRescan, !isShutDown { Task { await rescan() } }
     }
 
     public func dismissError() { errorMessage = nil }
@@ -832,7 +1002,7 @@ public final class LibraryModel {
         watchers[folder.id] = FolderWatcher(url: url) { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, !self.isShutDown else { return }
-                if self.isScanning || self.trashOperationDepth > 0 {
+                if self.isScanning || self.trashOperationActive {
                     self.pendingRescan = true
                     return
                 }
