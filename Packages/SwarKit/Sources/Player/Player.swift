@@ -31,6 +31,9 @@ public final class Player {
     public private(set) var isScrubbing = false
     private var scrubWasPlaying = false
     private var scrubURL: URL?
+    /// Set when a scrub ends (cancel/teardown) while a seek is already running.
+    /// The running seek loop consumes it so playback still resumes exactly once.
+    private var pendingScrubResume = false
     public private(set) var errorMessage: String?
     @ObservationIgnored private var errorIsFromPlayback = false
     public private(set) var underrunFrames: UInt64 = 0
@@ -699,24 +702,39 @@ public final class Player {
 
     public func endScrubbing(at seconds: Double) async {
         guard isScrubbing else { await seek(to: seconds); return }
-        let resume = scrubWasPlaying
-        isScrubbing = false
-        scrubWasPlaying = false
-        scrubURL = nil
+        let resume = finishScrub()
         await performSeek(seconds, resume: resume)
     }
 
     /// Abandon a scrub without seeking (view teardown, track change or sleep).
+    ///
+    /// Intermediate scrub seeks pause the device, so ending a gesture must
+    /// always decide whether playback resumes. Previously the resume request was
+    /// dropped whenever the player happened to be busy, which left audio paused
+    /// permanently; the decision is now recorded and honoured by whichever seek
+    /// is currently running.
     public func cancelScrubbing() {
         guard isScrubbing else { return }
-        let resume = scrubWasPlaying
-        let url = scrubURL
+        let resume = finishScrub()
+        guard resume else { return }
+        // A running seek loop owns the device right now; hand it the resume.
+        if isSeeking {
+            pendingScrubResume = true
+            pendingSeekResume = true
+            return
+        }
+        guard !isShutDown, !isBusy, !isPlaying, duration > 0 else { return }
+        Task { await performSeek(position, resume: true) }
+    }
+
+    /// Clears scrub state and returns whether playback should resume. Single
+    /// exit point so track changes, recovery, sleep and teardown cannot diverge.
+    private func finishScrub() -> Bool {
+        let resume = scrubWasPlaying && !isShutDown && scrubURL == currentURL
         isScrubbing = false
         scrubWasPlaying = false
         scrubURL = nil
-        guard resume, !isShutDown, !isPlaying, url == currentURL, duration > 0,
-              !isBusy || isSeeking else { return }
-        Task { await performSeek(position, resume: true) }
+        return resume
     }
 
     public func seek(to seconds: Double) async {
@@ -747,12 +765,19 @@ public final class Player {
         generation += 1
         isSeeking = true
         isBusy = true
-        defer { gaplessPlan = nil; isSeeking = false; isBusy = false; pendingSeekResume = false }
+        defer {
+            gaplessPlan = nil; isSeeking = false; isBusy = false
+            pendingSeekResume = false
+            pendingScrubResume = false
+        }
         // One decoder operation at a time; intermediate drag/key requests are superseded.
         while let target = pendingSeek, !isShutDown {
-            let shouldResume = pendingSeekResume
+            // A scrub that was cancelled while this loop owned the device must
+            // still resume, even though its gesture state is already cleared.
+            let shouldResume = pendingSeekResume || pendingScrubResume
             pendingSeek = nil
             pendingSeekResume = false
+            pendingScrubResume = false
             do {
                 var snapshot = try await engine.seek(to: target, resume: shouldResume)
                 guard !isShutDown else { return }
@@ -776,6 +801,24 @@ public final class Player {
                 apply(snapshot)
                 setError(error.localizedDescription, fromPlayback: true)
                 return
+            }
+        }
+        // A scrub cancelled while the loop owned the device was already paused by
+        // its preview seek and queued no replacement target, so there is nothing
+        // left to iterate over. Resume here instead of leaving audio stopped.
+        if pendingScrubResume, !isShutDown, !isPlaying, !finished, !isRestoredSession {
+            pendingScrubResume = false
+            do {
+                var snapshot = try await engine.togglePlayback()
+                guard !isShutDown else { return }
+                setError(nil)
+                if !snapshot.didFinish { completionHandled = false }
+                apply(snapshot)
+            } catch {
+                let snapshot = await engine.snapshot()
+                guard !isShutDown else { return }
+                apply(snapshot)
+                setError(error.localizedDescription, fromPlayback: true)
             }
         }
         if finished, !isShutDown, !completionHandled, !isScrubbing {

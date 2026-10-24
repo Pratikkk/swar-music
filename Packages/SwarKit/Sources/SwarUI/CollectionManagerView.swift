@@ -329,8 +329,18 @@ struct CollectionManagerView: View {
             }
             Spacer(minLength: 0)
             if library.isScanning { ProgressView().controlSize(.small) }
-            if page.tracks.count < page.count { Button("Load More") { limit += 200 } }
-        }.controlSize(.small).disabled(working || library.isScanning || library.isRecovering || !matchesContext)
+            // Load More stays available while a verification or scan runs: it is
+            // additive and the reload is generation-guarded, so gating it on
+            // `working`/`matchesContext` only stranded the user behind a spinner.
+            if page.tracks.count < page.count {
+                Button("Load More") { limit += 200 }
+                    .disabled(!library.isReady)
+            }
+        }
+        .controlSize(.small)
+        // Destructive and mutating actions are disabled as a group; read-only
+        // navigation in this bar (Load More, Clear) is not.
+        .disabled(working || library.isScanning || library.isRecovering)
     }
 
     private func trackTable(_ tracks: [LibraryTrack]) -> some View {

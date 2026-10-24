@@ -73,7 +73,10 @@ struct ArtistsView: View {
             HStack(spacing: 0) {
                 artistList.frame(width: listWidth)
                 Divider()
+                ScrollViewReader { proxy in
                 List {
+                    Color.clear.frame(height: 0).id("artists-top")
+                        .listRowSeparator(.hidden).listRowInsets(EdgeInsets())
                     ForEach(renderItems) { item in
                         switch item {
                         case .header(let artist):
@@ -115,11 +118,17 @@ struct ArtistsView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .environment(\.defaultMinListRowHeight, 0)
-                .id(selection)
+                // No .id(selection): the flat ArtistRenderItem rows already carry
+                // stable ids, so the List diffs in place. Recreating it discarded
+                // scroll position and every child's state on each artist click.
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Selection still returns to the top, but by scrolling rather
+                // than by destroying the list.
+                .onChange(of: selection) { proxy.scrollTo("artists-top", anchor: .top) }
+                }
             }
         }
-        .task(id: "\(library.tracksRevision)-\(library.search)-\(library.searchScope)-\(library.favoritesOnly)-\(library.isScanning)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)") {
+        .task(id: "\(library.tracksRevision)-\(library.search)-\(library.searchScope)-\(library.isScanning)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)") {
             // A scan commits batches repeatedly. Keep the last prepared grouping
             // while it runs, then arrange once from the settled page.
             if library.isScanning, !artists.isEmpty { return }

@@ -75,11 +75,8 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .task(id: "\(library.overviewRevision)-\(library.isReady)-\(library.lastScanAt?.timeIntervalSince1970 ?? 0)") { await load() }
-        .onChange(of: player.currentURL) {
-            currentSourceInfoCache = Self.sourceInfo(for: player.currentURL, library: library)
-        }
-        .task {
-            currentSourceInfoCache = Self.sourceInfo(for: player.currentURL, library: library)
+        .task(id: player.currentURL) {
+            currentSourceInfoCache = await Self.sourceInfo(for: player.currentURL, library: library)
         }
     }
 
@@ -96,11 +93,14 @@ struct HomeView: View {
         .font(.system(size: 12)).foregroundStyle(.secondary)
     }
 
-    /// Scans library tracks to find the source format of the current URL.
-    /// Expensive — call only when currentURL changes, not on every body invalidation.
-    private static func sourceInfo(for url: URL?, library: LibraryModel) -> FormatChipInfo? {
-        guard let url = url?.standardizedFileURL,
-              let track = library.tracks.first(where: { (try? library.location(for: $0).file.standardizedFileURL) == url }),
+    /// Resolves the current track's source format.
+    ///
+    /// This used to scan `library.tracks` and standardize a URL (a stat syscall)
+    /// for every entry, on the main actor, on each track change. `track(at:)`
+    /// maps the URL to a stable id against the connected roots and performs one
+    /// indexed lookup, so the cost no longer scales with the page size.
+    private static func sourceInfo(for url: URL?, library: LibraryModel) async -> FormatChipInfo? {
+        guard let url, url.isFileURL, let track = await library.track(at: url),
               let source = track.sourceFormat else { return nil }
         return FormatClassifier.describe(source: source, path: SignalPath())
     }

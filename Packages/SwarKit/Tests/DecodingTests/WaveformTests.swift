@@ -129,6 +129,85 @@ struct WaveformTests {
         data.append(Data(repeating: 0, count: 1024))
         return data
     }
+
+    @Test func waveformStoreCoalescesConcurrentRequestsForSameFile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("one.wav")
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/44100-16.wav")
+        try FileManager.default.copyItem(at: fixture, to: source)
+        let directory = root.appendingPathComponent("Waveforms")
+        let store = WaveformStore(directory: directory)
+
+        // 20 concurrent requests for the same file must share one decode.
+        var decodes: [[Float]] = []
+        try await withThrowingTaskGroup(of: [Float].self) { group in
+            for _ in 0..<20 {
+                group.addTask { try await store.waveform(url: source, accessRoot: root) }
+            }
+            for try await result in group {
+                decodes.append(result)
+            }
+        }
+        #expect(decodes.count == 20, "All 20 concurrent requests should complete")
+        #expect(decodes.allSatisfy { $0.count == 512 && ($0.max() ?? 0) > 0 })
+        // Decode should happen exactly once; only one artifact should be written.
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        #expect(files.count == 1, "Only one decode artifact should be written")
+    }
+
+    @Test func waveformStoreMemoryLRUEvictsOldestEntries() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let directory = root.appendingPathComponent("Waveforms")
+        let store = WaveformStore(directory: directory)
+
+        // Create 30 distinct silent WAV files (memory cap is 24).
+        var urls: [URL] = []
+        for index in 0..<30 {
+            let url = root.appendingPathComponent("tone-\(index).wav")
+            try silentWAV().write(to: url)
+            urls.append(url)
+        }
+        // Access all 30; the last 24 should remain in memory, first 6 evicted.
+        var results: [[Float]] = []
+        for url in urls {
+            results.append(try await store.waveform(url: url, accessRoot: root))
+        }
+        #expect(results.count == 30)
+        #expect(results.allSatisfy { $0.count == 512 })
+
+        // Re-accessing an evicted URL must still succeed (served from the disk
+        // cache or re-decoded) and must not create a second artifact for it.
+        let revisited = try await store.waveform(url: urls[0], accessRoot: root)
+        #expect(revisited.count == 512)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        #expect(files.count == 30, "Disk cache keeps exactly one entry per unique file")
+    }
+
+    @Test func waveformStoreCancelledDecodeDoesNotBlockOthers() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("one.wav")
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/44100-16.wav")
+        try FileManager.default.copyItem(at: fixture, to: source)
+        let directory = root.appendingPathComponent("Waveforms")
+        let store = WaveformStore(directory: directory)
+
+        // Start a request, cancel it immediately, then make a new one that must not
+        // be blocked by the abandoned work.
+        let cancelled = Task {
+            try await store.waveform(url: source, accessRoot: root)
+        }
+        cancelled.cancel()
+        _ = try? await cancelled.value
+
+        let result = try await store.waveform(url: source, accessRoot: root)
+        #expect(result.count == 512 && (result.max() ?? 0) > 0)
+    }
 }
 
 private final class WaveformFixture: AudioDecoding {

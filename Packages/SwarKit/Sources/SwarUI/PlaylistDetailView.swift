@@ -274,15 +274,19 @@ public struct PlaylistDetailView: View {
         loadGeneration = generation
         if loadedPlaylistID != playlistID, !items.isEmpty { items = []; itemsRevision &+= 1 }
         isLoading = true
+        // Clearing isLoading is owned by the generation that set it. Previously a
+        // superseded or cancelled run returned early and left the flag set, which
+        // disabled Play/Shuffle/Export for good because canPlay requires !isLoading.
+        defer { if loadGeneration == generation { isLoading = false } }
         do {
             let result = try await library.playlistItems(for: playlistID)
             guard !Task.isCancelled, loadGeneration == generation else { return }
             if items != result { items = result; itemsRevision &+= 1 }
-            loadError = nil; loadedPlaylistID = playlistID; isLoading = false
+            loadError = nil; loadedPlaylistID = playlistID
         } catch {
             guard !Task.isCancelled, loadGeneration == generation else { return }
             if !items.isEmpty { items = []; itemsRevision &+= 1 }
-            loadError = error.localizedDescription; isLoading = false
+            loadError = error.localizedDescription
         }
     }
 

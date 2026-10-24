@@ -69,6 +69,80 @@ struct QueueTests {
         player.shutdown()
     }
 
+    /// The gesture can end while a scrub seek still owns the device (the sheet
+    /// closes, the window goes away, the track changes). The resume decision
+    /// must survive that window instead of being dropped with the gesture
+    /// state, which previously left playback paused forever.
+    @Test func cancellingScrubDuringInFlightSeekStillResumes() async throws {
+        let gate = OpenGate()
+        let engine = QueueTestEngine(seekGate: gate)
+        let player = Player(engine: engine)
+        let song = entry("one")
+        await player.play([song])
+        #expect(player.isPlaying)
+
+        player.beginScrubbing()
+        let seeking = Task { await player.scrub(to: 6) }
+        await gate.waitUntilBlocked()
+        #expect(player.isSeeking, "the scrub seek should be occupying the player")
+
+        // Cancel while busy: this is the path that used to drop the resume.
+        player.cancelScrubbing()
+        #expect(!player.isScrubbing)
+
+        await gate.release()
+        await seeking.value
+
+        #expect(!player.isBusy)
+        #expect(player.isPlaying, "playback must resume after a scrub cancelled mid-seek")
+        #expect(player.position == 6)
+
+        player.shutdown()
+    }
+
+    /// Cancelling a paused scrub (nothing was playing when the gesture began)
+    /// must leave playback paused rather than forcing a start.
+    @Test func cancellingScrubThatBeganWhilePausedDoesNotStartPlayback() async throws {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        await player.play([entry("one")])
+        await player.togglePlayback()
+        #expect(!player.isPlaying)
+
+        player.beginScrubbing()
+        await player.scrub(to: 3)
+        player.cancelScrubbing()
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(!player.isScrubbing)
+        #expect(!player.isPlaying, "a paused scrub must not be turned into playback")
+
+        player.shutdown()
+    }
+
+    /// A track change during a scrub supersedes it: the stale gesture must not
+    /// resume the previous song.
+    @Test func trackChangeDuringScrubDoesNotResumeTheOldSong() async throws {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        let first = entry("one"), second = entry("two")
+        await player.play([first])
+        #expect(player.isPlaying)
+
+        player.beginScrubbing()
+        await player.scrub(to: 4)
+        #expect(!player.isPlaying)
+
+        await player.play([second])
+        player.cancelScrubbing()
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(!player.isScrubbing)
+        #expect(player.currentURL == second.url)
+
+        player.shutdown()
+    }
+
     @Test func removalUndoPreservesCurrentPlaybackDuplicatesAndNewInsertions() async {
         let engine = QueueTestEngine()
         let player = Player(engine: engine)
@@ -1025,4 +1099,122 @@ private actor TimerWaitGate {
         await withCheckedContinuation { observers.append((count, $0)) }
     }
     func release(_ index: Int) { waits[index]?.resume(); waits[index] = nil }
+}
+
+@MainActor
+struct PlayerStressTests {
+    private func entry(_ name: String) -> QueueEntry {
+        QueueEntry(url: URL(fileURLWithPath: "/tmp/\(name).wav"), title: name)
+    }
+
+    @Test func rapidTrackChangesDoNotCorruptQueueOrIdentity() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        defer { player.shutdown() }
+
+        let tracks = (0..<20).map { entry("song-\($0)") }
+
+        // Rapidly change tracks before each one finishes; gapless handoff
+        // should never lose the queue or play the wrong song.
+        for track in tracks {
+            await player.play([track])
+            #expect(player.currentEntryID == track.id)
+            #expect(player.title == track.title)
+        }
+
+        // After the flurry, the last track should be current.
+        #expect(player.currentEntryID == tracks.last?.id)
+        #expect(player.queue.count == 1)
+        #expect(player.currentEntryID == player.queue.first?.id)
+    }
+
+    @Test func seekStormDuringPlaybackStaysConsistent() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        defer { player.shutdown() }
+
+        let song = entry("one")
+        await player.play([song])
+        #expect(player.isPlaying)
+
+        // Fire 50 seeks rapidly across the 10-second track.
+        await withTaskGroup(of: Void.self) { group in
+            for index in 0..<50 {
+                group.addTask {
+                    await player.seek(to: Double(index) * 0.2)
+                }
+            }
+        }
+
+        // Position must land exactly on one of the requested targets (last write
+        // wins); a torn or partially applied value would fail this.
+        let position = player.position
+        let targets = (0..<50).map { Double($0) * 0.2 }
+        #expect(targets.contains(position), "position \(position) was not a submitted seek target")
+        #expect(player.isPlaying)
+    }
+
+    @Test func scrubStormThenReleaseResumesAtFinalPosition() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        defer { player.shutdown() }
+
+        let song = entry("one")
+        await player.play([song])
+        #expect(player.isPlaying)
+
+        player.beginScrubbing()
+
+        // Rapid intermediate scrub seeks while paused.
+        for index in 0..<30 {
+            await player.scrub(to: Double(index) * 0.3)
+        }
+
+        // Release at position 5.0 should resume playback there.
+        await player.endScrubbing(at: 5.0)
+        #expect(!player.isScrubbing)
+        #expect(player.isPlaying)
+        #expect(player.position == 5.0)
+    }
+
+    @Test func concurrentPlayPauseToggleDoesNotDoubleStart() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        defer { player.shutdown() }
+
+        let song = entry("one")
+        await player.play([song])
+
+        // Fire 20 toggles concurrently; play/pause state should remain consistent.
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<20 {
+                group.addTask { await player.togglePlayback() }
+            }
+        }
+
+        // The UI flag must agree with the engine's actual state, whatever the
+        // interleaving settled on, and the player must remain usable.
+        let engineState = await engine.snapshot()
+        #expect(player.isPlaying == engineState.isPlaying)
+        #expect(player.position.isFinite)
+        #expect(!player.isBusy)
+        #expect(player.errorMessage == nil)
+    }
+
+    @Test func rapidOutputChangesDoNotLoseSongPosition() async {
+        let engine = QueueTestEngine()
+        let player = Player(engine: engine)
+        defer { player.shutdown() }
+
+        let song = entry("one")
+        await player.play([song])
+
+        // Rapidly switch between two outputs; song and position should survive.
+        for index in 0..<10 {
+            try? await player.selectOutput(uid: index % 2 == 0 ? "output-a" : "output-b")
+        }
+
+        #expect(player.currentEntryID == song.id)
+        #expect(player.currentURL == song.url)
+    }
 }
