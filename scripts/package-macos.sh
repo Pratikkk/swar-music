@@ -39,7 +39,7 @@ ditto "$build_dir/Build/Products/Release/swar.app" "$staging/Swar.app"
 # strips Xcode's injected get-task-allow entitlement from the Release package.
 codesign --force --sign - --options runtime --entitlements "$local_entitlements" "$staging/Swar.app"
 codesign -d --entitlements :- "$staging/Swar.app" > "$work_dir/signed-entitlements.plist" 2>/dev/null
-for entitlement in com.apple.security.app-sandbox com.apple.security.files.user-selected.read-only com.apple.security.cs.disable-library-validation; do
+for entitlement in com.apple.security.app-sandbox com.apple.security.files.user-selected.read-write com.apple.security.cs.disable-library-validation; do
     test "$(/usr/libexec/PlistBuddy -c "Print :$entitlement" "$work_dir/signed-entitlements.plist")" = true
 done
 if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$work_dir/signed-entitlements.plist" >/dev/null 2>&1; then

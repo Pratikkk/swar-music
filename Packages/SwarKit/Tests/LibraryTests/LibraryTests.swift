@@ -959,6 +959,8 @@ extension LibraryTests {
         try await repository.saveTracks(synthetic)
         await model.reload(resetLimit: true)
         #expect(model.tracks.count == 500 && model.totalCount == 5202)
+        #expect(try await model.songsForPlayback().count == 5202)
+        #expect(model.tracks.count == 500) // Queue preparation must not inflate the visible page.
         for _ in 0..<11 { await model.loadMore() }
         #expect(model.tracks.count == 5202)
         #expect(Set(model.tracks.map(\.id)).count == 5202)
@@ -969,6 +971,7 @@ extension LibraryTests {
         model.search = "Synthetic 05200"
         await model.reload(resetLimit: true)
         #expect(model.totalCount == 1 && model.tracks.map(\.id) == ["page-5200"])
+        #expect(try await model.songsForPlayback().map(\.id) == ["page-5200"])
         model.search = ""
         await model.reload(resetLimit: true)
         #expect(model.tracks.count == 500)

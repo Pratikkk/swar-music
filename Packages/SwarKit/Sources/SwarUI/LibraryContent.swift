@@ -14,6 +14,7 @@ struct LibraryContent: View {
     /// not on every LibraryContent body invalidation.
     @State private var currentTrackIDCache: String?
     @State private var loadingNextPage = false
+    @State private var preparingShuffle = false
 
     var body: some View {
         let currentTrackID = currentTrackIDCache
@@ -27,12 +28,28 @@ struct LibraryContent: View {
                         Text("\(library.unreadableCount) unreadable in \(section == "Favourites" ? "favourites" : "library")").foregroundStyle(.orange)
                     }
                     Spacer()
+                    if section == "Songs" {
+                        Button {
+                            preparingShuffle = true
+                            Task {
+                                defer { preparingShuffle = false }
+                                do {
+                                    let tracks = try await library.songsForPlayback()
+                                    guard !Task.isCancelled, !player.isBusy else { return }
+                                    let entries = try tracks.map { try entry($0) }
+                                    await player.play(entries, shuffle: true)
+                                } catch is CancellationError { }
+                                catch { player.reportImportError(error) }
+                            }
+                        } label: { Label("Shuffle All", systemImage: "shuffle") }
+                        .foregroundStyle(palette.accent)
+                        .disabled(preparingShuffle || player.isBusy || library.totalCount <= library.unreadableCount)
+                        .help(TrackSearchQuery(library.search).isEmpty
+                              ? "Shuffle all songs, including songs not loaded yet"
+                              : "Shuffle all matching songs")
+                    }
                     if section == "Favourites" {
                         favouritePlaybackButtons
-                    }
-                    if library.tracks.count < library.totalCount {
-                        Button("Load More") { loadNextPage() }
-                            .disabled(loadingNextPage)
                     }
                 }
                 .font(.caption).padding(12)
@@ -111,18 +128,22 @@ struct LibraryContent: View {
     }
 
     private func trackList(_ tracks: [LibraryTrack], currentTrackID: String?) -> some View {
-        List {
-            ForEach(tracks) { track in trackRow(track, context: tracks, currentTrackID: currentTrackID) }
+        // Start the next bounded fetch before the user reaches the page boundary.
+        let prefetchIDs = Set(tracks.suffix(20).map(\.id))
+        return List {
+            ForEach(tracks) { track in
+                trackRow(track, context: tracks, currentTrackID: currentTrackID)
+                    .onAppear {
+                        if prefetchIDs.contains(track.id) { loadNextPage() }
+                    }
+            }
             if tracks.count < library.totalCount {
                 HStack {
                     Spacer()
-                    if loadingNextPage {
-                        ProgressView().controlSize(.small)
-                            .accessibilityLabel("Loading more songs")
-                    } else {
-                        Button("Load More Songs") { loadNextPage() }
-                            .buttonStyle(.borderless)
-                    }
+                    ProgressView().controlSize(.small)
+                        .opacity(loadingNextPage ? 1 : 0)
+                        .accessibilityLabel("Loading more songs")
+                        .accessibilityHidden(!loadingNextPage)
                     Spacer()
                 }
                 .padding(.vertical, 12)
@@ -133,8 +154,7 @@ struct LibraryContent: View {
         .scrollContentBackground(.hidden)
     }
 
-    /// Load another bounded page only when its footer becomes visible.
-    /// The explicit button remains available if automatic loading is interrupted.
+    /// Coalesce row appearances into one bounded database request at a time.
     private func loadNextPage() {
         guard !loadingNextPage, library.tracks.count < library.totalCount else { return }
         loadingNextPage = true

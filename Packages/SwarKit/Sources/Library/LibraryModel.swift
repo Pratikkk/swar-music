@@ -763,6 +763,17 @@ public final class LibraryModel {
         return try await repository.searchSuggestions(for: query, scope: scope)
     }
 
+    /// Resolve the full Songs selection without expanding the visible browsing page.
+    public func songsForPlayback() async throws -> [LibraryTrack] {
+        guard let repository, !isShutDown else { return [] }
+        let page = try await repository.page(search: search, limit: Int.max,
+            recentFirst: recentFirst, favoritesOnly: favoritesOnly, sortOrder: sortOrder,
+            reversed: reverseSort, searchScope: searchScope, includeTagPayload: false)
+        try Task.checkCancellation()
+        guard !isShutDown else { return [] }
+        return page.tracks.filter { !$0.isMissing && $0.error == nil }
+    }
+
     public func loadMore() async {
         guard !loadingTrackPage, !isShutDown, !Task.isCancelled,
               tracks.count < totalCount, let repository else { return }
