@@ -12,7 +12,7 @@ on:
 jobs:
   build-dmg:
     name: Build Swar DMG
-    runs-on: macos-14
+    runs-on: macos-latest
 
     steps:
       - name: Checkout repository
