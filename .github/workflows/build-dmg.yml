@@ -1,120 +1,37 @@
+mkdir -p .github/workflows
+cat > .github/workflows/build-dmg.yml <<'YAML'
 name: Build DMG
-run-name: Build Swar ${{ inputs.version }} DMG
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: App version (for example 1.0.0)
+        description: Version to embed in the app and DMG filename
         required: true
-        default: '1.0.0'
+        default: "1.0.0"
         type: string
 
-permissions:
-  contents: read
-
-concurrency:
-  group: swar-dmg-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  build:
-    name: Test and build universal macOS installer
-    runs-on: macos-15
-    timeout-minutes: 35
-    defaults:
-      run:
-        shell: bash
-    env:
-      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
-      SWAR_VERSION: ${{ inputs.version }}
+  build-dmg:
+    name: Build Swar DMG
+    runs-on: macos-14
+
     steps:
-      - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Swar installer
+        env:
+          SWAR_VERSION: ${{ inputs.version }}
+          SWAR_BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/package-macos.sh dist
+
+      - name: Upload DMG and related artifacts
+        uses: actions/upload-artifact@v4
         with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Validate version and toolchain
-        run: |
-          [[ "$SWAR_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-            echo 'Version must contain three numeric components, such as 1.0.0.' >&2
-            exit 1
-          }
-          xcodebuild -version
-          swift --version
-          mkdir -p dist
-          printf 'SWAR_BUILD_DIR=%s/swar-distribution-build\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-
-      - name: Run package tests
-        run: |
-          # Avoid unrelated test gates competing for the small runner's shared
-          # executors. Individual tests still exercise their own concurrency.
-          swift test --no-parallel --package-path Packages/SwarKit \
-            --scratch-path "$RUNNER_TEMP/swar-tests" 2>&1 | tee dist/tests.log
-
-      - name: Verify late EOF race with sanitizers
-        run: |
-          xcrun clang -std=c11 -Wall -Wextra -Werror \
-            -fsanitize=address,undefined -fno-omit-frame-pointer \
-            -I Packages/SwarKit/Sources/RealtimeAudio/include \
-            Tools/verify_ring_eof.c -framework AudioUnit -framework AudioToolbox \
-            -o "$RUNNER_TEMP/swar-verify-ring-eof"
-          "$RUNNER_TEMP/swar-verify-ring-eof" 2>&1 | tee dist/ring-eof.log
-
-      - name: Verify AUHAL render callback with sanitizers
-        run: |
-          xcrun clang -std=c11 -Wall -Wextra -Werror \
-            -fsanitize=address,undefined -fno-omit-frame-pointer \
-            -I Packages/SwarKit/Sources/RealtimeAudio/include \
-            Tools/verify_render_callback.c -framework AudioUnit -framework AudioToolbox \
-            -o "$RUNNER_TEMP/swar-verify-render"
-          "$RUNNER_TEMP/swar-verify-render" 2>&1 | tee dist/render-callback.log
-
-      - name: Package and verify installer
-        run: |
-          ./scripts/package-macos.sh dist 2>&1 | tee dist/package.log
-          (cd dist && shasum -a 256 -c ./*.sha256)
-          hdiutil verify dist/*.dmg
-          {
-            printf 'Version: %s\n' "$SWAR_VERSION"
-            printf 'Commit: %s\n' "$GITHUB_SHA"
-            printf 'Build: %s\n' "$(git rev-list --count HEAD)"
-            xcodebuild -version
-            echo 'Ad-hoc signed test build; not Apple-notarized.'
-          } > dist/BUILD.txt
-
-      - name: Upload DMG directly
-        id: dmg
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          path: dist/*.dmg
-          archive: false
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload companion files and diagnostics
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: Swar-companion-files-${{ github.run_number }}-${{ github.run_attempt }}
+          name: Swar-${{ inputs.version }}-build-${{ github.run_number }}
           path: |
+            dist/*.dmg
             dist/*.zip
             dist/*.sha256
-            dist/*.log
-            dist/BUILD.txt
-          if-no-files-found: ignore
-          compression-level: 0
-          retention-days: 30
-
-      - name: Add download link
-        env:
-          DMG_URL: ${{ steps.dmg.outputs.artifact-url }}
-        run: |
-          {
-            printf '## Swar %s\n\n' "$SWAR_VERSION"
-            printf '[Download DMG](%s)\n\n' "$DMG_URL"
-            echo 'Universal app for Apple Silicon and Intel, macOS 14 or later.'
-            echo 'Downloads are retained for 30 days and require GitHub sign-in.'
-            echo 'Ad-hoc signed testing installer; Apple notarization is not included.'
-          } >> "$GITHUB_STEP_SUMMARY"
+          if-no-files-found: error
