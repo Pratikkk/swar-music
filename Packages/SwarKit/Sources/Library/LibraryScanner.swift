@@ -59,14 +59,19 @@ public struct LibraryScanner: Sendable {
         let prior = try await repository.existingTracks(folderID: folder.id)
         let priorIDs = Set(prior.values.map(\.id))
         var pending: [ScanFile] = []
+        var artworkAvailability: [String: Bool] = [:]
+        func artworkExists(_ key: String) -> Bool {
+            if let exists = artworkAvailability[key] { return exists }
+            let directory = key.hasPrefix("custom-") ? customArtworkDirectory ?? inspector.artworkDirectory : inspector.artworkDirectory
+            let exists = FileManager.default.fileExists(atPath: directory.appendingPathComponent(key).path)
+            artworkAvailability[key] = exists
+            return exists
+        }
         for file in files {
             if let old = prior[file.relativePath], !old.isMissing, old.fileSize == file.size,
                old.modifiedAt.timeIntervalSince1970 == file.modified.timeIntervalSince1970,
                old.coverStamp == file.coverStamp, old.error == nil,
-               old.artworkKey.map({ key in
-                   let directory = key.hasPrefix("custom-") ? customArtworkDirectory ?? inspector.artworkDirectory : inspector.artworkDirectory
-                   return FileManager.default.fileExists(atPath: directory.appendingPathComponent(key).path)
-               }) ?? true { continue }
+               old.artworkKey.map(artworkExists) ?? true { continue }
             pending.append(file)
         }
         let unchanged = files.count - pending.count

@@ -141,3 +141,26 @@ build 75 passed signature and bundled-codec checks and was installed. Floating a
 expanded controls rendered and native accessibility adjustments worked; the saved
 paused position remained intact. The delayed-hardware handoff is covered by state
 regressions rather than a measured pointer animation/FPS test.
+
+
+## Lightweight library display queries (25 October 2026)
+
+Songs, album details, collection management and search suggestions no longer fetch
+raw tag JSON for display. That payload can include long lyrics/comments. The
+schema-derived display projection substitutes NULL for tagsJSON; the database,
+full repository queries and exact-track lookups preserve the original payload.
+No audio or file metadata is rewritten. Sorting, FTS matching, collection summary
+counts and metadata editing still use the stored data. Scan fingerprint checks
+reuse an artwork existence result once per key per scan, while a new scan checks
+again so deleted cached covers are regenerated.
+
+An opt-in benchmark seeds 1,000 songs with 64 KiB lyric payloads and reads the
+same display fields using the full and lightweight query paths. Three separate
+processes per mode measured median query time of 68.4 ms versus 16.5 ms, and
+median process peak RSS of 198.7 MiB versus 94.0 MiB. The lightweight result
+retains zero raw tag bytes instead of 65,549,000 bytes. These are synthetic
+benchmark-process measurements, not whole-app memory or scrolling FPS claims.
+
+Reproduce with `SWAR_BROWSE_BENCHMARK=full swift test --skip-build --package-path Packages/SwarKit --filter BrowsingMemoryTests.largeTagPayloadBenchmark`, then
+repeat with `SWAR_BROWSE_BENCHMARK=light`. Build the package tests first and run
+modes in separate processes; omit the environment variable for ordinary tests.
