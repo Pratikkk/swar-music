@@ -37,7 +37,7 @@ extension LibraryRepository {
                 results += rows.map { .album(title: $0["album"], artist: $0["albumArtist"]) }
             }
             if let (whereSQL, args) = condition(.all) {
-                let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + whereSQL + " ORDER BY title COLLATE NOCASE, id LIMIT 5", arguments: args)
+                let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT " + browseSelection + " FROM tracks" + whereSQL + " ORDER BY title COLLATE NOCASE, id LIMIT 5", arguments: args)
                 results += tracks.map { .song($0) }
             }
             return results

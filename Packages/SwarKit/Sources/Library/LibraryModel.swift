@@ -200,7 +200,7 @@ public final class LibraryModel {
         let order = sortOrder
         let reversed = reverseSort
         do {
-            let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed, searchScope: scope)
+            let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed, searchScope: scope, includeTagPayload: false)
             let preferences = try await repository.trackPreferences()
             let relocated = try await repository.relocatedTrackIDs()
             guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, scope == searchScope, onlyFavorites == favoritesOnly, recent == recentFirst, order == sortOrder, reversed == reverseSort else { return }
@@ -219,7 +219,7 @@ public final class LibraryModel {
 
     public func collectionPage(filter: CollectionFilter, search: String, scope: TrackSearchScope, limit: Int) async throws -> CollectionPage {
         guard let repository, !isShutDown else { throw LibraryFailure("The library is not ready.") }
-        return try await repository.collectionPage(filter: filter, search: search, scope: scope, limit: limit)
+        return try await repository.collectionPage(filter: filter, search: search, scope: scope, limit: limit, includeTagPayload: false)
     }
 
     public func importArtwork(_ url: URL) async throws -> String {
@@ -441,7 +441,7 @@ public final class LibraryModel {
             do {
                 try Task.checkCancellation()
                 // Ignore the visible/search page: safety requires all indexed candidates.
-                let review = try await repository.collectionPage(filter: .duplicates, limit: 100_000)
+                let review = try await repository.collectionPage(filter: .duplicates, limit: 100_000, includeTagPayload: false)
                 guard review.count == review.tracks.count else {
                     throw LibraryFailure("The duplicate list exceeds the review limit; batch cleanup is unavailable.")
                 }
@@ -752,7 +752,7 @@ public final class LibraryModel {
 
     public func tracks(in album: LibraryAlbumSummary) async -> [LibraryTrack] {
         guard let repository, !isShutDown else { return [] }
-        do { return try await repository.albumTracks(artist: album.artist, title: album.title) }
+        do { return try await repository.albumTracks(artist: album.artist, title: album.title, includeTagPayload: false) }
         catch { errorMessage = error.localizedDescription; return [] }
     }
 
@@ -776,7 +776,7 @@ public final class LibraryModel {
         do {
             let page = try await repository.page(search: query, limit: 500, offset: offset,
                 recentFirst: recent, favoritesOnly: favorites, sortOrder: order,
-                reversed: reversed, searchScope: scope)
+                reversed: reversed, searchScope: scope, includeTagPayload: false)
             guard !isShutDown, !Task.isCancelled, revision == refreshRevision,
                   tracks.count == offset, query == search, scope == searchScope,
                   favorites == favoritesOnly, recent == recentFirst,

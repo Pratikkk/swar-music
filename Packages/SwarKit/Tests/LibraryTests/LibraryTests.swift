@@ -866,6 +866,25 @@ extension LibraryTests {
         restored.shutdown()
     }
 
+    @Test func sharedArtworkChecksRefreshWhenCachedCoverDisappears() async throws {
+        let (temporary, music, artwork) = try workspace()
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        for index in 0..<4 {
+            try FileManager.default.copyItem(at: fixtures.appendingPathComponent("44100-16.wav"), to: music.appendingPathComponent("shared-\(index).wav"))
+        }
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/front.png"), to: music.appendingPathComponent("front.png"))
+        let repository = try LibraryRepository(path: temporary.appendingPathComponent("Library.sqlite").path)
+        let folder = LibraryFolder(path: music.path)
+        try await repository.saveFolder(folder)
+        let scanner = LibraryScanner(repository: repository, artworkDirectory: artwork, codecDirectory: codecs)
+        #expect(try await scanner.scan(folder: folder, root: music).changed == 4)
+        #expect(try await scanner.scan(folder: folder, root: music).changed == 0)
+        let key = try #require(try await repository.page().tracks.first?.artworkKey)
+        try FileManager.default.removeItem(at: artwork.appendingPathComponent(key))
+        #expect(try await scanner.scan(folder: folder, root: music).changed == 4)
+        #expect(FileManager.default.fileExists(atPath: artwork.appendingPathComponent(key).path))
+    }
+
     @Test func pagedSearchAcrossFiftyThousandStoredTracks() async throws {
         let (temporary, music, artwork) = try workspace()
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -911,7 +930,9 @@ extension LibraryTests {
         #expect(results.contains(.album(title: "Beacon Album", artist: "Beacon Artist")))
         #expect(results.filter { if case .song = $0 { true } else { false } }.count == 5)
         let exact = try await repository.searchSuggestions(for: "Beacon Song 599", scope: .title)
-        #expect(exact.contains(.song(tracks[599])))
+        var displayedTrack = tracks[599]
+        displayedTrack.tagsJSON = nil
+        #expect(exact.contains(.song(displayedTrack)))
         try await repository.removeTracksFromLibrary(ids: [tracks[599].id])
         #expect(try await repository.searchSuggestions(for: "Beacon Song 599", scope: .title).isEmpty)
         #expect(try await repository.searchSuggestions(for: "   ").isEmpty)

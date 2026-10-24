@@ -3,6 +3,8 @@ import GRDB
 
 public actor LibraryRepository {
     let database: DatabaseQueue
+    /// Display queries omit raw tags/lyrics without changing their stored values.
+    let browseSelection: String
 
     public init(path: String) throws {
         var config = Configuration()
@@ -144,6 +146,12 @@ public actor LibraryRepository {
                 """)
         }
         try migrator.migrate(database)
+        browseSelection = try database.read { db in
+            try db.columns(in: "tracks").map { column in
+                column.name == "tagsJSON" ? "NULL AS tagsJSON" :
+                    "\"" + column.name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+            }.joined(separator: ", ")
+        }
     }
 
     public func folders() throws -> [LibraryFolder] {
@@ -191,7 +199,7 @@ public actor LibraryRepository {
         }
     }
 
-    public func page(search: String = "", limit: Int = 500, offset: Int = 0, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all) throws -> LibraryPage {
+    public func page(search: String = "", limit: Int = 500, offset: Int = 0, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all, includeTagPayload: Bool = true) throws -> LibraryPage {
         try Task.checkCancellation()
         let query = TrackSearchQuery(search)
         let pattern = query.expression(scope: searchScope)
@@ -203,7 +211,7 @@ public actor LibraryRepository {
             let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0
             arguments += [max(1, limit), max(0, offset)]
             let order = (recentFirst ? TrackSortOrder.recentlyAdded : sortOrder).sqlOrder(reversed: recentFirst ? false : reversed)
-            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ? OFFSET ?", arguments: arguments)
+            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT " + (includeTagPayload ? "*" : browseSelection) + " FROM tracks" + condition + " ORDER BY " + order + " LIMIT ? OFFSET ?", arguments: arguments)
             let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL AND isMissing = 0 AND " + visible) ?? 0
             return LibraryPage(tracks: tracks, count: count, unreadableCount: unreadable)
         }
@@ -314,9 +322,9 @@ public actor LibraryRepository {
         }
     }
 
-    public func albumTracks(artist: String, title: String) throws -> [LibraryTrack] {
+    public func albumTracks(artist: String, title: String, includeTagPayload: Bool = true) throws -> [LibraryTrack] {
         try database.read { db in
-            try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks WHERE albumArtist = ? AND album = ? AND NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1) ORDER BY discNumber, trackNumber, title COLLATE NOCASE, id", arguments: [artist, title])
+            try LibraryTrack.fetchAll(db, sql: "SELECT " + (includeTagPayload ? "*" : browseSelection) + " FROM tracks WHERE albumArtist = ? AND album = ? AND NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1) ORDER BY discNumber, trackNumber, title COLLATE NOCASE, id", arguments: [artist, title])
         }
     }
 
@@ -328,7 +336,7 @@ public actor LibraryRepository {
         }
     }
 
-    public func collectionPage(filter: CollectionFilter = .all, search: String = "", scope: TrackSearchScope = .all, limit: Int = 200) throws -> CollectionPage {
+    public func collectionPage(filter: CollectionFilter = .all, search: String = "", scope: TrackSearchScope = .all, limit: Int = 200, includeTagPayload: Bool = true) throws -> CollectionPage {
         try Task.checkCancellation()
         let query = TrackSearchQuery(search)
         let pattern = query.expression(scope: scope)
@@ -350,7 +358,7 @@ public actor LibraryRepository {
             var pageArguments = arguments
             pageArguments += [max(1, limit)]
             let order = filter == .duplicates ? "title COLLATE NOCASE, artist COLLATE NOCASE, duration, relativePath, id" : "albumArtist COLLATE NOCASE, album COLLATE NOCASE, discNumber, trackNumber, title COLLATE NOCASE, id"
-            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: pageArguments)
+            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT " + (includeTagPayload ? "*" : browseSelection) + " FROM tracks" + condition + " ORDER BY " + order + " LIMIT ?", arguments: pageArguments)
             return CollectionPage(summary: summary, tracks: tracks, count: total)
         }
     }
