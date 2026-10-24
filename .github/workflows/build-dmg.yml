@@ -1,12 +1,10 @@
-mkdir -p .github/workflows
-cat > .github/workflows/build-dmg.yml <<'YAML'
 name: Build DMG
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version to embed in the app and DMG filename
+        description: "Version to embed in the app and DMG filename"
         required: true
         default: "1.0.0"
         type: string
