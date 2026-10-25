@@ -14,6 +14,14 @@ public final class Player {
             scheduleGapless()
         }
     }
+    public var crossfadeLength: CrossfadeLength = .balanced {
+        didSet {
+            guard oldValue != crossfadeLength else { return }
+            outputPreferences.set(crossfadeLength.rawValue, forKey: "smartCrossfadeLength")
+            gaplessPlan = nil
+            scheduleGapless()
+        }
+    }
     public private(set) var isCrossfadeProcessing = false
     public private(set) var title = "No file open"
     public private(set) var subtitle = ""
@@ -202,6 +210,7 @@ public final class Player {
         let token: UUID
         let next: PlaybackContinuation?
         let crossfade: Bool
+        let length: CrossfadeLength
     }
     @ObservationIgnored private var playbackToken: UUID?
     @ObservationIgnored private var gaplessPlan: GaplessPlan?
@@ -224,7 +233,7 @@ public final class Player {
 
     private func scheduleGapless() {
         guard !isBusy, !isRestoredSession, !isShutDown, !isSystemSleeping, !outputRecoveryNeeded, let playbackToken else { return }
-        let plan = GaplessPlan(token: playbackToken, next: nextContinuation(), crossfade: crossfadeEnabled && isCrossfadeProcessing)
+        let plan = GaplessPlan(token: playbackToken, next: nextContinuation(), crossfade: crossfadeEnabled && isCrossfadeProcessing, length: crossfadeLength)
         guard gaplessPlan != plan else { return }
         gaplessPlan = plan
         if let id = plan.next?.id, let entry = queue.first(where: { $0.id == id }) ?? (standaloneEntry?.id == id ? standaloneEntry : nil) {
@@ -248,7 +257,7 @@ public final class Player {
                 guard !Task.isCancelled, let self, self.playbackToken == plan.token,
                       !self.isShutDown, !self.outputRecoveryNeeded else { return }
                 let transition = TransitionPlanner.plan(outgoing: outgoing, incoming: incoming,
-                    outgoingDuration: outgoing.duration, incomingDuration: incoming.duration, notBefore: self.position)
+                    outgoingDuration: outgoing.duration, incomingDuration: incoming.duration, notBefore: self.position, preferredBeats: plan.length.beats)
                 guard transition.mode != .gapless else { return }
                 await engine.prepareCrossfade(next, currentRoot: current.accessRoot, overlap: transition.duration, after: plan.token)
             } catch { /* Analysis is optional: the already-prepared gapless successor remains valid. */ }
@@ -293,6 +302,7 @@ public final class Player {
         self.outputsReader = outputsReader
         self.outputPreferences = outputPreferences
         self.crossfadeEnabled = outputPreferences.bool(forKey: "smartCrossfade")
+        self.crossfadeLength = CrossfadeLength(rawValue: outputPreferences.string(forKey: "smartCrossfadeLength") ?? "") ?? .balanced
         self.preferredOutputUID = outputPreferences.string(forKey: "preferredOutputUID")
         self.sessionStore = sessionStore
         self.volumeController = volumeController
