@@ -15,10 +15,13 @@ struct LyricsView: View {
     @State private var lyrics: TimedLyrics?
     @State private var loading = false
     @State private var requestID = UUID()
-    @State private var clockDate = Date()
-    @State private var clockPosition = 0.0
+    @State private var clock = LyricsPlaybackClock(position: 0, date: Date(), playing: false, seeking: false)
+    /// Extrapolated playback position between engine snapshots; refreshed at
+    /// 10 Hz while playing and snapped on every snapshot or transport change.
+    @State private var interpolatedPosition: Double = 0
     @State private var userScrollPaused = false
     @State private var interaction = 0
+    @State private var followedLine: Int?
 
     var body: some View {
         Group {
@@ -26,20 +29,40 @@ struct LyricsView: View {
             else if loading { ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity) }
             else { empty }
         }
-        .task(id: player.currentURL) { await load() }
+        .task(id: "\(player.currentURL?.absoluteString ?? "")-\(library.lyricsRevision)") { await load() }
+        .overlay(alignment: .topTrailing) {
+            if let lyrics {
+                Text(lyrics.source == .embedded ? "Embedded" : lyrics.source == .custom ? "Linked LRC" : "Local LRC")
+                    .font(.caption2).foregroundStyle(.secondary).padding(10).allowsHitTesting(false)
+            }
+        }
         .onChange(of: player.position, initial: true) { synchronizeClock() }
         .onChange(of: player.isPlaying) { synchronizeClock() }
+        .onChange(of: player.isSeeking) { synchronizeClock() }
+        // A coarse 10 Hz extrapolation keeps line transitions and predictive
+        // scrolling synchronized with the 60 Hz word sweep between engine
+        // snapshots, without invalidating the panel at display cadence.
+        .task(id: player.isPlaying) {
+            guard player.isPlaying else { return }
+            while player.isPlaying && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                interpolatedPosition = clock.displayPosition(at: Date())
+            }
+        }
     }
 
     private func synchronizeClock() {
-        clockPosition = player.position
-        clockDate = Date()
+        clock = LyricsPlaybackClock(position: player.position, date: Date(),
+            playing: player.isPlaying, seeking: player.isSeeking)
+        interpolatedPosition = clock.displayPosition(at: Date())
     }
 
     private func load() async {
         let request = UUID()
         requestID = request
         lyrics = nil
+        followedLine = nil
         userScrollPaused = false
         loading = true
         guard let url = player.currentURL else { loading = false; return }
@@ -56,27 +79,55 @@ struct LyricsView: View {
     }
 
     private func panel(_ lyrics: TimedLyrics) -> some View {
-        let active = lyrics.isSynced ? lyrics.lineIndex(at: player.position) : nil
+        let active = lyrics.isSynced ? lyrics.lineIndex(at: interpolatedPosition) : nil
         return GeometryReader { geometry in
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: compact ? 18 : 24) {
-                        Color.clear.frame(height: geometry.size.height * 0.32).accessibilityHidden(true)
-                        ForEach(lyrics.lines) { line in
-                            lyricLine(line, lyrics: lyrics, active: active)
-                                .id(line.id)
+                    // Normal songs are small enough to measure once. Lazy stacks estimate
+                    // offscreen heights, which makes scrollTo correct its target mid-flight.
+                    if lyrics.lines.count <= 1000 {
+                        VStack(alignment: .leading, spacing: compact ? 18 : 24) {
+                            lyricRows(lyrics, active: active, height: geometry.size.height)
                         }
-                        Color.clear.frame(height: geometry.size.height * 0.5).accessibilityHidden(true)
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: compact ? 18 : 24) {
+                            lyricRows(lyrics, active: active, height: geometry.size.height)
+                        }
                     }
-                    .padding(.horizontal, compact ? 16 : 24)
                 }
+                .contentMargins(.horizontal, compact ? 16 : 24)
                 .scrollIndicators(.never)
                 .mask(fadeMask)
                 .background(LyricsScrollObserver(onScroll: pauseFollowing))
                 .simultaneousGesture(DragGesture(minimumDistance: 18).onChanged { _ in pauseFollowing() })
                 .onChange(of: active, initial: true) { _, _ in follow(active, proxy: proxy) }
+                // A completed seek always re-centers, even when the target line is
+                // already active: tapping the current line or seeking within it must
+                // not leave the view parked where the user last scrolled.
+                .onChange(of: player.isSeeking) { _, seeking in
+                    guard !seeking, !userScrollPaused else { return }
+                    followedLine = nil
+                    follow(active, proxy: proxy)
+                }
                 .onChange(of: userScrollPaused) { _, paused in
-                    if !paused { follow(active, proxy: proxy) }
+                    if !paused { followedLine = nil; follow(active, proxy: proxy, resuming: true) }
+                }
+                .task(id: LyricFollowRequest(active: active, playing: player.isPlaying,
+                                             seeking: player.isSeeking, paused: userScrollPaused)) {
+                    guard player.isPlaying, !player.isSeeking, !userScrollPaused, !reduceMotion,
+                          let startActive = active, lyrics.lines.indices.contains(startActive + 1) else { return }
+                    let next = lyrics.lines[startActive + 1]
+                    // Begin gliding just before the vocal entry, rather than waiting for
+                    // the next engine snapshot to discover that it already started.
+                    let delay = next.time - clock.displayPosition(at: Date()) - 0.18
+                    guard delay > 0 else { return }
+                    do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                    // The gesture may have been superseded while sleeping: a seek, a
+                    // song change, or a pause. Follow only if this line is still the
+                    // active one, so two competing scroll animations can never race.
+                    guard !Task.isCancelled, !userScrollPaused, player.isPlaying, !player.isSeeking,
+                          lyrics.lineIndex(at: clock.displayPosition(at: Date())) == startActive else { return }
+                    follow(next.id, proxy: proxy)
                 }
                 .task(id: interaction) {
                     guard userScrollPaused else { return }
@@ -89,11 +140,21 @@ struct LyricsView: View {
         .accessibilityLabel("Lyrics")
     }
 
-    private func follow(_ active: Int?, proxy: ScrollViewProxy) {
-        guard let active, !userScrollPaused else { return }
-        if reduceMotion { proxy.scrollTo(active, anchor: UnitPoint(x: 0.5, y: 0.35)) }
+    @ViewBuilder private func lyricRows(_ lyrics: TimedLyrics, active: Int?, height: CGFloat) -> some View {
+        Color.clear.frame(height: height * 0.32).accessibilityHidden(true)
+        ForEach(lyrics.lines) { line in
+            lyricLine(line, lyrics: lyrics, active: active).id(line.id)
+        }
+        Color.clear.frame(height: height * 0.65).accessibilityHidden(true)
+    }
+
+    private func follow(_ active: Int?, proxy: ScrollViewProxy, resuming: Bool = false) {
+        guard let active, !userScrollPaused, followedLine != active else { return }
+        let first = followedLine == nil && !resuming
+        followedLine = active
+        if reduceMotion || first { proxy.scrollTo(active, anchor: UnitPoint(x: 0.5, y: 0.35)) }
         else {
-            withAnimation(.spring(response: 0.65, dampingFraction: 0.86)) {
+            withAnimation(.interpolatingSpring(mass: 1, stiffness: 85, damping: 20)) {
                 proxy.scrollTo(active, anchor: UnitPoint(x: 0.5, y: 0.35))
             }
         }
@@ -108,15 +169,19 @@ struct LyricsView: View {
             userScrollPaused = false
             Task { await player.seek(to: line.time) }
         } label: {
-            Group {
+            Text(line.displayText)
+            // Keep the measuring text in place. The timeline is paint-only: switching
+            // to/from word highlighting must never change the scroll target's height.
+            .opacity(selected && lyrics.isWordTimed && !reduceMotion ? 0 : 1)
+            .overlay(alignment: .topLeading) {
                 if selected, lyrics.isWordTimed, !reduceMotion {
-                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !player.isPlaying)) { context in
-                        let position = min(player.duration, clockPosition + (player.isPlaying ? max(0, context.date.timeIntervalSince(clockDate)) : 0))
+                    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !player.isPlaying)) { context in
                         LyricsSweepingPhrase(line: line,
-                            end: line.id + 1 < lyrics.lines.count ? lyrics.lines[line.id + 1].time : player.duration,
-                            position: position)
+                            end: line.id + 1 < lyrics.lines.count ? lyrics.lines[line.id + 1].time
+                                : (player.duration > 0 ? player.duration : line.time + 4),
+                            position: clock.displayPosition(at: context.date))
                     }
-                } else { Text(line.displayText) }
+                }
             }
             // A fixed font prevents rewrapping and scroll jumps on active-line changes.
             .font(.system(size: compact ? 19 : 26, weight: .bold))
@@ -157,6 +222,13 @@ struct LyricsView: View {
         let total = Int(seconds)
         return String(format: "%d:%02d", total / 60, total % 60)
     }
+}
+
+private struct LyricFollowRequest: Equatable {
+    let active: Int?
+    let playing: Bool
+    let seeking: Bool
+    let paused: Bool
 }
 
 /// Smooth word illumination without changing phrase geometry or relaying display ticks

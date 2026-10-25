@@ -59,6 +59,44 @@ public final class LibraryModel {
     private var started = false
     private let storageDirectory: URL?
     private let codecDirectory: URL?
+    private var localLyrics: LocalLyricsStore?
+    public private(set) var lyricsRevision = 0
+
+    public func reloadLyrics() { lyricsRevision &+= 1 }
+
+    public func lyricsSettings(for id: String) async throws -> LocalLyricsSettings {
+        guard let localLyrics else { throw LibraryFailure("The library is not ready.") }
+        return try await localLyrics.get(id)
+    }
+
+    public func attachLyrics(_ url: URL, to id: String) async throws {
+        guard let localLyrics else { throw LibraryFailure("The library is not ready.") }
+        try await localLyrics.attach(url, to: id)
+        reloadLyrics()
+    }
+
+    public func setLyricsDelay(_ delay: Double, for id: String) async throws {
+        guard delay.isFinite, abs(delay) <= 60, let localLyrics else { throw LibraryFailure("Use a timing adjustment between −60 and +60 seconds.") }
+        var value = try await localLyrics.get(id)
+        value.delay = delay
+        try await localLyrics.save(value, for: id)
+        reloadLyrics()
+    }
+
+    public func removeLyricsAssociation(for id: String) async throws {
+        guard let localLyrics else { throw LibraryFailure("The library is not ready.") }
+        var value = try await localLyrics.get(id)
+        value.bookmark = nil
+        try await localLyrics.save(value, for: id)
+        reloadLyrics()
+    }
+
+    public func lyricsFile(for track: LibraryTrack) async throws -> URL {
+        if let url = try await localLyrics?.associatedURL(track.id) { return url }
+        let url = try location(for: track).file.deletingPathExtension().appendingPathExtension("lrc")
+        guard FileManager.default.fileExists(atPath: url.path) else { throw LibraryFailure("This song has no local lyrics file.") }
+        return url
+    }
 
     public init(storageDirectory: URL? = nil, codecDirectory: URL? = nil) {
         self.storageDirectory = storageDirectory
@@ -74,6 +112,7 @@ public final class LibraryModel {
             let cache = try storageDirectory?.appendingPathComponent("Artwork") ?? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("Swar/Artwork", isDirectory: true)
             try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+            localLyrics = LocalLyricsStore(file: support.appendingPathComponent("LyricsSettings.json"))
             let journal = support.appendingPathComponent("TrashJournal", isDirectory: true)
             try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
             trashJournalDirectory = journal
@@ -1021,6 +1060,23 @@ public final class LibraryModel {
     /// tags are the fallback so the view can still show something. Returns nil
     /// when the song carries no lyrics at all.
     public func lyrics(for url: URL) async -> TimedLyrics? {
+        guard let track = await track(at: url) else { return nil }
+        do {
+            let settings = try await lyricsSettings(for: track.id)
+            let result: TimedLyrics?
+            if settings.bookmark != nil, let raw = try await localLyrics?.associatedText(track.id) {
+                result = LyricsParser.parse(raw, source: .custom) ?? LyricsParser.unsynced(raw, source: .custom)
+            } else {
+                result = await automaticLyrics(for: url)
+            }
+            return result?.delayed(by: settings.delay)
+        } catch {
+            errorMessage = "Couldn’t load lyrics: \(error.localizedDescription). Choose the lyrics file again."
+            return nil
+        }
+    }
+
+    private func automaticLyrics(for url: URL) async -> TimedLyrics? {
         guard !isShutDown, let track = await track(at: url) else { return nil }
         var embeddedRaw: String?
         if let json = track.tagsJSON, let data = json.data(using: .utf8),

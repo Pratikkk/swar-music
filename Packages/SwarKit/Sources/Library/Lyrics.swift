@@ -34,6 +34,7 @@ public struct TimedLyrics: Sendable, Equatable {
     public enum Source: String, Sendable {
         case embedded
         case sidecar
+        case custom
     }
 
     public let source: Source
@@ -42,6 +43,15 @@ public struct TimedLyrics: Sendable, Equatable {
     public init(source: Source, lines: [LyricsLine]) {
         self.source = source
         self.lines = lines
+    }
+
+    public func delayed(by seconds: Double) -> TimedLyrics {
+        guard seconds.isFinite, seconds != 0, isSynced else { return self }
+        return TimedLyrics(source: source, lines: lines.map { line in
+            LyricsLine(id: line.id, time: max(0, line.time + seconds), words: line.words.map {
+                LyricsWord(time: $0.time.map { max(0, $0 + seconds) }, text: $0.text)
+            })
+        })
     }
 
     /// False for plain unsynchronised lyrics, which render without highlighting.
@@ -68,6 +78,44 @@ public struct TimedLyrics: Sendable, Equatable {
             active = index
         }
         return active
+    }
+}
+
+/// Presentation clock that bridges the engine's polled position snapshots.
+///
+/// The engine publishes position at 250–400 ms intervals. Lyrics transitions
+/// must not wait for the next snapshot, so the view extrapolates from the last
+/// snapshot while playing. Extrapolation is capped so a playback stall or a
+/// late snapshot can only ever run the clock a bounded distance ahead, and a
+/// seek suspends extrapolation entirely until the engine confirms the target.
+public struct LyricsPlaybackClock: Sendable, Equatable {
+    public let position: TimeInterval
+    public let date: Date
+    public let playing: Bool
+    public let seeking: Bool
+    /// How far ahead of the last snapshot the clock may extrapolate.
+    public let maximumExtrapolation: TimeInterval
+
+    public init(position: TimeInterval, date: Date, playing: Bool, seeking: Bool,
+                maximumExtrapolation: TimeInterval = 0.6) {
+        self.position = position
+        self.date = date
+        self.playing = playing
+        self.seeking = seeking
+        self.maximumExtrapolation = maximumExtrapolation
+    }
+
+    public func displayPosition(at now: Date) -> TimeInterval {
+        guard playing, !seeking else { return position }
+        let elapsed = max(0, now.timeIntervalSince(date))
+        guard elapsed.isFinite else { return position }
+        return position + min(elapsed, maximumExtrapolation)
+    }
+
+    /// True when a new snapshot differs from the extrapolated clock enough to
+    /// be a seek rather than ordinary progression between polls.
+    public func isDiscontinuity(at newPosition: TimeInterval) -> Bool {
+        abs(newPosition - displayPosition(at: Date())) > maximumExtrapolation
     }
 }
 

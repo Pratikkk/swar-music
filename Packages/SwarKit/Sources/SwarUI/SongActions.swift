@@ -23,6 +23,7 @@ private struct SongActions<Extra: View>: ViewModifier {
     @State private var showNewPlaylist = false
     @State private var playlistName = ""
     @State private var actionError: String?
+    @State private var showLyricsSettings = false
 
     func body(content: Content) -> some View {
         content
@@ -40,6 +41,7 @@ private struct SongActions<Extra: View>: ViewModifier {
                 if let player { ArtworkEditorView(tracks: [track], library: library, player: player) }
             }
             .sheet(isPresented: $showInfo) { SongInfoView(track: track, library: library) }
+            .sheet(isPresented: $showLyricsSettings) { LyricsSettingsView(track: track, library: library) }
             .alert("New Playlist", isPresented: $showNewPlaylist) {
                 TextField("Playlist Name", text: $playlistName)
                 Button("Create") {
@@ -99,6 +101,29 @@ private struct SongActions<Extra: View>: ViewModifier {
         Divider()
         Button("Get Info", systemImage: "info.circle") { showInfo = true }
         Button("Edit Details…", systemImage: "pencil") { showEditor = true }
+        Menu("Lyrics", systemImage: "quote.bubble") {
+            Button("Choose Lyrics File…") {
+                Task {
+                    do {
+                        if let url = await LocalLyricsPicker.choose() { try await library.attachLyrics(url, to: track.id) }
+                    } catch { actionError = error.localizedDescription }
+                }
+            }
+            Button("Adjust Timing…") { showLyricsSettings = true }
+            Button("Reload Lyrics") { library.reloadLyrics() }
+            Button("Show Lyrics File in Finder") {
+                Task {
+                    do { NSWorkspace.shared.activateFileViewerSelecting([try await library.lyricsFile(for: track)]) }
+                    catch { actionError = error.localizedDescription }
+                }
+            }
+            Button("Remove Lyrics Association") {
+                Task {
+                    do { try await library.removeLyricsAssociation(for: track.id) }
+                    catch { actionError = error.localizedDescription }
+                }
+            }
+        }
         if player != nil { Button("Edit Album Artwork…", systemImage: "photo") { showArtwork = true } }
         Button(library.favoriteTrackIDs.contains(track.id) ? "Remove from Favourites" : "Add to Favourites",
                systemImage: library.favoriteTrackIDs.contains(track.id) ? "star.slash" : "star") {
@@ -186,6 +211,7 @@ private struct SongInfoView: View {
                     if let error = track.error { info("Read Error", error) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
+            RhythmAnalysisView(track: track, library: library)
             HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
         }
         .padding(24).frame(width: 500, height: 500).textSelection(.enabled)
