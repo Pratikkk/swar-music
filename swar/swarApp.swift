@@ -9,11 +9,13 @@ import SwiftUI
 import AppKit
 import SwarUI
 import Library
+import Player
 
 @main
 struct swarApp: App {
     @NSApplicationDelegateAdaptor(SwarAppDelegate.self) private var appDelegate
     @State private var library = LibraryModel()
+    @State private var player = Player(sessionStore: .applicationDefault())
     init() {
         if CommandLine.arguments.contains("--verify-bundled-codecs") {
             BundledCodecVerification.runAndExit()
@@ -26,13 +28,13 @@ struct swarApp: App {
             if CommandLine.arguments.contains("--format-chip-preview") {
                 FormatChipPreview().swarAppearancePreferences()
             } else {
-                LibraryView(library: library)
+                LibraryView(library: library, player: player)
                     .welcomeGuide(library: library)
                     .frame(minWidth: 760, minHeight: 500)
                     .swarAppearancePreferences()
             }
             #else
-            LibraryView(library: library)
+            LibraryView(library: library, player: player)
                 .welcomeGuide(library: library)
                 .frame(minWidth: 760, minHeight: 500)
                 .swarAppearancePreferences()
@@ -43,7 +45,7 @@ struct swarApp: App {
         .commands { SwarCommands() }
 
         Settings {
-            LibrarySettingsView(library: library).swarAppearancePreferences()
+            LibrarySettingsView(library: library, player: player).swarAppearancePreferences()
         }
     }
 }

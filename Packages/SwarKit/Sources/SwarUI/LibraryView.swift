@@ -32,7 +32,7 @@ public struct LibraryView: View {
     @AppStorage("reverseSongSort") private var reverseSongSort = false
     @FocusState private var searchFocused: Bool
     @FocusState private var sidebarFocused: Bool
-    @State private var player = Player(sessionStore: .applicationDefault())
+    @State private var player: Player
     @State private var selectedAlbum: String?
     @State private var requestedAlbum: String?
     @State private var showImporter = false
@@ -54,8 +54,9 @@ public struct LibraryView: View {
     @State private var playlistToRename: LibraryPlaylist?
     @State private var playlistToDelete: LibraryPlaylist?
 
-    public init(library: LibraryModel = LibraryModel()) {
+    public init(library: LibraryModel = LibraryModel(), player: Player? = nil) {
         _library = State(initialValue: library)
+        _player = State(initialValue: player ?? Player(sessionStore: .applicationDefault()))
     }
 
     public var body: some View {

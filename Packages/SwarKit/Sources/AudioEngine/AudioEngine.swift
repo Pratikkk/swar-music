@@ -60,6 +60,8 @@ public protocol PlaybackDriving: Sendable {
     func snapshot() async -> PlaybackSnapshot
     func shutdown()
     func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async
+    func open(_ url: URL, outputDeviceID: UInt32?, crossfade: Bool) async throws -> PlaybackSnapshot
+    func prepareCrossfade(_ next: PlaybackContinuation, currentRoot: URL, overlap: Double, after token: UUID) async
     func suspendOutput() async -> PlaybackSnapshot
     func recoverOutput(_ deviceID: UInt32?, resume: Bool, exclusive: Bool) async throws -> PlaybackSnapshot
     func selectOutput(_ deviceID: UInt32?, pause: Bool, exclusive: Bool) async throws -> PlaybackSnapshot
@@ -79,6 +81,10 @@ public extension PlaybackDriving {
         return state
     }
     func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async {}
+    func open(_ url: URL, outputDeviceID: UInt32?, crossfade: Bool) async throws -> PlaybackSnapshot {
+        try await open(url, outputDeviceID: outputDeviceID)
+    }
+    func prepareCrossfade(_ next: PlaybackContinuation, currentRoot: URL, overlap: Double, after token: UUID) async {}
     func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot { try await open(url) }
     func selectOutput(_ deviceID: UInt32?, pause: Bool, exclusive: Bool = false) async throws -> PlaybackSnapshot { await snapshot() }
 }
@@ -119,10 +125,18 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         }
     }
 
+    public func open(_ url: URL, outputDeviceID: UInt32?, crossfade: Bool) async throws -> PlaybackSnapshot {
+        try await perform { state in
+            state.deviceID = outputDeviceID
+            state.processed = crossfade
+            return try Self.open(url, on: state)
+        }
+    }
+
     private static func open(_ url: URL, on state: EngineState) throws -> PlaybackSnapshot {
         state.closeSession()
         do {
-            state.session = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: state.deviceID, exclusive: state.exclusiveOutput)
+            state.session = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: state.deviceID, exclusive: state.exclusiveOutput, processed: state.processed)
             state.url = url
             state.error = nil; state.needsRecovery = false
             return state.snapshot()
@@ -212,7 +226,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 state.deviceID = deviceID
                 if let recovery = state.routeRecovery {
                     do {
-                        let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), url: recovery.url, deviceID: deviceID, entryID: recovery.entryID, token: recovery.token, exclusive: exclusive)
+                        let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), url: recovery.url, deviceID: deviceID, entryID: recovery.entryID, token: recovery.token, exclusive: exclusive, processed: state.processed)
                         state.session = replacement; state.url = recovery.url
                         try replacement.seek(recovery.position)
                         if resumeOverride == true { try replacement.play() }
@@ -243,7 +257,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
             let position = audible.position
             state.closeSession()
             do {
-                let replacement = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: deviceID, entryID: entryID, token: playbackToken, exclusive: exclusive)
+                let replacement = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: deviceID, entryID: entryID, token: playbackToken, exclusive: exclusive, processed: state.processed)
                 state.session = replacement; state.url = url
                 try replacement.seek(position)
                 if resume { try replacement.play() }
@@ -256,7 +270,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 // Best-effort rollback retains the song and position on an incompatible output.
                 do {
                     guard !force else { throw failure }
-                    let old = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: previous, entryID: entryID, token: playbackToken, exclusive: state.exclusiveOutput)
+                    let old = try OutputSession(decoder: DecoderFactory.open(url: url), url: url, deviceID: previous, entryID: entryID, token: playbackToken, exclusive: state.exclusiveOutput, processed: state.processed)
                     state.session = old; state.url = url
                     try old.seek(position)
                     if resume { try old.play() }
@@ -276,6 +290,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         let request = UUID()
         let shouldPrepare = (try? await perform { state -> Bool in
             guard let session = state.session, session.pcm.current.token == token else { return false }
+            if session.pcm.hasAudibleCrossfade { return false }
             if session.pcm.requestedID == next?.id, session.pcm.requestedToken == token { return false }
             state.preparation = request
             state.preparer.invalidate(request)
@@ -285,12 +300,32 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
             return next != nil
         }) ?? false
         guard shouldPrepare, let next, !Task.isCancelled else { return }
-        let prepared = await state.preparer.prepare(next, request: request)
+        let rate = try? await perform { state in state.session.flatMap { $0.processed ? $0.decoder.pcmFormat.mSampleRate : nil } }
+        let prepared = await state.preparer.prepare(next, request: request, outputRate: rate ?? nil)
         guard !Task.isCancelled, let prepared else { return }
         _ = try? await perform { state in
             guard state.preparation == request, let session = state.session,
                   session.pcm.current.token == token else { return }
             _ = session.pcm.install(prepared)
+        }
+    }
+
+    public func prepareCrossfade(_ next: PlaybackContinuation, currentRoot: URL, overlap: Double, after token: UUID) async {
+        guard !Task.isCancelled else { return }
+        let context = try? await perform { state -> (PlaybackContinuation, Double, UUID)? in
+            guard let session = state.session, session.processed, session.pcm.current.token == token,
+                  session.pcm.requestedID == next.id, !session.pcm.hasQueuedBoundary else { return nil }
+            return (PlaybackContinuation(id: token, url: session.pcm.current.url, accessRoot: currentRoot),
+                    session.decoder.pcmFormat.mSampleRate, state.preparation)
+        }
+        guard let context = context ?? nil else { return }
+        let pair = await state.preparer.prepareCrossfade(current: context.0, next: next,
+            overlap: overlap, rate: context.1, request: context.2)
+        guard !Task.isCancelled, let pair else { return }
+        _ = try? await perform { state in
+            guard state.preparation == context.2, let session = state.session,
+                  session.pcm.current.token == token else { return }
+            _ = session.pcm.install(pair)
         }
     }
 
@@ -331,6 +366,7 @@ private final class EngineState: @unchecked Sendable {
     var preparation = UUID()
     var deviceID: UInt32?
     var exclusiveOutput = false
+    var processed = false
     var url: URL?
     var routeRecovery: (url: URL, position: Double, entryID: UUID?, token: UUID)?
     var error: String?
@@ -372,7 +408,7 @@ private final class EngineState: @unchecked Sendable {
         defer { updateTimer() }
         let audible = session?.pcm.audible
         if let audible { url = audible.segment.url }
-        return PlaybackSnapshot(source: audible?.segment.decoder.source,
+        return PlaybackSnapshot(source: audible.map { ($0.segment.decoder as? ConvertedPCMDecoder)?.originalSource ?? $0.segment.decoder.source },
                                 output: session?.outputStatus.output,
                                 clientPCM: audible.map { value in
                                     let pcm = value.segment.decoder.pcmFormat
@@ -399,6 +435,7 @@ private final class EngineState: @unchecked Sendable {
 
 private final class OutputSession {
     let pcm: GaplessPCM
+    let processed: Bool
     var decoder: any AudioDecoding { pcm.current.decoder }
     let device: OutputDevice
     private var deviceMonitor: OutputDeviceMonitor?
@@ -413,9 +450,10 @@ private final class OutputSession {
 
     let exclusive: Bool
 
-    init(decoder: any AudioDecoding, url: URL, deviceID: UInt32? = nil, entryID: UUID? = nil, token: UUID? = nil, exclusive: Bool = false) throws {
-        self.exclusive = exclusive
-        pcm = try GaplessPCM(decoder: decoder, url: url, entryID: entryID, token: token)
+    init(decoder: any AudioDecoding, url: URL, deviceID: UInt32? = nil, entryID: UUID? = nil, token: UUID? = nil, exclusive: Bool = false, processed: Bool = false) throws {
+        self.exclusive = exclusive; self.processed = processed
+        let decoder: any AudioDecoding = try processed ? ConvertedPCMDecoder(decoder: decoder, sampleRate: decoder.pcmFormat.mSampleRate) : decoder
+        pcm = try GaplessPCM(decoder: decoder, url: url, entryID: entryID, token: token, processed: processed)
         device = try OutputDevice(id: deviceID)
         do {
             if exclusive { try device.setHogged(true) }

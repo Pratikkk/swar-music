@@ -7,6 +7,14 @@ import Observation
 
 @MainActor @Observable
 public final class Player {
+    public var crossfadeEnabled = false {
+        didSet {
+            outputPreferences.set(crossfadeEnabled, forKey: "smartCrossfade")
+            gaplessPlan = nil
+            scheduleGapless()
+        }
+    }
+    public private(set) var isCrossfadeProcessing = false
     public private(set) var title = "No file open"
     public private(set) var subtitle = ""
     public private(set) var artworkURL: URL?
@@ -193,6 +201,7 @@ public final class Player {
     private struct GaplessPlan: Equatable {
         let token: UUID
         let next: PlaybackContinuation?
+        let crossfade: Bool
     }
     @ObservationIgnored private var playbackToken: UUID?
     @ObservationIgnored private var gaplessPlan: GaplessPlan?
@@ -215,7 +224,7 @@ public final class Player {
 
     private func scheduleGapless() {
         guard !isBusy, !isRestoredSession, !isShutDown, !isSystemSleeping, !outputRecoveryNeeded, let playbackToken else { return }
-        let plan = GaplessPlan(token: playbackToken, next: nextContinuation())
+        let plan = GaplessPlan(token: playbackToken, next: nextContinuation(), crossfade: crossfadeEnabled && isCrossfadeProcessing)
         guard gaplessPlan != plan else { return }
         gaplessPlan = plan
         if let id = plan.next?.id, let entry = queue.first(where: { $0.id == id }) ?? (standaloneEntry?.id == id ? standaloneEntry : nil) {
@@ -224,9 +233,25 @@ public final class Player {
         }
         gaplessTask?.cancel()
         let engine = engine
-        gaplessTask = Task {
+        let current = currentEntryID.flatMap { id in queue.first { $0.id == id } } ?? currentMediaEntry
+        let nextEntry = plan.next.flatMap { next in queue.first { $0.id == next.id } ?? (standaloneEntry?.id == next.id ? standaloneEntry : nil) }
+        gaplessTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
             await engine.prepareNext(plan.next, after: plan.token)
+            guard plan.crossfade, !Task.isCancelled, let next = plan.next, let current,
+                  current.url != next.url else { return }
+            // Conservatively preserve all adjacent tracks from the same album.
+            if let album = current.album, !album.isEmpty, album == nextEntry?.album { return }
+            do {
+                let outgoing = try await RhythmStore.shared.profile(url: current.url, accessRoot: current.accessRoot)
+                let incoming = try await RhythmStore.shared.profile(url: next.url, accessRoot: next.accessRoot)
+                guard !Task.isCancelled, let self, self.playbackToken == plan.token,
+                      !self.isShutDown, !self.outputRecoveryNeeded else { return }
+                let transition = TransitionPlanner.plan(outgoing: outgoing, incoming: incoming,
+                    outgoingDuration: outgoing.duration, incomingDuration: incoming.duration, notBefore: self.position)
+                guard transition.mode != .gapless else { return }
+                await engine.prepareCrossfade(next, currentRoot: current.accessRoot, overlap: transition.duration, after: plan.token)
+            } catch { /* Analysis is optional: the already-prepared gapless successor remains valid. */ }
         }
     }
 
@@ -267,6 +292,7 @@ public final class Player {
         self.engine = engine
         self.outputsReader = outputsReader
         self.outputPreferences = outputPreferences
+        self.crossfadeEnabled = outputPreferences.bool(forKey: "smartCrossfade")
         self.preferredOutputUID = outputPreferences.string(forKey: "preferredOutputUID")
         self.sessionStore = sessionStore
         self.volumeController = volumeController
@@ -589,7 +615,8 @@ public final class Player {
             // A missing catalogue must never turn a playable song into an import/open error.
             if let outputs = try? await outputsReader.snapshot(), audioOutputs != outputs { audioOutputs = outputs }
             let target = audioOutputs.resolve(preferredOutputUID)?.id
-            var snapshot = try await engine.open(url, outputDeviceID: target)
+            isCrossfadeProcessing = crossfadeEnabled
+            var snapshot = try await engine.open(url, outputDeviceID: target, crossfade: isCrossfadeProcessing)
             routedOutputID = snapshot.output?.id ?? target
             routedOutputUID = audioOutputs.devices.first { $0.id == routedOutputID }?.uid
             guard generation == revision, !isShutDown else { return false }

@@ -1,5 +1,6 @@
 import SwiftUI
 import Library
+import Player
 import UniformTypeIdentifiers
 
 /// Settings and browsing share the same model, watchers, and security-scoped access.
@@ -7,15 +8,17 @@ import UniformTypeIdentifiers
 public struct LibrarySettingsView: View {
     @Environment(\.swarPalette) private var palette
     let library: LibraryModel
+    let player: Player?
     @State private var showFolderPicker = false
     @State private var folderToRemove: LibraryFolder?
     @State private var showRemoveConfirmation = false
     @State private var pickerError: String?
 
-    public init(library: LibraryModel) { self.library = library }
+    public init(library: LibraryModel, player: Player? = nil) { self.library = library; self.player = player }
 
     public var body: some View {
         TabView {
+            if let player { PlaybackSettingsView(player: player).tabItem { Label("Playback", systemImage: "play.circle") } }
             AppearanceSettingsView()
                 .tabItem { Label("Appearance", systemImage: "paintpalette") }
             SidebarSettingsView()

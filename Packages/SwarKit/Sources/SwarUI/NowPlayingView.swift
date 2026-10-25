@@ -193,6 +193,9 @@ private struct NowPlayingArtwork: View {
         } else if player.underrunFrames > 0 {
             Label("Buffer underruns: \(player.underrunFrames) frames", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
+        } else if player.isCrossfadeProcessing {
+            Label("Smart Crossfade · Processed audio", systemImage: "waveform.path")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }
