@@ -12,6 +12,7 @@ struct NowPlayingView: View {
     let browseAlbum: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var showQueue = false
+    @State private var showLyrics = false
     @State private var showAppearance = false
 
     var body: some View {
@@ -38,7 +39,18 @@ struct NowPlayingView: View {
                 Color.clear.frame(width: 0, height: 28)
                     .currentSongActions(library: library, player: player, showsButton: true)
                 SleepTimerMenu(timer: player.sleepTimer)
-                Button { showQueue.toggle() } label: {
+                Button { showLyrics.toggle(); if showLyrics { showQueue = false } } label: {
+                    Label("Lyrics", systemImage: "quote.bubble")
+                        .font(.system(size: 12, weight: .medium))
+                        .padding(.horizontal, 10).frame(height: 28)
+                        .foregroundStyle(showLyrics ? palette.accent : .primary)
+                        .background(.regularMaterial, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(showLyrics ? "Hide Lyrics" : "Show Lyrics")
+                .accessibilityAddTraits(showLyrics ? .isSelected : [])
+                .help("Lyrics from the song's lyrics tag or an .lrc file in its folder")
+                Button { showQueue.toggle(); if showQueue { showLyrics = false } } label: {
                     Label("Up Next · \(player.upcomingEntries.count)", systemImage: "list.bullet")
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, 10).frame(height: 28)
@@ -54,7 +66,10 @@ struct NowPlayingView: View {
                 let sideBySide = geometry.size.width >= 800
                 HStack(spacing: 0) {
                     VStack(spacing: 0) {
-                        if showQueue && !sideBySide {
+                        if showLyrics && !sideBySide {
+                            LyricsView(player: player, library: library)
+                                .frame(maxHeight: .infinity)
+                        } else if showQueue && !sideBySide {
                             QueueView(player: player, library: library, embedded: true)
                                 .frame(maxHeight: .infinity)
                         } else {
@@ -65,7 +80,12 @@ struct NowPlayingView: View {
                         ExpandedPlayerControls(player: player)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if showQueue && sideBySide {
+                    if showLyrics && sideBySide {
+                        LyricsView(player: player, library: library)
+                            .frame(width: 320)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+                            .padding(.trailing, 16).padding(.bottom, 16)
+                    } else if showQueue && sideBySide {
                         QueueView(player: player, library: library, embedded: true)
                             .frame(width: 300)
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))

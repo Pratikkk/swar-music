@@ -1016,6 +1016,34 @@ public final class LibraryModel {
         return (scope.url.appendingPathComponent(track.relativePath), scope.url)
     }
 
+    /// Resolve lyrics for a playing file. Synced sources win: an embedded LRC
+    /// tag or a `.lrc` sidecar next to the audio; plain (unsynchronised) lyric
+    /// tags are the fallback so the view can still show something. Returns nil
+    /// when the song carries no lyrics at all.
+    public func lyrics(for url: URL) async -> TimedLyrics? {
+        guard !isShutDown, let track = await track(at: url) else { return nil }
+        var embeddedRaw: String?
+        if let json = track.tagsJSON, let data = json.data(using: .utf8),
+           let tags = try? JSONDecoder().decode(AudioTags.self, from: data) {
+            embeddedRaw = tags.lyrics
+        }
+        guard let location = try? location(for: track) else {
+            return LyricsParser.parse(embeddedRaw ?? "", source: .embedded)
+                ?? LyricsParser.unsynced(embeddedRaw ?? "", source: .embedded)
+        }
+        let sidecar = location.file.deletingPathExtension().appendingPathExtension("lrc")
+        let sidecarRaw = await Task.detached(priority: .userInitiated) { () -> String? in
+            let acquired = location.root.startAccessingSecurityScopedResource()
+            defer { if acquired { location.root.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: sidecar), data.count <= 2 * 1024 * 1024 else { return nil }
+            return String(data: data, encoding: .utf8)
+        }.value
+        return LyricsParser.parse(embeddedRaw ?? "", source: .embedded)
+            ?? LyricsParser.parse(sidecarRaw ?? "", source: .sidecar)
+            ?? LyricsParser.unsynced(embeddedRaw ?? "", source: .embedded)
+            ?? LyricsParser.unsynced(sidecarRaw ?? "", source: .sidecar)
+    }
+
     /// Reauthorise a moved/offline root without replacing its database identity.
     public func reconnectFolder(_ folder: LibraryFolder, to url: URL) async throws {
         guard !isScanning, !isRecovering, !isShutDown, let repository,
