@@ -7,6 +7,7 @@ public enum TrackSortOrder: String, CaseIterable, Identifiable, Codable, Sendabl
     case artist = "Artist"
     case duration = "Duration"
     case recentlyAdded = "Recently Added"
+    case random = "Random"
 
     public var id: Self { self }
 
@@ -19,6 +20,7 @@ public enum TrackSortOrder: String, CaseIterable, Identifiable, Codable, Sendabl
         case .artist: primary = "artist COLLATE NOCASE" + direction
         case .duration: primary = "duration" + direction
         case .recentlyAdded: primary = "addedAt" + (reversed ? " ASC" : " DESC")
+        case .random: return "RANDOM()"
         }
         // Stable tie-breakers prevent tied records from swapping across reloads.
         return primary + ", albumArtist COLLATE NOCASE, album COLLATE NOCASE, discNumber, trackNumber, title COLLATE NOCASE, id"

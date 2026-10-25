@@ -277,10 +277,7 @@ struct LibraryTests {
         let folder = try #require(model.folders.first)
         try await repository.reconcile(folderID: folder.id, seen: ["a-available.wav"])
         let destination = temporary.appendingPathComponent("TestTrash.wav")
-        model.trashItem = { file in
-            try FileManager.default.moveItem(at: file, to: destination)
-            return destination
-        }
+model.trashItem = { file in try FileManager.default.moveItem(at: file, to: destination); return destination }
         let moved = try await model.moveAlbumToTrash(album)
         #expect(moved == 1)
         #expect(FileManager.default.fileExists(atPath: destination.path))
@@ -725,7 +722,7 @@ extension LibraryTests {
         let native = try NativeDecoder(url: url)
         let folder = LibraryFolder(path: music.path)
         let file = ScanFile(url: url, relativePath: name, size: Int64(try Data(contentsOf: url).count),
-            modified: Date(), coverURL: nil, coverStamp: "")
+            modified: Date(), coverURL: nil, coverStamp: "", fileResourceIdentifier: nil)
         let track = MediaInspector(codecDirectory: codecs, artworkDirectory: artwork)
             .inspect(file: file, folder: folder, prior: nil)
         #expect(track.error == nil)
@@ -753,7 +750,7 @@ extension LibraryTests {
         try FileManager.default.createDirectory(at: unavailable, withIntermediateDirectories: true)
         let folder = LibraryFolder(path: music.path)
         let file = ScanFile(url: url, relativePath: name, size: Int64(try Data(contentsOf: url).count),
-            modified: Date(), coverURL: cover, coverStamp: "cover")
+            modified: Date(), coverURL: cover, coverStamp: "cover", fileResourceIdentifier: nil)
         for invalidLibrary in [false, true] {
             if invalidLibrary {
                 try Data("Invalid dynamic library".utf8).write(to: unavailable.appendingPathComponent("libavformat.63.dylib"))

@@ -9,6 +9,9 @@ public actor LibraryRepository {
     public init(path: String) throws {
         var config = Configuration()
         config.foreignKeysEnabled = true
+        // WAL allows concurrent readers with a writer. In-memory databases
+        // (used by tests) do not support it, so only file-backed stores opt in.
+        if !path.contains(":memory:") { config.journalMode = .wal }
         config.prepareDatabase { db in
             db.add(function: DatabaseFunction("swar_fold", argumentCount: 1, pure: true) { values in
                 guard let text = String.fromDatabaseValue(values[0]) else { return nil }
@@ -145,6 +148,12 @@ public actor LibraryRepository {
                 ) WHERE error IS NULL;
                 """)
         }
+        migrator.registerMigration("library-file-identity-v12") { db in
+            try db.execute(sql: """
+                ALTER TABLE tracks ADD COLUMN fileResourceIdentifier TEXT;
+                CREATE INDEX IF NOT EXISTS tracks_file_id ON tracks(fileResourceIdentifier);
+                """)
+        }
         try migrator.migrate(database)
         browseSelection = try database.read { db in
             try db.columns(in: "tracks").map { column in
@@ -167,7 +176,7 @@ public actor LibraryRepository {
     }
 
     func existingTracks(folderID: String) throws -> [String: ScanFingerprint] {
-        let tracks = try database.read { try ScanFingerprint.fetchAll($0, sql: "SELECT id, isMissing, relativePath, fileSize, modifiedAt, addedAt, artworkKey, coverStamp, error FROM tracks WHERE folderID = ?", arguments: [folderID]) }
+        let tracks = try database.read { try ScanFingerprint.fetchAll($0, sql: "SELECT id, isMissing, relativePath, fileSize, modifiedAt, addedAt, artworkKey, coverStamp, error, fileResourceIdentifier FROM tracks WHERE folderID = ?", arguments: [folderID]) }
         return Dictionary(uniqueKeysWithValues: tracks.map { ($0.relativePath, $0) })
     }
 
@@ -190,12 +199,25 @@ public actor LibraryRepository {
     }
 
     /// Called only after a complete, successful enumeration, never after cancellation/access failure.
+    /// Marks every row of the folder whose path was not seen as missing, in one
+    /// set-based statement. A temporary table keeps the statement within SQLite's
+    /// bound-variable limit for very large folders.
     public func reconcile(folderID: String, seen: Set<String>) throws {
         try database.write { db in
-            let existing = try Row.fetchAll(db, sql: "SELECT id, relativePath FROM tracks WHERE folderID = ?", arguments: [folderID])
-            for row in existing where !seen.contains(row["relativePath"] as String) {
-                try db.execute(sql: "UPDATE tracks SET isMissing = 1, error = ? WHERE id = ? AND isMissing = 0", arguments: ["File is missing. Locate it in Manage Library.", row["id"] as String])
+            try db.execute(sql: "CREATE TEMP TABLE IF NOT EXISTS reconcile_seen(path TEXT PRIMARY KEY)")
+            try db.execute(sql: "DELETE FROM reconcile_seen")
+            // Chunked inserts stay within SQLite's bound-variable limit; each
+            // VALUES tuple is one row of the single-column temp table.
+            for chunk in seen.sorted().chunked(into: 900) {
+                let placeholders = chunk.map { _ in "(?)" }.joined(separator: ",")
+                try db.execute(sql: "INSERT INTO reconcile_seen(path) VALUES \(placeholders)", arguments: StatementArguments(chunk))
             }
+            try db.execute(sql: """
+                UPDATE tracks SET isMissing = 1, error = ?
+                WHERE folderID = ? AND isMissing = 0
+                  AND relativePath NOT IN (SELECT path FROM reconcile_seen)
+                """, arguments: ["File is missing. Locate it in Manage Library.", folderID])
+            try db.execute(sql: "DELETE FROM reconcile_seen")
         }
     }
 
@@ -214,6 +236,52 @@ public actor LibraryRepository {
             let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT " + (includeTagPayload ? "*" : browseSelection) + " FROM tracks" + condition + " ORDER BY " + order + " LIMIT ? OFFSET ?", arguments: arguments)
             let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL AND isMissing = 0 AND " + visible) ?? 0
             return LibraryPage(tracks: tracks, count: count, unreadableCount: unreadable)
+        }
+    }
+
+    /// Count playable tracks matching the given criteria (used for shuffle cap decisions).
+    public func countPlayableTracks(search: String = "", recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all) throws -> Int {
+        try Task.checkCancellation()
+        let query = TrackSearchQuery(search)
+        let pattern = query.expression(scope: searchScope)
+        return try database.read { db in
+            let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
+                + (favoritesOnly ? " AND EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isFavorite = 1)" : "")
+            let condition = " WHERE " + visible + " AND error IS NULL AND isMissing = 0" + (query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
+            let arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
+            return try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0
+        }
+    }
+
+    /// Return a random sample of playable tracks for large-library shuffle.
+    /// Uses SQLite's random rowid sampling for efficiency.
+    public func pageRandomSample(search: String = "", limit: Int = 5000, recentFirst: Bool = false, favoritesOnly: Bool = false, sortOrder: TrackSortOrder = .album, reversed: Bool = false, searchScope: TrackSearchScope = .all, includeTagPayload: Bool = true) throws -> LibraryPage {
+        try Task.checkCancellation()
+        let query = TrackSearchQuery(search)
+        let pattern = query.expression(scope: searchScope)
+        return try database.read { db in
+            let visible = "NOT EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isHidden = 1)"
+                + (favoritesOnly ? " AND EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isFavorite = 1)" : "")
+            let condition = " WHERE " + visible + " AND error IS NULL AND isMissing = 0" + (query.isEmpty ? "" : pattern == nil ? " AND 0" : " AND rowid IN (SELECT rowid FROM track_search WHERE track_search MATCH ?)")
+            var arguments: StatementArguments = pattern.map { StatementArguments([$0]) } ?? []
+            let count = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks" + condition, arguments: arguments) ?? 0
+            // Use random rowid sampling for large result sets
+            let sampleLimit = min(limit, count)
+            // Use the random rowid sampling technique: generate random rowids and fetch those tracks
+            let randomOrder = (recentFirst ? TrackSortOrder.recentlyAdded : TrackSortOrder.random).sqlOrder(reversed: false)
+            arguments += [sampleLimit]
+            let tracks = try LibraryTrack.fetchAll(db, sql: "SELECT " + (includeTagPayload ? "*" : browseSelection) + " FROM tracks" + condition + " ORDER BY " + randomOrder + " LIMIT ?", arguments: arguments)
+            let unreadable = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM tracks WHERE error IS NOT NULL AND isMissing = 0 AND " + visible) ?? 0
+            return LibraryPage(tracks: tracks, count: count, unreadableCount: unreadable)
+        }
+    }
+
+    /// Rebuild the FTS5 search index from the tracks table.
+    /// Call periodically (e.g. after bulk imports or weekly) to repair
+    /// any desynchronization between the tracks table and the FTS5 index.
+    public func rebuildSearchIndex() throws {
+        try database.write { db in
+            try db.execute(sql: "INSERT INTO track_search(track_search) VALUES('rebuild')")
         }
     }
 

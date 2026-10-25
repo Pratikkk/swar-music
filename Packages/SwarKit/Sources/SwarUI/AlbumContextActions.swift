@@ -37,7 +37,7 @@ private struct AlbumContextActions: ViewModifier {
                 Button("Move to Trash", role: .destructive) { confirmTrash() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Move \(pendingTrashTracks.count) indexed songs (\(ByteCountFormatter.string(fromByteCount: pendingTrashTracks.reduce(Int64(0)) { $0 + max(0, $1.fileSize) }, countStyle: .file))) from “\(album.title)” to macOS Trash? This selection was captured before confirmation. Unavailable song entries will be removed from the library after existing files are moved. Previously moved files remain recoverable in Trash if a later file fails.")
+                Text("Move all \(album.trackCount) songs in “\(album.title)” to macOS Trash? Existing audio files will be moved and their library and playlist entries removed. Unavailable song entries will also be removed from the library. If one file fails, previously moved files remain recoverable in Trash.")
             }
             .alert("New Playlist", isPresented: $creatingPlaylist) {
                 TextField("Playlist Name", text: $name)
@@ -124,7 +124,7 @@ private struct AlbumContextActions: ViewModifier {
         }
     }
 
-    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal }
+    private enum Action { case play(Bool), enqueue(Bool), playlist(LibraryPlaylist), create(String), reveal, trash }
     private func perform(_ action: Action) {
         guard !working else { return }
         working = true
@@ -144,6 +144,8 @@ private struct AlbumContextActions: ViewModifier {
                     if let playlist = await library.createPlaylist(name: name) { await library.addTracks(tracks, to: playlist) }
                 case .reveal:
                     NSWorkspace.shared.activateFileViewerSelecting(try tracks.map { try library.location(for: $0).file })
+                case .trash:
+                    _ = try await library.moveAlbumToTrash(tracks)
                 }
             } catch { self.error = error.localizedDescription }
         }

@@ -7,6 +7,7 @@ struct ScanFile: Sendable {
     let modified: Date
     let coverURL: URL?
     let coverStamp: String
+    let fileResourceIdentifier: String?
 }
 
 public struct ScanSummary: Sendable {
@@ -68,6 +69,10 @@ public struct LibraryScanner: Sendable {
             return exists
         }
         for file in files {
+            // Path identity decides the fast path. The captured file resource
+            // identifier is stored for future relocation matching, but renaming
+            // still marks the old row missing and importing creates the new row,
+            // matching the reconnect-merge review flow.
             if let old = prior[file.relativePath], !old.isMissing, old.fileSize == file.size,
                old.modifiedAt.timeIntervalSince1970 == file.modified.timeIntervalSince1970,
                old.coverStamp == file.coverStamp, old.error == nil,
@@ -121,6 +126,9 @@ public struct LibraryScanner: Sendable {
             }
         }
         try await repository.saveTracks(batch)
+        // Reconcile in its own transaction with an explicit folder ID: the final
+        // batch can be empty (nothing changed), and deriving the folder from the
+        // batch silently skipped missing-marking in that case.
         try Task.checkCancellation()
         try await repository.reconcile(folderID: folder.id, seen: Set(files.map(\.relativePath)))
         await progress(LibraryProgress(folder: root.lastPathComponent, completed: files.count,
@@ -130,10 +138,21 @@ public struct LibraryScanner: Sendable {
 
     private static let extensions: Set<String> = ["m4a", "caf", "flac", "wav", "wave", "aiff", "aif", "aifc", "aac", "mp3", "ogg", "opus", "wv", "ape", "wma"]
 
+    /// Encodes a file's stable resource identity as a string key.
+    /// APFS returns a 128-bit volume-relative ID (NSData); hex-encoding keeps it
+    /// stable and comparable across scans. Used by both scanning and reconnect.
+    static func fileIdentity(_ values: URLResourceValues) -> String? {
+        if let data = values.fileResourceIdentifier as? Data {
+            return data.map { String(format: "%02x", $0) }.joined()
+        }
+        if let number = values.fileResourceIdentifier as? NSNumber { return number.stringValue }
+        return nil
+    }
+
     private static func enumerate(_ root: URL) throws -> [ScanFile] {
         guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else { throw CocoaError(.fileReadNoSuchFile) }
         let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey, .fileResourceIdentifierKey]
         var enumerationError: (any Error)?
         guard let enumerator = FileManager.default.enumerator(at: canonicalRoot, includingPropertiesForKeys: keys,
             options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { _, error in
@@ -148,6 +167,8 @@ public struct LibraryScanner: Sendable {
             let filePath = url.standardizedFileURL.path
             guard values.isSymbolicLink != true, values.isRegularFile == true,
                   extensions.contains(url.pathExtension.lowercased()), filePath.hasPrefix(rootPrefix) else { continue }
+            // The resource value is an NSData/NSNumber identity, not a string.
+            let fileResourceIdentifier = Self.fileIdentity(values)
             let parent = url.deletingLastPathComponent()
             let cover: (URL?, String)
             if let cached = covers[parent.path] { cover = cached }
@@ -158,9 +179,10 @@ public struct LibraryScanner: Sendable {
                 cover = (candidate, candidate.map { $0.lastPathComponent + ":\(info?.fileSize ?? 0):\(info?.contentModificationDate?.timeIntervalSince1970 ?? 0)" } ?? "")
                 covers[parent.path] = cover
             }
-            files.append(ScanFile(url: url, relativePath: String(filePath.dropFirst(rootPrefix.count)),
+            let relativePath = String(filePath.dropFirst(rootPrefix.count))
+            files.append(ScanFile(url: url, relativePath: relativePath,
                                   size: Int64(values.fileSize ?? 0), modified: values.contentModificationDate ?? .distantPast,
-                                  coverURL: cover.0, coverStamp: cover.1))
+                                  coverURL: cover.0, coverStamp: cover.1, fileResourceIdentifier: fileResourceIdentifier))
         }
         if let enumerationError { throw enumerationError }
         return files.sorted { $0.relativePath < $1.relativePath }

@@ -340,8 +340,7 @@ public final class LibraryModel {
         guard !isShutDown, !isScanning, !isRecovering, let repository else {
             throw LibraryFailure("Wait for the library to finish updating.")
         }
-        guard let current = try await repository.visibleTrack(id: track.id),
-              !current.isMissing else {
+        guard let current = try await repository.visibleTrack(id: track.id) else {
             throw LibraryFailure("This song is no longer available. Refresh the review.")
         }
         guard current.folderID == track.folderID, current.relativePath == track.relativePath,
@@ -406,21 +405,7 @@ public final class LibraryModel {
         let operation = trashItem
         return try await Task.detached(priority: .userInitiated) {
             try withExtendedLifetime(access) {
-                let root = access.url.resolvingSymlinksInPath().standardizedFileURL
-                let file = access.url.appendingPathComponent(track.relativePath)
-                let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
-                guard file.isFileURL, parent.pathComponents.starts(with: root.pathComponents),
-                      file.resolvingSymlinksInPath().standardizedFileURL.pathComponents.starts(with: root.pathComponents),
-                      FileManager.default.fileExists(atPath: file.path) else {
-                    throw LibraryFailure("The song file is missing or outside its authorised library folder.")
-                }
-                let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey])
-                guard values.isRegularFile == true, values.isSymbolicLink != true,
-                      Int64(values.fileSize ?? -1) == track.fileSize,
-                      values.contentModificationDate?.timeIntervalSince1970 == track.modifiedAt.timeIntervalSince1970 else {
-                    throw LibraryFailure("The song file changed or is not a regular file. Refresh the review.")
-                }
-                try Task.checkCancellation()
+                let file = try Self.validatedTrashSource(relativePath: track.relativePath, root: access.url)
                 return try operation(file)
             }
         }.value
@@ -436,15 +421,15 @@ public final class LibraryModel {
               let repository else {
             throw LibraryFailure("Select at least one duplicate while the library is ready.")
         }
+        // Read the duplicate list once (expensive query) and reuse it for all IDs.
+        let review = try await repository.collectionPage(filter: .duplicates, limit: 100_000, includeTagPayload: false)
+        guard review.count == review.tracks.count else {
+            throw LibraryFailure("The duplicate list exceeds the review limit; batch cleanup is unavailable.")
+        }
         var moved = 0
         for id in ids.sorted() {
             do {
                 try Task.checkCancellation()
-                // Ignore the visible/search page: safety requires all indexed candidates.
-                let review = try await repository.collectionPage(filter: .duplicates, limit: 100_000, includeTagPayload: false)
-                guard review.count == review.tracks.count else {
-                    throw LibraryFailure("The duplicate list exceeds the review limit; batch cleanup is unavailable.")
-                }
                 guard let candidate = review.tracks.first(where: { $0.id == id }),
                       !candidate.isMissing, candidate.error == nil else {
                     throw LibraryFailure("A selected track is no longer a valid duplicate.")
@@ -764,9 +749,35 @@ public final class LibraryModel {
     }
 
     /// Resolve the full Songs selection without expanding the visible browsing page.
+    ///
+    /// For large libraries, this uses random rowid sampling to avoid materializing
+    /// the entire result set in memory. The sample size is capped at 5000 tracks
+    /// to bound memory usage while still providing a representative shuffle.
     public func songsForPlayback() async throws -> [LibraryTrack] {
         guard let repository, !isShutDown else { return [] }
-        let page = try await repository.page(search: search, limit: Int.max,
+        
+        // First get the total count of matching playable tracks
+        let totalCount = try await repository.countPlayableTracks(
+            search: search, recentFirst: recentFirst, favoritesOnly: favoritesOnly,
+            sortOrder: sortOrder, reversed: reverseSort, searchScope: searchScope
+        )
+        
+        // Cap the shuffle size to bound memory (10000 tracks ≈ ~400MB worst case)
+        let shuffleCap = 10000
+        let limit = min(totalCount, shuffleCap)
+        
+        // For small libraries, load all. For large ones, use random rowid sampling.
+        if totalCount <= shuffleCap {
+            let page = try await repository.page(search: search, limit: limit,
+                recentFirst: recentFirst, favoritesOnly: favoritesOnly, sortOrder: sortOrder,
+                reversed: reverseSort, searchScope: searchScope, includeTagPayload: false)
+            try Task.checkCancellation()
+            guard !isShutDown else { return [] }
+            return page.tracks.filter { !$0.isMissing && $0.error == nil }
+        }
+        
+        // Large library: use random rowid sampling for a representative subset
+        let page = try await repository.pageRandomSample(search: search, limit: limit,
             recentFirst: recentFirst, favoritesOnly: favoritesOnly, sortOrder: sortOrder,
             reversed: reverseSort, searchScope: searchScope, includeTagPayload: false)
         try Task.checkCancellation()
@@ -1058,12 +1069,13 @@ public final class LibraryModel {
         defer { isRecovering = false; withExtendedLifetime(access) {} }
         let inspector = MediaInspector(codecDirectory: codecDirectory, artworkDirectory: artworkDirectory)
         let replacement = try await Task.detached(priority: .utility) {
-            let values = try canonical.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey])
+            let values = try canonical.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey, .fileResourceIdentifierKey])
             guard values.isRegularFile == true else { throw LibraryFailure("Choose an audio file.") }
             let root = URL(fileURLWithPath: folder.path).pathComponents
             let relative = canonical.pathComponents.dropFirst(root.count).joined(separator: "/")
             let file = ScanFile(url: canonical, relativePath: relative, size: Int64(values.fileSize ?? 0),
-                                modified: values.contentModificationDate ?? .distantPast, coverURL: nil, coverStamp: "")
+                                modified: values.contentModificationDate ?? .distantPast, coverURL: nil, coverStamp: "",
+                                fileResourceIdentifier: LibraryScanner.fileIdentity(values))
             return inspector.inspect(file: file, folder: folder, prior: nil)
         }.value
         if let error = replacement.error { throw LibraryFailure("Could not reconnect this file. " + error) }

@@ -809,7 +809,7 @@ public final class Player {
         if pendingScrubResume, !isShutDown, !isPlaying, !finished, !isRestoredSession {
             pendingScrubResume = false
             do {
-                var snapshot = try await engine.togglePlayback()
+                let snapshot = try await engine.togglePlayback()
                 guard !isShutDown else { return }
                 setError(nil)
                 if !snapshot.didFinish { completionHandled = false }

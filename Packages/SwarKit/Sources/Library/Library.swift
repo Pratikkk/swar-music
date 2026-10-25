@@ -2,6 +2,17 @@ import Decoding
 import Foundation
 import GRDB
 
+extension Array {
+    /// Splits the array into consecutive chunks of at most `size` elements.
+    /// Used to stay within SQLite's bound-variable limit for `IN (…)` lists.
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0, !isEmpty else { return [] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0 ..< Swift.min($0 + size, count)])
+        }
+    }
+}
+
 public struct LibraryFolder: Codable, FetchableRecord, PersistableRecord, Sendable, Identifiable {
     public static let databaseTableName = "folders"
     public static func databaseDateEncodingStrategy(for column: String) -> DatabaseDateEncodingStrategy { .timeIntervalSince1970 }
@@ -46,6 +57,7 @@ public struct LibraryTrack: Codable, FetchableRecord, PersistableRecord, Sendabl
     public var coverStamp: String
     public var error: String?
     public var isMissing: Bool = false
+    public var fileResourceIdentifier: String?
 
     public var sourceFormat: SourceFormat? {
         guard let codec, let sampleRate, let channels else { return nil }
@@ -79,6 +91,7 @@ struct ScanFingerprint: Decodable, FetchableRecord, Sendable {
     let artworkKey: String?
     let coverStamp: String
     let error: String?
+    let fileResourceIdentifier: String?
 }
 
 public struct LibraryProgress: Sendable {

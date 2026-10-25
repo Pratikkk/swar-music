@@ -37,7 +37,7 @@ struct MediaInspector: MediaInspecting {
             genre: "Unknown Genre", trackNumber: 0, discNumber: 1, year: nil, tagsJSON: nil,
             codec: nil, bitDepth: nil, sampleRate: nil, channels: nil, bitRate: nil, isLossless: false, isFloat: false,
             duration: 0, fileSize: file.size, modifiedAt: file.modified, addedAt: prior?.addedAt ?? Date(),
-            artworkKey: nil, coverStamp: file.coverStamp, error: nil)
+            artworkKey: nil, coverStamp: file.coverStamp, error: nil, fileResourceIdentifier: file.fileResourceIdentifier)
         do {
             // One FFmpeg probe supplies metadata and audio facts when available.
             // Optional metadata must not make a native-playable file unreadable.
