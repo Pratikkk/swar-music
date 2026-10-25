@@ -1032,16 +1032,22 @@ public final class LibraryModel {
                 ?? LyricsParser.unsynced(embeddedRaw ?? "", source: .embedded)
         }
         let sidecar = location.file.deletingPathExtension().appendingPathExtension("lrc")
-        let sidecarRaw = await Task.detached(priority: .userInitiated) { () -> String? in
+        let embedded = embeddedRaw ?? ""
+        return await Task.detached(priority: .userInitiated) { () -> TimedLyrics? in
             let acquired = location.root.startAccessingSecurityScopedResource()
             defer { if acquired { location.root.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: sidecar), data.count <= 2 * 1024 * 1024 else { return nil }
-            return String(data: data, encoding: .utf8)
+            let sidecarRaw: String? = {
+                guard let file = try? FileHandle(forReadingFrom: sidecar) else { return nil }
+                defer { try? file.close() }
+                guard let data = try? file.read(upToCount: 2 * 1024 * 1024 + 1),
+                      data.count <= 2 * 1024 * 1024 else { return nil }
+                return String(data: data, encoding: .utf8)
+            }()
+            return LyricsParser.parse(embedded, source: .embedded)
+                ?? LyricsParser.parse(sidecarRaw ?? "", source: .sidecar)
+                ?? LyricsParser.unsynced(embedded, source: .embedded)
+                ?? LyricsParser.unsynced(sidecarRaw ?? "", source: .sidecar)
         }.value
-        return LyricsParser.parse(embeddedRaw ?? "", source: .embedded)
-            ?? LyricsParser.parse(sidecarRaw ?? "", source: .sidecar)
-            ?? LyricsParser.unsynced(embeddedRaw ?? "", source: .embedded)
-            ?? LyricsParser.unsynced(sidecarRaw ?? "", source: .sidecar)
     }
 
     /// Reauthorise a moved/offline root without replacing its database identity.

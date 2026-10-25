@@ -99,7 +99,7 @@ public enum LyricsParser {
                     stamps.append(stamp)
                 } else if tag.lowercased().hasPrefix("offset"),
                           let milliseconds = Double(tag.dropFirst("offset".count)
-                              .trimmingCharacters(in: CharacterSet(charactersIn: "+: "))) {
+                              .trimmingCharacters(in: CharacterSet(charactersIn: "+: "))), milliseconds.isFinite {
                     offset = milliseconds / 1000
                 }
                 // Other metadata ([ti:], [ar:], [by:]…) is intentionally ignored.
@@ -107,11 +107,18 @@ public enum LyricsParser {
             guard !stamps.isEmpty else { continue }
             let words = enhancedWords(in: rest.trimmingCharacters(in: .whitespaces))
             for stamp in stamps {
-                entries.append((max(0, stamp - offset), words, order))
+                let shift = stamp - (stamps.first ?? stamp)
+                let repeatedWords = words.map { LyricsWord(time: $0.time.map { $0 + shift }, text: $0.text) }
+                entries.append((stamp, repeatedWords, order))
             }
         }
 
         guard !entries.isEmpty else { return nil }
+        // Offset is file-wide, even when its tag follows the lyric lines.
+        entries = entries.map { entry in
+            (max(0, entry.time - offset),
+             entry.words.map { LyricsWord(time: $0.time.map { max(0, $0 - offset) }, text: $0.text) }, entry.order)
+        }
         entries.sort { lhs, rhs in
             lhs.time == rhs.time ? lhs.order < rhs.order : lhs.time < rhs.time
         }
@@ -190,6 +197,6 @@ public enum LyricsParser {
             let divisor = pow(10, Double(fraction.count))
             stamp += (Double(fraction) ?? 0) / divisor
         }
-        return stamp
+        return stamp.isFinite ? stamp : nil
     }
 }

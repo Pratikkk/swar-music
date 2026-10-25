@@ -3,6 +3,18 @@ import Foundation
 @testable import Library
 
 struct LyricsTests {
+    @Test func trailingOffsetShiftsLinesAndWordsTogether() {
+        let lyrics = LyricsParser.parse("[00:10]<00:10>Hello <00:11>world\n[offset:+1000]", source: .sidecar)
+        #expect(lyrics?.lines.first?.time == 9)
+        #expect(lyrics?.lines.first?.words.map(\.time) == [9, 10])
+    }
+
+    @Test func repeatedEnhancedPhraseShiftsWordTimes() {
+        let lyrics = LyricsParser.parse("[00:10][00:20]<00:10>Hello <00:11>world", source: .sidecar)
+        #expect(lyrics?.lines.last?.time == 20)
+        #expect(lyrics?.lines.last?.words.map(\.time) == [20, 21])
+    }
+
     @Test func parsesTimestampVariantsAndSortsLines() {
         let lyrics = LyricsParser.parse("""
         [00:12.5] later
