@@ -42,6 +42,8 @@ public final class CrossfadePCMReader {
     private let b: UnsafeMutablePointer<Float>
     private let fadeStart: Int64
     private let fadeEnd: Int64
+    public var outgoingTransitionFrame: Int64 { fadeStart }
+    public var incomingPromotionFrame: Int64 { fadeEnd }
     private var failed = false
     public static let maximumReadFrames = 4096
 
@@ -123,7 +125,7 @@ public final class CrossfadePCMReader {
     }
 }
 
-private final class CrossfadeFloatSource {
+final class CrossfadeFloatSource {
     let decoder: any AudioDecoding
     let channels: Int
     let rate: Double
