@@ -109,11 +109,13 @@ struct NowPlayingView: View {
         }
         .frame(width: width, height: 650)
         .background { NowPlayingBackdrop(artworkURL: player.artworkURL) }
-        .interactiveDismissDisabled(showAppearance)
+        .interactiveDismissDisabled(showAppearance || showTransitions)
         .clipped().tint(palette.accent)
         .accentColor(palette.accent)
         .onExitCommand {
-            if showAppearance { showAppearance = false } else { dismiss() }
+            if showTransitions { showTransitions = false }
+            else if showAppearance { showAppearance = false }
+            else { dismiss() }
         }
     }
 }
