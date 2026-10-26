@@ -14,6 +14,7 @@ struct NowPlayingView: View {
     @State private var showQueue = false
     @State private var showLyrics = false
     @State private var showAppearance = false
+    @State private var showTransitions = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,6 +36,18 @@ struct NowPlayingView: View {
                 .popover(isPresented: $showAppearance) {
                     NowPlayingAppearanceControls().padding(20).frame(width: 320)
                         .onExitCommand { showAppearance = false }
+                }
+                Button { showTransitions.toggle() } label: {
+                    Image(systemName: "waveform.path")
+                        .foregroundStyle(player.crossfadeEnabled ? palette.accent : .primary)
+                        .frame(width: 28, height: 28)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.plain).accessibilityLabel("Transition settings")
+                .help("Smart Crossfade and transition length")
+                .popover(isPresented: $showTransitions) {
+                    NowPlayingCrossfadeControls(player: player)
+                        .onExitCommand { showTransitions = false }
                 }
                 Color.clear.frame(width: 0, height: 28)
                     .currentSongActions(library: library, player: player, showsButton: true)

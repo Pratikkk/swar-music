@@ -5,6 +5,36 @@ import Testing
 
 @MainActor
 struct CrossfadeModeTests {
+    @Test func previewSuccessorFollowsRepeatRulesAndGaplessProtection() async {
+        let suite = "CrossfadePreviewTests." + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let player = Player(engine: ModeEngine(), outputPreferences: preferences)
+        let first = QueueEntry(url: URL(fileURLWithPath: "/test/one.wav"), album: "Album")
+        let second = QueueEntry(url: URL(fileURLWithPath: "/test/two.wav"), album: "Other")
+        await player.play([first, second])
+        #expect(player.nextTransitionEntry == second)
+        #expect(!player.preservesGaplessTransition(to: second))
+        let sameAlbum = QueueEntry(url: URL(fileURLWithPath: "/test/three.wav"), album: "Album")
+        #expect(player.preservesGaplessTransition(to: sameAlbum))
+        let repeatedFile = QueueEntry(url: first.url)
+        #expect(player.preservesGaplessTransition(to: repeatedFile))
+        player.setRepeatMode(.one)
+        #expect(player.nextTransitionEntry == first)
+        #expect(player.nextTransitionEntry.map { player.preservesGaplessTransition(to: $0) } == true)
+        await player.play([first, second], startingAt: 1)
+        player.setRepeatMode(.all)
+        #expect(player.nextTransitionEntry == first)
+        player.setRepeatMode(.off)
+        #expect(player.nextTransitionEntry == nil)
+        await player.play([second])
+        player.setRepeatMode(.off)
+        #expect(player.nextTransitionEntry == nil)
+        player.setRepeatMode(.all)
+        #expect(player.nextTransitionEntry == second)
+        player.shutdown()
+    }
+
     @Test func transitionLengthPersistsAndRejectsUnknownValues() {
         let suite = "CrossfadeLengthTests." + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!

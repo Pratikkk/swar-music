@@ -45,3 +45,11 @@ Limits: this is not a listening-quality certification or loopback recording. Phy
 Settings → Playback adds Short (4 beats), Balanced (8 beats, the default), and Long (16 beats). The preference persists independently of the opt-in toggle; unknown stored values fall back to Balanced. These are preferred beat windows, not fixed seconds. The planner retains its 2–12 second bounds, drift checks, short uncertain-rhythm fallback, and same-album gapless protection. Changing length invalidates pending planning and prepares the next transition again; an overlap already audible remains committed by the engine.
 
 Validation: all 389 tests across 56 suites pass. Preference tests cover defaults, invalid stored values, all three persisted choices and independence from enabling processing. A queue regression verifies length changes reprepare the same successor without reopening playback or breaking same-album protection. Existing parameterized planner tests exercise 4/8/16-beat requests and shorter overlaps when tempos drift. No tempo stretching is introduced.
+
+## Now Playing controls and preview parity — build 242
+
+Expanded Now Playing adds a waveform button for compact transition controls. The popover shares the persisted opt-in and 4/8/16-beat picker with Settings, and reports whether the current session uses processed or untouched audio. Adjusting preferences does not reopen or seek the current song.
+
+Get Info's transition preview now follows the actual automatic successor, including Repeat One and Repeat All wrapping. It uses the selected beat window and the same conservative repeated-file/same-album protection as live playback. Changes to repeat mode, the successor, or preferred length invalidate an existing preview. Preview remains analysis-only and does not promise that a future transition will be installed before its buffering deadline.
+
+Build 242 validation: all 390 tests across 56 suites pass. New queue coverage checks Repeat One, Repeat All wrapping from the final queue entry, end-of-queue with repeat off, same-album preservation and repeated-file preservation. Existing 4/8/16-beat planner tests remain passing.

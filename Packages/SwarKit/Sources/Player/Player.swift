@@ -206,6 +206,22 @@ public final class Player {
         return Array(queue.dropFirst(index + 1))
     }
 
+    /// The actual automatic successor, including Repeat One and Repeat All wrapping.
+    public var nextTransitionEntry: QueueEntry? {
+        guard let next = nextContinuation() else { return nil }
+        return queue.first { $0.id == next.id } ?? (standaloneEntry?.id == next.id ? standaloneEntry : nil)
+    }
+
+    public func preservesGaplessTransition(to next: QueueEntry) -> Bool {
+        let current = currentEntryID.flatMap { id in queue.first { $0.id == id } } ?? currentMediaEntry
+        guard let current else { return true }
+        return Self.preservesGaplessTransition(from: current, to: next)
+    }
+
+    private static func preservesGaplessTransition(from current: QueueEntry, to next: QueueEntry) -> Bool {
+        current.url == next.url || (current.album?.isEmpty == false && current.album == next.album)
+    }
+
     private struct GaplessPlan: Equatable {
         let token: UUID
         let next: PlaybackContinuation?
@@ -250,7 +266,7 @@ public final class Player {
             guard plan.crossfade, !Task.isCancelled, let next = plan.next, let current,
                   current.url != next.url else { return }
             // Conservatively preserve all adjacent tracks from the same album.
-            if let album = current.album, !album.isEmpty, album == nextEntry?.album { return }
+            if let nextEntry, Self.preservesGaplessTransition(from: current, to: nextEntry) { return }
             do {
                 let outgoing = try await RhythmStore.shared.profile(url: current.url, accessRoot: current.accessRoot)
                 let incoming = try await RhythmStore.shared.profile(url: next.url, accessRoot: next.accessRoot)

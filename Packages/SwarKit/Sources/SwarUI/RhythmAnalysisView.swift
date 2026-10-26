@@ -18,7 +18,7 @@ struct RhythmAnalysisView: View {
     @State private var previewFailure: String?
 
     private var previewKey: String {
-        "\(previewRequest)|\(player?.currentURL?.absoluteString ?? "")|\(player?.upcomingEntries.first?.id.uuidString ?? "")"
+        "\(previewRequest)|\(player?.currentURL?.absoluteString ?? "")|\(player?.nextTransitionEntry?.id.uuidString ?? "")|\(player?.crossfadeLength.rawValue ?? "")|\(player?.repeatMode.rawValue ?? "")"
     }
 
     var body: some View {
@@ -44,7 +44,7 @@ struct RhythmAnalysisView: View {
                 Text("Estimate only; half/double tempo is possible. Playback is unchanged.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if let player, library.trackID(at: player.currentURL) == track.id, !player.upcomingEntries.isEmpty {
+            if let player, library.trackID(at: player.currentURL) == track.id, player.nextTransitionEntry != nil {
                 Button(previewLoading ? "Planning…" : "Preview Next Transition") { previewRequest += 1 }
                     .disabled(previewLoading)
                 if let preview {
@@ -52,7 +52,7 @@ struct RhythmAnalysisView: View {
                          ? "Beat-aligned · \(preview.beats) beats · \(String(format: "%.1f", preview.duration)) seconds"
                          : preview.mode == .adaptiveFade ? "Short fade · \(String(format: "%.1f", preview.duration)) seconds" : "Keep gapless")
                         .font(.caption)
-                    Text(preview.reason == .continuousAlbum ? "Consecutive album tracks stay gapless. Preview only."
+                    Text(preview.reason == .continuousAlbum ? "Same-album tracks and repeated songs stay gapless. Preview only."
                          : preview.mode == .beatAligned ? "Compatible observed beats. Preview only; playback is unchanged."
                          : "No safe beat-aligned overlap found. Preview only; playback is unchanged.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -75,26 +75,24 @@ struct RhythmAnalysisView: View {
         .task(id: previewKey) {
             preview = nil; previewFailure = nil
             guard previewRequest > 0, let player, library.trackID(at: player.currentURL) == track.id,
-                  let next = player.upcomingEntries.first else { return }
+                  let next = player.nextTransitionEntry else { return }
             previewLoading = true
             defer { previewLoading = false }
             do {
                 guard let nextTrack = await library.track(at: next.url) else {
                     throw AudioFailure("The next song must be in the library to preview a transition.")
                 }
-                let consecutive = !track.album.isEmpty && track.album == nextTrack.album
-                    && track.albumArtist == nextTrack.albumArtist && track.discNumber == nextTrack.discNumber
-                    && track.trackNumber > 0 && nextTrack.trackNumber == track.trackNumber + 1
+                let consecutive = player.preservesGaplessTransition(to: next)
                 let currentLocation = try library.location(for: track)
                 let nextLocation = try library.location(for: nextTrack)
                 // A continuous album needs no decoding merely to decide to preserve it.
                 let outgoing = consecutive ? nil : try await RhythmStore.shared.profile(url: currentLocation.file, accessRoot: currentLocation.root)
                 let incoming = consecutive ? nil : try await RhythmStore.shared.profile(url: nextLocation.file, accessRoot: nextLocation.root)
                 guard !Task.isCancelled, library.trackID(at: player.currentURL) == track.id,
-                      player.upcomingEntries.first?.id == next.id else { return }
+                      player.nextTransitionEntry?.id == next.id else { return }
                 preview = TransitionPlanner.plan(outgoing: outgoing, incoming: incoming,
                     outgoingDuration: track.duration, incomingDuration: nextTrack.duration,
-                    notBefore: player.position, preserveGapless: consecutive)
+                    notBefore: player.position, preferredBeats: player.crossfadeLength.beats, preserveGapless: consecutive)
             } catch is CancellationError { }
             catch { guard !Task.isCancelled else { return }; previewFailure = error.localizedDescription }
         }
