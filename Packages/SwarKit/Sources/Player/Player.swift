@@ -23,6 +23,7 @@ public final class Player {
         }
     }
     public private(set) var isCrossfadeProcessing = false
+    public private(set) var crossfadeIncomingTitle: String?
     public private(set) var title = "No file open"
     public private(set) var subtitle = ""
     public private(set) var artworkURL: URL?
@@ -623,6 +624,7 @@ public final class Player {
     private func load(_ url: URL, accessRoot: URL?, displayTitle: String?, entry: QueueEntry? = nil,
                       startPlayback: Bool = false) async -> Bool {
         gaplessTask?.cancel(); gaplessPlan = nil; playbackToken = nil
+        crossfadeIncomingTitle = nil
         isScrubbing = false; scrubWasPlaying = false; scrubURL = nil; pendingSeekResume = false
         outputRecoveryNeeded = false; wakeRecoveryPending = false; recoveryPolicy = OutputRecoveryPolicy()
         playbackIntent = startPlayback; recoverySeekPosition = nil
@@ -1044,6 +1046,7 @@ public final class Player {
         sleepTimer.cancel()
         queueRemovals = []
         isShutDown = true
+        crossfadeIncomingTitle = nil
         gaplessTask?.cancel(); gaplessTask = nil
         pendingVolume = nil
         pendingSeek = nil
@@ -1095,6 +1098,10 @@ public final class Player {
 
     private func apply(_ snapshot: PlaybackSnapshot) {
         adoptContinuation(snapshot)
+        let incomingTitle = snapshot.crossfadeID.flatMap { id in
+            (queue.first { $0.id == id } ?? stagedGaplessEntries[id])?.title
+        }
+        if crossfadeIncomingTitle != incomingTitle { crossfadeIncomingTitle = incomingTitle }
         if snapshot.needsOutputRecovery {
             outputRecoveryNeeded = true
         } else if snapshot.error != nil { playbackIntent = false }

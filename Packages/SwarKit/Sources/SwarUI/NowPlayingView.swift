@@ -86,7 +86,7 @@ struct NowPlayingView: View {
                             QueueView(player: player, library: library, embedded: true)
                                 .frame(maxHeight: .infinity)
                         } else {
-                            NowPlayingArtwork(player: player, library: library, size: min(250, max(180, geometry.size.height * 0.40)),
+                            NowPlayingArtwork(player: player, library: library, size: min(250, max(180, geometry.size.height * 0.35)),
                                 browseArtist: { name in dismiss(); browseArtist(name) },
                                 browseAlbum: { name in dismiss(); browseAlbum(name) })
                         }
@@ -136,42 +136,44 @@ private struct NowPlayingArtwork: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 12) {
-                CoverArt(url: player.artworkURL, title: player.title, cornerRadius: 14, crossfade: true)
-                    .frame(width: size, height: size)
-                    .currentSongActions(library: library, player: player)
-                    .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
-                    .overlay {
-                        ProgressView().controlSize(.small).padding(10)
-                            .background(.regularMaterial, in: Circle()).opacity(showActivity ? 1 : 0)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: 12) {
+                    CoverArt(url: player.artworkURL, title: player.title, cornerRadius: 14, crossfade: true)
+                        .frame(width: size, height: size)
+                        .currentSongActions(library: library, player: player)
+                        .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+                        .overlay {
+                            ProgressView().controlSize(.small).padding(10)
+                                .background(.regularMaterial, in: Circle()).opacity(showActivity ? 1 : 0)
+                        }
+                    VStack(spacing: 6) {
+                        Text(title).font(.system(size: 23, weight: .semibold))
+                            .lineLimit(2).frame(height: 54).frame(maxWidth: .infinity)
+                            .textSelection(.enabled).help(title)
+                            .contentTransition(.opacity)
+                        metadata.frame(height: 18)
+                        if technicalDetails {
+                            ZStack {
+                                if let info = player.formatInfo { FormatChip(info: info) }
+                            }.frame(height: 28)
+                        }
                     }
-                VStack(spacing: 6) {
-                    Text(title).font(.system(size: 23, weight: .semibold))
-                        .lineLimit(2).frame(height: 54).frame(maxWidth: .infinity)
-                        .textSelection(.enabled).help(title)
-                        .contentTransition(.opacity)
-                    metadata.frame(height: 18)
-                    if technicalDetails {
-                        ZStack {
-                            if let info = player.formatInfo { FormatChip(info: info) }
-                        }.frame(height: 28)
-                    }
-                    ZStack { status }.frame(height: 26)
+                    .frame(maxWidth: 440)
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: player.currentURL)
                 }
-                .frame(maxWidth: 440)
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: player.currentURL)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 10).padding(.bottom, 8)
             }
-            .multilineTextAlignment(.center)
-            .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 10).padding(.bottom, 8)
-        }
-        .scrollIndicators(.never)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: player.isBusy) {
-            showActivity = false
-            guard player.isBusy else { return }
-            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
-            showActivity = true
+            .scrollIndicators(.never)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .task(id: player.isBusy) {
+                showActivity = false
+                guard player.isBusy else { return }
+                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                showActivity = true
+            }
+            ZStack { status }.frame(height: 26).padding(.horizontal, 24)
         }
     }
 
@@ -208,6 +210,11 @@ private struct NowPlayingArtwork: View {
         } else if player.underrunFrames > 0 {
             Label("Buffer underruns: \(player.underrunFrames) frames", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
+        } else if let incoming = player.crossfadeIncomingTitle {
+            Label("Crossfade → " + incoming, systemImage: "waveform.path")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .help("Transition in progress to " + incoming + ". The main title changes after the overlap.")
+                .accessibilityLabel("Crossfade to " + incoming)
         } else if player.isCrossfadeProcessing {
             Label("Smart Crossfade · Processed audio", systemImage: "waveform.path")
                 .font(.caption).foregroundStyle(.secondary)

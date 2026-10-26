@@ -16,6 +16,7 @@ struct LiveCrossfadeTests {
         stream.request(next.id)
         #expect(stream.install(try PreparedContinuation(next, outputRate: 44100)))
         #expect(stream.install(try PreparedCrossfade(current: first, next: next, overlap: 0.5, rate: 44100)))
+        #expect(stream.audible.crossfadeID == nil) // Prepared is not yet audible.
         var output: [Float] = []
         var buffer = [Float](repeating: 0, count: 113)
         var sawOverlap = false, promoted = false
@@ -25,6 +26,8 @@ struct LiveCrossfadeTests {
             let read = buffer.withUnsafeMutableBytes { swar_ring_read(stream.ring, $0.baseAddress!, count) }
             output.append(contentsOf: buffer.prefix(Int(read)))
             let audible = stream.audible
+            let overlapping = output.count >= 22050 && output.count < 44100
+            #expect(audible.crossfadeID == (overlapping ? next.id : nil))
             if output.count < 44100 { #expect(audible.segment.token == token) }
             if stream.hasAudibleCrossfade { sawOverlap = true }
             if audible.segment.entryID == next.id {
@@ -40,9 +43,32 @@ struct LiveCrossfadeTests {
         // Seeking after promotion addresses the incoming source, not the old outgoing file.
         try stream.seek(0.25)
         #expect(stream.current.entryID == next.id)
+        #expect(stream.audible.crossfadeID == nil)
         #expect(abs(stream.position - 0.25) < 1e-8)
         try stream.fill()
         #expect(swar_ring_readable(stream.ring) > 0)
+    }
+
+    @Test func seekingDuringAudibleOverlapClearsTransitionIdentity() throws {
+        let root = try workspace()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = PlaybackContinuation(id: UUID(), url: root.appendingPathComponent("one.wav"), accessRoot: root)
+        let next = PlaybackContinuation(id: UUID(), url: root.appendingPathComponent("two.wav"), accessRoot: root)
+        let decoder = try ConvertedPCMDecoder(decoder: NativeDecoder(url: first.url), sampleRate: 44100)
+        let stream = try GaplessPCM(decoder: decoder, url: first.url, entryID: first.id, capacity: 44100, processed: true)
+        stream.request(next.id)
+        #expect(stream.install(try PreparedContinuation(next, outputRate: 44100)))
+        #expect(stream.install(try PreparedCrossfade(current: first, next: next, overlap: 0.5, rate: 44100)))
+        try stream.fill(upTo: 30000)
+        #expect(stream.audible.crossfadeID == nil)
+        var buffer = [Float](repeating: 0, count: 25000)
+        let read = buffer.withUnsafeMutableBytes { swar_ring_read(stream.ring, $0.baseAddress!, 25000) }
+        #expect(read == 25000)
+        #expect(stream.audible.crossfadeID == next.id)
+        try stream.seek(0.1)
+        #expect(stream.audible.crossfadeID == nil)
+        #expect(stream.current.entryID == first.id)
+        #expect(swar_ring_readable(stream.ring) == 0)
     }
 
     @Test func seekCancelsPreparedTransitionAndLateInstallationIsRejected() throws {
@@ -58,6 +84,7 @@ struct LiveCrossfadeTests {
         #expect(stream.install(pair))
         try stream.seek(0.1)
         #expect(stream.requestedID == nil && !stream.hasAudibleCrossfade)
+        #expect(stream.audible.crossfadeID == nil)
         #expect(!stream.install(pair))
         stream.request(next.id)
         #expect(stream.install(try PreparedContinuation(next, outputRate: 44100)))

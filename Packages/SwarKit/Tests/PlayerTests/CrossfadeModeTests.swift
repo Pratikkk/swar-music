@@ -5,6 +5,37 @@ import Testing
 
 @MainActor
 struct CrossfadeModeTests {
+    @Test func crossfadeTitleFollowsAudibleSnapshotAndSurvivesQueueRemoval() async {
+        let suite = "CrossfadeTitleTests." + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let engine = ModeEngine()
+        let player = Player(engine: engine, outputPreferences: preferences)
+        let first = QueueEntry(url: URL(fileURLWithPath: "/test/one.wav"), title: "First")
+        let next = QueueEntry(url: URL(fileURLWithPath: "/test/two.wav"), title: "Second")
+        await player.play([first, next])
+        await engine.waitForPreparation(next.id)
+        #expect(player.crossfadeIncomingTitle == nil)
+        await engine.setCrossfade(next.id)
+        await player.refresh()
+        #expect(player.crossfadeIncomingTitle == "Second")
+        #expect(player.title == "First")
+        player.removeUpcoming(next.id)
+        await player.refresh()
+        #expect(player.crossfadeIncomingTitle == "Second")
+        await engine.setCrossfade(nil)
+        await player.refresh()
+        #expect(player.crossfadeIncomingTitle == nil)
+        await engine.setCrossfade(UUID())
+        await player.refresh()
+        #expect(player.crossfadeIncomingTitle == nil)
+        await engine.setCrossfade(next.id)
+        await player.refresh()
+        #expect(player.crossfadeIncomingTitle == "Second")
+        player.shutdown()
+        #expect(player.crossfadeIncomingTitle == nil)
+    }
+
     @Test func previewSuccessorFollowsRepeatRulesAndGaplessProtection() async {
         let suite = "CrossfadePreviewTests." + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!
@@ -129,6 +160,8 @@ struct CrossfadeModeTests {
 private actor ModeEngine: PlaybackDriving {
     var modes: [Bool] = []
     var prepared: UUID?
+    var crossfadeID: UUID?
+    func setCrossfade(_ id: UUID?) { crossfadeID = id }
     var crossfadeCalls = 0
     var preparationCount = 0
     var token = UUID()
@@ -144,6 +177,6 @@ private actor ModeEngine: PlaybackDriving {
     func prepareNext(_ next: PlaybackContinuation?, after token: UUID) { prepared = next?.id; preparationCount += 1 }
     func prepareCrossfade(_ next: PlaybackContinuation, currentRoot: URL, overlap: Double, after token: UUID) { crossfadeCalls += 1 }
     func waitForPreparation(_ id: UUID) async { for _ in 0..<1000 { if prepared == id { return }; try? await Task.sleep(for: .milliseconds(2)) } }
-    private func value() -> PlaybackSnapshot { PlaybackSnapshot(duration: 60, position: position, isPlaying: playing, playbackToken: token) }
+    private func value() -> PlaybackSnapshot { PlaybackSnapshot(duration: 60, position: position, isPlaying: playing, playbackToken: token, crossfadeID: crossfadeID) }
     nonisolated func shutdown() {}
 }

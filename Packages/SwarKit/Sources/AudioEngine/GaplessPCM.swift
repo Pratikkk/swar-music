@@ -101,6 +101,7 @@ final class GaplessPCM {
     private var crossfade: PreparedCrossfade?
     private let processed: Bool
     private var committedFadeStart: UInt64?
+    private var committedFadeID: UUID?
     private var prefixOffset = 0
     private var prefix: Data = Data()
     private var scratch: UnsafeMutableRawPointer
@@ -128,21 +129,21 @@ final class GaplessPCM {
     }
     deinit { scratch.deallocate(); swar_ring_destroy(ring) }
 
-    var audible: (segment: Segment, position: Double, duration: Double) {
+    var audible: (segment: Segment, position: Double, duration: Double, crossfadeID: UUID?) {
         // Take one consumer counter snapshot so identity, time and format agree.
         let consumed = swar_ring_consumed(ring)
-        while segments.count > 1, consumed >= segments[1].start { segments.removeFirst(); requestedID = nil; requestedToken = nil; committedFadeStart = nil }
+        while segments.count > 1, consumed >= segments[1].start { segments.removeFirst(); requestedID = nil; requestedToken = nil; committedFadeStart = nil; committedFadeID = nil }
         let active = segments[0]
         let rate = active.decoder.source.sampleRate
         let position = min(Double(active.decoder.frameCount), Double(active.baseFrame) + Double(consumed - active.start)) / rate
-        return (active, position, Double(active.decoder.frameCount) / rate)
+        let crossfadeID = committedFadeStart.flatMap { consumed >= $0 ? committedFadeID : nil }
+        return (active, position, Double(active.decoder.frameCount) / rate, crossfadeID)
     }
     var current: Segment { audible.segment }
     var position: Double { audible.position }
     var duration: Double { audible.duration }
     var hasAudibleCrossfade: Bool {
-        _ = current
-        return committedFadeStart.map { swar_ring_consumed(ring) >= $0 } ?? false
+        audible.crossfadeID != nil
     }
     var hasQueuedBoundary: Bool { _ = current; return segments.count > 1 }
 
@@ -152,7 +153,7 @@ final class GaplessPCM {
     }
     func request(_ id: UUID?, after token: UUID? = nil) {
         let origin = token ?? current.token
-        requestedID = id; requestedToken = origin; prepared = nil; crossfade = nil; committedFadeStart = nil
+        requestedID = id; requestedToken = origin; prepared = nil; crossfade = nil; committedFadeStart = nil; committedFadeID = nil
     }
     func install(_ next: PreparedContinuation) -> Bool {
         guard !hasQueuedBoundary else { return false }
@@ -174,6 +175,7 @@ final class GaplessPCM {
         guard written <= start else { return false } // Already-buffered audio is never rewritten live.
         crossfade = pair
         committedFadeStart = start
+        committedFadeID = pair.incoming.item.id
         return true
     }
 
@@ -185,7 +187,7 @@ final class GaplessPCM {
         swar_ring_reset(ring)
         segments = [Segment(decoder: active.decoder, url: active.url, entryID: active.entryID,
                             token: active.token, start: 0, baseFrame: frame, access: active.access)]
-        written = 0; eof = false; committedFadeStart = nil; prepared = nil; crossfade = nil; requestedID = nil; requestedToken = nil; deferredFailure = nil
+        written = 0; eof = false; committedFadeStart = nil; committedFadeID = nil; prepared = nil; crossfade = nil; requestedID = nil; requestedToken = nil; deferredFailure = nil
         prefix = Data(); prefixOffset = 0
     }
 

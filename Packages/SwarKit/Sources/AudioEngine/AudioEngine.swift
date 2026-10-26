@@ -35,16 +35,19 @@ public struct PlaybackSnapshot: Sendable {
     public let continuationID: UUID?
     public let needsOutputRecovery: Bool
     public let isExclusive: Bool
+    /// Incoming queue entry only while its overlap is being consumed by the output.
+    public let crossfadeID: UUID?
 
     public init(source: SourceFormat? = nil, output: OutputDescription? = nil, clientPCM: PlaybackPCMFormat? = nil,
                 duration: Double = 0, position: Double = 0, isPlaying: Bool = false,
-                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil, needsOutputRecovery: Bool = false, isExclusive: Bool = false) {
+                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil, needsOutputRecovery: Bool = false, isExclusive: Bool = false, crossfadeID: UUID? = nil) {
         self.source = source; self.output = output; self.clientPCM = clientPCM; self.duration = duration
         self.position = position; self.isPlaying = isPlaying
         self.underrunFrames = underrunFrames; self.error = error; self.didFinish = didFinish
         self.playbackToken = playbackToken; self.continuationID = continuationID
         self.needsOutputRecovery = needsOutputRecovery
         self.isExclusive = isExclusive
+        self.crossfadeID = crossfadeID
     }
 }
 
@@ -430,7 +433,7 @@ private final class EngineState: @unchecked Sendable {
                                 error: error, didFinish: session?.didFinish ?? false,
                                 playbackToken: audible?.segment.token, continuationID: audible?.segment.entryID,
                                 needsOutputRecovery: needsRecovery || session?.outputStatus.error != nil,
-                                isExclusive: session?.exclusive ?? false)
+                                isExclusive: session?.exclusive ?? false, crossfadeID: audible?.crossfadeID)
     }
 
     func closeSession() { preparer.invalidate(); preparation = UUID(); session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil; needsRecovery = false }
