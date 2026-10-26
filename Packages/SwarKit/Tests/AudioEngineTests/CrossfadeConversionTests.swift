@@ -24,6 +24,37 @@ struct CrossfadeConversionTests {
         #expect(try drain(converted, chunk: 4096) == samples)
     }
 
+    @Test(arguments: [(44100.0, 44100.0), (44100, 48000), (48000, 44100)])
+    func monoDuplicationPreservesSignalMetadataAndSeek(rates: (Double, Double)) throws {
+        let converted = try ConvertedPCMDecoder(decoder: ConversionFixture(rate: rates.0, channels: 1),
+            sampleRate: rates.1, channels: 2)
+        let samples = try drain(converted, chunk: 127)
+        #expect(samples.count == Int(rates.1 * 0.2) * 2)
+        #expect(converted.originalSource.channels == 1)
+        #expect(converted.source.channels == 2 && converted.pcmFormat.mChannelsPerFrame == 2)
+        #expect(stride(from: 0, to: samples.count, by: 2).allSatisfy { samples[$0] == samples[$0 + 1] })
+        #expect((100..<(samples.count / 2 - 100)).allSatisfy {
+            abs(samples[$0 * 2] - Float(sin(2 * .pi * 440 * Double($0) / rates.1) * 0.5)) < 0.04
+        })
+        try converted.seek(to: 0)
+        #expect(try drain(converted, chunk: 4096) == samples)
+        try converted.seek(to: 6000)
+        let tail = try drain(converted, chunk: 113)
+        #expect(tail.count == (Int(converted.frameCount) - 6000) * 2)
+        #expect(stride(from: 0, to: tail.count, by: 2).allSatisfy { tail[$0] == tail[$0 + 1] })
+        #expect((100..<tail.count).allSatisfy { abs(tail[$0] - samples[12000 + $0]) < 0.05 })
+    }
+
+    @Test func rejectsUnspecifiedChannelRemapping() throws {
+        for channels in [0, -1, 1, 6] {
+            #expect(throws: (any Error).self) {
+                try ConvertedPCMDecoder(decoder: ConversionFixture(rate: 44100), sampleRate: 44100, channels: channels)
+            }
+        }
+        let mono = try ConvertedPCMDecoder(decoder: ConversionFixture(rate: 44100, channels: 1), sampleRate: 44100)
+        #expect(mono.pcmFormat.mChannelsPerFrame == 1)
+    }
+
     @Test func convertedSeekIsBoundedAndRetainsTargetTime() throws {
         let converted = try ConvertedPCMDecoder(decoder: ConversionFixture(rate: 44100), sampleRate: 48000)
         let all = try drain(converted, chunk: 4096)
@@ -110,12 +141,12 @@ private final class ConversionFixture: AudioDecoding {
     let frameCount: Int64
     var position = 0
     var fail = false
-    init(rate: Double) {
+    init(rate: Double, channels: Int = 2) {
         frameCount = Int64(rate * 0.2)
-        source = SourceFormat(codec: "Test", sampleRate: rate, bitDepth: 32, channels: 2, isLossless: true, isFloat: true)
+        source = SourceFormat(codec: "Test", sampleRate: rate, bitDepth: 32, channels: channels, isLossless: true, isFloat: true)
         pcmFormat = AudioStreamBasicDescription(mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: 8,
-            mFramesPerPacket: 1, mBytesPerFrame: 8, mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: UInt32(channels * 4),
+            mFramesPerPacket: 1, mBytesPerFrame: UInt32(channels * 4), mChannelsPerFrame: UInt32(channels), mBitsPerChannel: 32, mReserved: 0)
     }
     func read(into buffer: UnsafeMutableRawPointer, frames: UInt32) throws -> UInt32 {
         if fail { throw AudioFailure("Injected decoder failure") }
@@ -123,7 +154,8 @@ private final class ConversionFixture: AudioDecoding {
         let out = buffer.assumingMemoryBound(to: Float.self)
         for frame in 0..<count {
             let value = Float(sin(2 * .pi * 440 * Double(position + frame) / source.sampleRate) * 0.5)
-            out[frame * 2] = value; out[frame * 2 + 1] = -value
+            out[frame * source.channels] = value
+            if source.channels == 2 { out[frame * 2 + 1] = -value }
         }
         position += count
         return UInt32(count)

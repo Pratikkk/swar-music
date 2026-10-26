@@ -300,8 +300,12 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
             return next != nil
         }) ?? false
         guard shouldPrepare, let next, !Task.isCancelled else { return }
-        let rate = try? await perform { state in state.session.flatMap { $0.processed ? $0.decoder.pcmFormat.mSampleRate : nil } }
-        let prepared = await state.preparer.prepare(next, request: request, outputRate: rate ?? nil)
+        let format = try? await perform { state -> (Double, Int)? in
+            guard let session = state.session, session.processed else { return nil }
+            return (session.decoder.pcmFormat.mSampleRate, Int(session.decoder.pcmFormat.mChannelsPerFrame))
+        }
+        let prepared = await state.preparer.prepare(next, request: request,
+            outputRate: format?.0, outputChannels: format?.1)
         guard !Task.isCancelled, let prepared else { return }
         _ = try? await perform { state in
             guard state.preparation == request, let session = state.session,
@@ -312,15 +316,15 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
 
     public func prepareCrossfade(_ next: PlaybackContinuation, currentRoot: URL, overlap: Double, after token: UUID) async {
         guard !Task.isCancelled else { return }
-        let context = try? await perform { state -> (PlaybackContinuation, Double, UUID)? in
+        let context = try? await perform { state -> (PlaybackContinuation, Double, UUID, Int)? in
             guard let session = state.session, session.processed, session.pcm.current.token == token,
                   session.pcm.requestedID == next.id, !session.pcm.hasQueuedBoundary else { return nil }
             return (PlaybackContinuation(id: token, url: session.pcm.current.url, accessRoot: currentRoot),
-                    session.decoder.pcmFormat.mSampleRate, state.preparation)
+                    session.decoder.pcmFormat.mSampleRate, state.preparation, Int(session.decoder.pcmFormat.mChannelsPerFrame))
         }
         guard let context = context ?? nil else { return }
         let pair = await state.preparer.prepareCrossfade(current: context.0, next: next,
-            overlap: overlap, rate: context.1, request: context.2)
+            overlap: overlap, rate: context.1, channels: context.3, request: context.2)
         guard !Task.isCancelled, let pair else { return }
         _ = try? await perform { state in
             guard state.preparation == context.2, let session = state.session,
@@ -452,7 +456,8 @@ private final class OutputSession {
 
     init(decoder: any AudioDecoding, url: URL, deviceID: UInt32? = nil, entryID: UUID? = nil, token: UUID? = nil, exclusive: Bool = false, processed: Bool = false) throws {
         self.exclusive = exclusive; self.processed = processed
-        let decoder: any AudioDecoding = try processed ? ConvertedPCMDecoder(decoder: decoder, sampleRate: decoder.pcmFormat.mSampleRate) : decoder
+        let decoder: any AudioDecoding = try processed ? ConvertedPCMDecoder(decoder: decoder, sampleRate: decoder.pcmFormat.mSampleRate,
+            channels: decoder.pcmFormat.mChannelsPerFrame == 1 ? 2 : nil) : decoder
         pcm = try GaplessPCM(decoder: decoder, url: url, entryID: entryID, token: token, processed: processed)
         device = try OutputDevice(id: deviceID)
         do {

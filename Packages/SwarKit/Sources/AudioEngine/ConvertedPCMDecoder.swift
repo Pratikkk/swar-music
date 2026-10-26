@@ -24,14 +24,19 @@ public final class ConvertedPCMDecoder: AudioDecoding {
     private let ratio: Double
     private let frameBytes: Int
 
-    public init(decoder: any AudioDecoding, sampleRate: Double) throws {
+    public init(decoder: any AudioDecoding, sampleRate: Double, channels: Int? = nil) throws {
         let input = try CrossfadeFloatSource(decoder)
+        let channels = channels ?? input.channels
+        // Only duplicate mono. Never infer surround layouts or discard stereo width.
+        guard channels == input.channels || (input.channels == 1 && channels == 2) else {
+            throw AudioFailure("This channel conversion is unavailable.")
+        }
         guard sampleRate.isFinite, (8000...384000).contains(sampleRate),
               Double(decoder.frameCount) * sampleRate / input.rate < Double(Int64.max),
               let from = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: input.rate,
-                  channels: AVAudioChannelCount(input.channels), interleaved: true),
+                  channels: AVAudioChannelCount(channels), interleaved: true),
               let to = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate,
-                  channels: AVAudioChannelCount(input.channels), interleaved: true),
+                  channels: AVAudioChannelCount(channels), interleaved: true),
               let converter = AVAudioConverter(from: from, to: to),
               let inputBuffer = AVAudioPCMBuffer(pcmFormat: from, frameCapacity: 4096),
               let outputBuffer = AVAudioPCMBuffer(pcmFormat: to, frameCapacity: 4096) else {
@@ -47,9 +52,9 @@ public final class ConvertedPCMDecoder: AudioDecoding {
         guard frameCount > 0 else { throw AudioFailure("The converted source is empty.") }
         originalSource = decoder.source
         source = SourceFormat(codec: decoder.source.codec + " (converted)", sampleRate: sampleRate,
-            bitDepth: 32, channels: input.channels, isLossless: false, isFloat: true)
+            bitDepth: 32, channels: channels, isLossless: false, isFloat: true)
         pcmFormat = to.streamDescription.pointee
-        frameBytes = input.channels * MemoryLayout<Float>.size
+        frameBytes = channels * MemoryLayout<Float>.size
         try decoder.seek(to: 0)
         discard = .allocate(byteCount: 4096 * frameBytes, alignment: 16)
     }
@@ -134,6 +139,15 @@ private final class ConverterFeed: @unchecked Sendable {
             guard count > 0 else { status.pointee = .endOfStream; return nil }
             let samples = buffer.mutableAudioBufferList.pointee.mBuffers.mData!.assumingMemoryBound(to: Float.self)
             try source.read(into: samples, frames: Int(count))
+            if source.channels == 1 && buffer.format.channelCount == 2 {
+                // Expand backwards in the preallocated stereo buffer, preserving
+                // unread mono samples. No allocation or gain change is required.
+                for frame in stride(from: Int(count) - 1, through: 0, by: -1) {
+                    let value = samples[frame]
+                    samples[frame * 2] = value
+                    samples[frame * 2 + 1] = value
+                }
+            }
             position += count
             buffer.frameLength = AVAudioFrameCount(count)
             status.pointee = .haveData

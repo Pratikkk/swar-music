@@ -18,12 +18,12 @@ final class PreparedContinuation: @unchecked Sendable {
     let prefix: Data
     let token = UUID()
     private let acquired: Bool
-    init(_ item: PlaybackContinuation, outputRate: Double? = nil) throws {
+    init(_ item: PlaybackContinuation, outputRate: Double? = nil, outputChannels: Int? = nil) throws {
         self.item = item
         acquired = item.accessRoot.startAccessingSecurityScopedResource()
         do {
             let original = try DecoderFactory.open(url: item.url)
-            let opened: any AudioDecoding = try outputRate.map { try ConvertedPCMDecoder(decoder: original, sampleRate: $0) } ?? original
+            let opened: any AudioDecoding = try outputRate.map { try ConvertedPCMDecoder(decoder: original, sampleRate: $0, channels: outputChannels) } ?? original
             decoder = opened
             let frames = min(outputRate == nil ? 16384 : 4096, max(1, Int(decoder.source.sampleRate * 0.2)))
             var data = Data(count: frames * Int(decoder.pcmFormat.mBytesPerFrame))
@@ -48,21 +48,21 @@ final class ContinuationPreparer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "catto.swar.continuation", qos: .utility)
     private let revision = OSAllocatedUnfairLock(initialState: UUID())
     func invalidate(_ request: UUID = UUID()) { revision.withLock { $0 = request } }
-    func prepare(_ item: PlaybackContinuation, request: UUID, outputRate: Double? = nil) async -> PreparedContinuation? {
+    func prepare(_ item: PlaybackContinuation, request: UUID, outputRate: Double? = nil, outputChannels: Int? = nil) async -> PreparedContinuation? {
         await withCheckedContinuation { continuation in
             queue.async { [self] in
                 guard revision.withLock({ $0 == request }) else { continuation.resume(returning: nil); return }
-                let result = try? PreparedContinuation(item, outputRate: outputRate)
+                let result = try? PreparedContinuation(item, outputRate: outputRate, outputChannels: outputChannels)
                 continuation.resume(returning: revision.withLock({ $0 == request }) ? result : nil)
             }
         }
     }
     func prepareCrossfade(current: PlaybackContinuation, next: PlaybackContinuation, overlap: Double,
-                          rate: Double, request: UUID) async -> PreparedCrossfade? {
+                          rate: Double, channels: Int? = nil, request: UUID) async -> PreparedCrossfade? {
         await withCheckedContinuation { continuation in
             queue.async { [self] in
                 guard revision.withLock({ $0 == request }) else { continuation.resume(returning: nil); return }
-                let result = try? PreparedCrossfade(current: current, next: next, overlap: overlap, rate: rate)
+                let result = try? PreparedCrossfade(current: current, next: next, overlap: overlap, rate: rate, channels: channels)
                 continuation.resume(returning: revision.withLock({ $0 == request }) ? result : nil)
             }
         }
@@ -74,10 +74,10 @@ final class PreparedCrossfade: @unchecked Sendable {
     let outgoing: PreparedContinuation
     let incoming: PreparedContinuation
     let reader: CrossfadePCMReader
-    init(current: PlaybackContinuation, next: PlaybackContinuation, overlap: Double, rate: Double) throws {
+    init(current: PlaybackContinuation, next: PlaybackContinuation, overlap: Double, rate: Double, channels: Int? = nil) throws {
         guard overlap.isFinite, (0.5...12).contains(overlap) else { throw AudioFailure("Invalid transition duration.") }
-        outgoing = try PreparedContinuation(current, outputRate: rate)
-        incoming = try PreparedContinuation(next, outputRate: rate)
+        outgoing = try PreparedContinuation(current, outputRate: rate, outputChannels: channels)
+        incoming = try PreparedContinuation(next, outputRate: rate, outputChannels: channels)
         reader = try CrossfadePCMReader(outgoing: outgoing.decoder, incoming: incoming.decoder,
                                         overlapFrames: Int64((overlap * rate).rounded()))
         try reader.seek(to: reader.outgoingTransitionFrame)
