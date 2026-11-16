@@ -110,7 +110,7 @@ struct LyricsTests {
     }
 
     @Test func offsetVariantsNegativeUnsignedListedLastAndInvalid() {
-        // Negative offset delays lyrics; the tag may trail the content lines.
+        // Negative offset delays lyrics; trailing offset tag still applies.
         let delayed = LyricsParser.parse("[00:10] a\n[offset:-2000]", source: .sidecar)
         #expect(delayed?.lines.map(\.time) == [12])
         // A missing sign is treated as positive.
@@ -119,7 +119,7 @@ struct LyricsTests {
         // An offset that would precede zero clamps to zero.
         let clamped = LyricsParser.parse("[offset:60000]\n[00:10] a", source: .sidecar)
         #expect(clamped?.lines.map(\.time) == [0])
-        // Invalid offsets are ignored entirely.
+        // Invalid offsets are ignored.
         let ignored = LyricsParser.parse("[offset:abc]\n[00:10] a", source: .sidecar)
         #expect(ignored?.lines.map(\.time) == [10])
     }
@@ -132,11 +132,21 @@ struct LyricsTests {
     }
 
     @Test func identicalWordTimestampsStillIlluminateSequentially() {
-        // Duplicate word stamps collapse to the 80 ms floor window rather than
-        // a zero division; the second word still lights immediately after.
+        // Two words stamped at the same instant: the sweep window floors at 80 ms
+        // and the second word still lights up.
         let repeated = LyricsParser.parse("[00:10.00] <00:10.00> go <00:10.00> now", source: .embedded)
         #expect(repeated?.lines.first?.words.map(\.time) == [10, 10])
         #expect(repeated?.wordIndex(line: 0, at: 10.04) == 1)
+        // Lines 40 ms apart stay distinct and activate in order.
+        let tight = LyricsParser.parse("[00:10.00] a\n[00:10.04] b", source: .sidecar)
+        #expect(tight?.lines.map(\.time) == [10, 10.04])
+        #expect(tight?.lineIndex(at: 10.02) == 0)
+        #expect(tight?.lineIndex(at: 10.04) == 1)
+        // The same phrase repeated later in the song re-activates from scratch.
+        let repeatPhrase = LyricsParser.parse("[00:10] chorus\n[00:20] verse\n[00:30] chorus", source: .sidecar)
+        #expect(repeatPhrase?.lineIndex(at: 29.9) == 1)
+        #expect(repeatPhrase?.lineIndex(at: 30) == 2)
+        #expect(repeatPhrase?.lines[2].text == "chorus")
     }
 
     // MARK: - Playback clock
@@ -152,7 +162,7 @@ struct LyricsTests {
         #expect(paused.displayPosition(at: snapshot.addingTimeInterval(5)) == 10)
         let seeking = LyricsPlaybackClock(position: 10, date: snapshot, playing: true, seeking: true)
         #expect(seeking.displayPosition(at: snapshot.addingTimeInterval(5)) == 10)
-        // A snapshot dated in the future clamps to the snapshot position.
+        // A snapshot dated in the future clamps to the snapshot.
         let drifted = LyricsPlaybackClock(position: 10, date: snapshot.addingTimeInterval(2), playing: true, seeking: false)
         #expect(drifted.displayPosition(at: snapshot) == 10)
     }
@@ -300,5 +310,35 @@ struct LyricsIntegrationTests {
         defer { model.shutdown() }
 
         #expect(await model.lyrics(for: music.appendingPathComponent("song.wav")) == nil)
+    }
+
+    @Test func deletedSourceFileIsMarkedMissingByRescan() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let music = root.appendingPathComponent("Music")
+        try FileManager.default.createDirectory(at: music, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.copyItem(at: fixture, to: music.appendingPathComponent("song.wav"))
+
+        let model = LibraryModel(storageDirectory: root.appendingPathComponent("Store"), codecDirectory: codecs)
+        await model.start()
+        try await model.addFolder(music)
+        defer { model.shutdown() }
+
+        // Song should exist initially
+        #expect(model.tracks.count == 1)
+        let track = try #require(model.tracks.first)
+        #expect(track.isMissing == false)
+
+        // Delete the source file
+        try FileManager.default.removeItem(at: music.appendingPathComponent("song.wav"))
+
+        // Trigger a rescan (simulating folder watcher detecting deletion)
+        await model.rescan()
+
+        // Track should now be marked as missing
+        await model.reload()
+        let updatedTrack = try #require(model.tracks.first)
+        #expect(updatedTrack.isMissing == true)
+        #expect(updatedTrack.error != nil)
     }
 }

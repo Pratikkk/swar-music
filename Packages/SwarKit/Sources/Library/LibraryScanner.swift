@@ -16,7 +16,7 @@ public struct ScanSummary: Sendable {
     public let failed: Int
 }
 
-public struct LibraryScanner: Sendable {
+public final class LibraryScanner: @unchecked Sendable {
     // File decoding and network-volume I/O may block. Do not occupy Swift's
     // cooperative executor threads while waiting on them, especially on small Macs.
     private static let inspectionQueue: OperationQueue = {
@@ -29,6 +29,8 @@ public struct LibraryScanner: Sendable {
     private let repository: LibraryRepository
     private let inspector: any MediaInspecting
     private let customArtworkDirectory: URL?
+    /// The files enumerated during the last scan, available for reconciliation.
+    internal private(set) var enumeratedFiles: [ScanFile] = []
     public init(repository: LibraryRepository, artworkDirectory: URL, codecDirectory: URL? = nil, customArtworkDirectory: URL? = nil) {
         self.repository = repository
         self.customArtworkDirectory = customArtworkDirectory
@@ -57,6 +59,8 @@ public struct LibraryScanner: Sendable {
             enumeration.cancel()
         }
         try Task.checkCancellation()
+        // Store enumerated files for later reconciliation (e.g., checkAndMarkMissingFiles)
+        self.enumeratedFiles = files
         let prior = try await repository.existingTracks(folderID: folder.id)
         let priorIDs = Set(prior.values.map(\.id))
         var pending: [ScanFile] = []

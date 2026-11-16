@@ -57,6 +57,7 @@ public final class LibraryModel {
     private var trashJournalDirectory: URL?
     private var isShutDown = false
     private var started = false
+    private var safetyRescanTimer: Timer?
     private let storageDirectory: URL?
     private let codecDirectory: URL?
     private var localLyrics: LocalLyricsStore?
@@ -143,6 +144,12 @@ public final class LibraryModel {
             await reloadPlaylists()
             await rescan()
             isReady = true
+            // Start periodic safety rescan to catch any missed file deletions
+            safetyRescanTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.rescan()
+                }
+            }
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -197,6 +204,12 @@ public final class LibraryModel {
         scanTask = nil
         isScanning = false
         progress = nil
+    }
+
+    /// Forces an immediate rescan of all folders, marking any deleted files as missing.
+    /// Can be called when the app knows a file was deleted (e.g., from a file system event).
+    public func forceRescanForMissingFiles() async {
+        await rescan()
     }
 
     private func scanFolders(repository: LibraryRepository, artworkDirectory: URL) async {
@@ -855,6 +868,8 @@ public final class LibraryModel {
         watchTask?.cancel()
         watchTask = nil
         scanTask?.cancel()
+        safetyRescanTimer?.invalidate()
+        safetyRescanTimer = nil
         watchers.removeAll()
         scopes.removeAll()
     }
@@ -1104,6 +1119,27 @@ public final class LibraryModel {
                 ?? LyricsParser.unsynced(embedded, source: .embedded)
                 ?? LyricsParser.unsynced(sidecarRaw ?? "", source: .sidecar)
         }.value
+    }
+
+    /// Explicitly check for missing files in all monitored folders and mark them as missing.
+    /// Can be called when the app detects a file deletion (e.g., from a file system event).
+    public func checkAndMarkMissingFiles() async {
+        guard !isShutDown, let repository, let artworkDirectory else { return }
+        for folder in folders {
+            guard let scope = scopes[folder.id] else { continue }
+            defer { withExtendedLifetime(scope) {} }
+            do {
+                let scanner = LibraryScanner(repository: repository, artworkDirectory: artworkDirectory, codecDirectory: codecDirectory,
+                                             customArtworkDirectory: customArtworkDirectory)
+                _ = try await scanner.scan(folder: folder, root: scope.url) { [weak self] update in
+                    await self?.updateProgress(update)
+                }
+                try Task.checkCancellation()
+                try await repository.reconcile(folderID: folder.id, seen: Set(scanner.enumeratedFiles.map(\.relativePath)))
+            } catch is CancellationError { return }
+            catch { folderErrors[folder.id] = error.localizedDescription }
+        }
+        await reload()
     }
 
     /// Reauthorise a moved/offline root without replacing its database identity.

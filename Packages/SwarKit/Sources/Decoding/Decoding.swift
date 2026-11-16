@@ -1,6 +1,38 @@
 import AudioToolbox
 import Foundation
 
+public enum CrossfadeCurve: String, CaseIterable, Identifiable, Sendable, Codable {
+    /// Complementary gains preserve peak headroom, with a possible perceptual dip.
+    case equalGain
+    /// Constant power for uncorrelated sources; -3.01 dB headroom is applied to
+    /// dry audio too, so the fade endpoints do not introduce a gain step.
+    case equalPower
+
+    public var id: String { rawValue }
+
+    public var dryGain: Float { self == .equalPower ? Float(1 / sqrt(2.0)) : 1 }
+
+    public func gains(progress: Double) -> (outgoing: Float, incoming: Float) {
+        let p = progress.isFinite ? min(1, max(0, progress)) : 0
+        if p == 0 { return (dryGain, 0) }
+        if p == 1 { return (0, dryGain) }
+        let angle = p * .pi / 2
+        switch self {
+        case .equalPower: return (Float(cos(angle)) * dryGain, Float(sin(angle)) * dryGain)
+        case .equalGain:
+            let incoming = Float(pow(sin(angle), 2))
+            return (1 - incoming, incoming)
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .equalGain: return "Equal Gain (Linear)"
+        case .equalPower: return "Equal Power (Constant Power)"
+        }
+    }
+}
+
 public struct SourceFormat: Sendable, Equatable {
     public let codec: String
     public let sampleRate: Double

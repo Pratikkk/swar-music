@@ -22,6 +22,7 @@ struct LyricsView: View {
     @State private var userScrollPaused = false
     @State private var interaction = 0
     @State private var followedLine: Int?
+    @State private var activeLineCache: (lineId: Int, words: [LyricsWord], end: Double)?
 
     var body: some View {
         Group {
@@ -70,6 +71,7 @@ struct LyricsView: View {
         guard !Task.isCancelled, requestID == request, player.currentURL == url else { return }
         lyrics = result
         loading = false
+        activeLineCache = nil
         synchronizeClock()
     }
 
@@ -164,6 +166,8 @@ struct LyricsView: View {
         let selected = active == line.id
         let distance = active.map { abs(line.id - $0) } ?? 0
         let readable = !lyrics.isSynced || userScrollPaused
+        let cacheKey = (lineId: line.id, words: line.words, end: line.id + 1 < lyrics.lines.count ? lyrics.lines[line.id + 1].time : (player.duration > 0 ? player.duration : line.time + 4))
+        
         return Button {
             guard line.time >= 0 else { return }
             userScrollPaused = false
@@ -174,13 +178,15 @@ struct LyricsView: View {
             // to/from word highlighting must never change the scroll target's height.
             .opacity(selected && lyrics.isWordTimed && !reduceMotion ? 0 : 1)
             .overlay(alignment: .topLeading) {
-                if selected, lyrics.isWordTimed, !reduceMotion {
-                    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !player.isPlaying)) { context in
-                        LyricsSweepingPhrase(line: line,
-                            end: line.id + 1 < lyrics.lines.count ? lyrics.lines[line.id + 1].time
-                                : (player.duration > 0 ? player.duration : line.time + 4),
-                            position: clock.displayPosition(at: context.date))
-                    }
+                if selected && lyrics.isWordTimed && !reduceMotion {
+                    CachedSweepingPhrase(
+                        cacheKey: cacheKey,
+                        interpolatedPosition: interpolatedPosition,
+                        clock: clock,
+                        line: line,
+                        lyrics: lyrics,
+                        player: player
+                    )
                 }
             }
             // A fixed font prevents rewrapping and scroll jumps on active-line changes.
@@ -202,6 +208,12 @@ struct LyricsView: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.5), value: selected)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.5), value: distance)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: userScrollPaused)
+        // Word-level tap-to-seek for enhanced LRC
+        .overlay(alignment: .topLeading) {
+            if selected && lyrics.isWordTimed && !reduceMotion && !line.words.isEmpty {
+                WordSeekOverlay(line: line, lyrics: lyrics, player: player, clock: clock, compact: compact)
+            }
+        }
     }
 
     private var fadeMask: some View {
@@ -214,10 +226,11 @@ struct LyricsView: View {
             Label("No Lyrics", systemImage: "quote.bubble")
         } description: {
             Text("Lyrics appear when a song has an embedded lyrics tag or a matching .lrc file in its folder.")
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private static func timestamp(_ seconds: TimeInterval) -> String {
+    static func timestamp(_ seconds: TimeInterval) -> String {
         guard seconds.isFinite, seconds >= 0, seconds < Double(Int.max) else { return "0:00" }
         let total = Int(seconds)
         return String(format: "%d:%02d", total / 60, total % 60)
@@ -231,25 +244,100 @@ private struct LyricFollowRequest: Equatable {
     let paused: Bool
 }
 
-/// Smooth word illumination without changing phrase geometry or relaying display ticks
-/// through the whole lyrics panel. Word timestamps determine progress; no fabricated sync.
-private struct LyricsSweepingPhrase: View {
+/// Cached version of LyricsSweepingPhrase that memoizes the AttributedString
+/// to avoid recreating it on every frame. Only rebuilds when the cache key changes.
+private struct CachedSweepingPhrase: View {
+    let cacheKey: (lineId: Int, words: [LyricsWord], end: Double)
+    let interpolatedPosition: Double
+    let clock: LyricsPlaybackClock
     let line: LyricsLine
-    let end: Double
-    let position: Double
+    let lyrics: TimedLyrics
+    let player: Player
+
+    @State private var cachedAttributedString: AttributedString?
+    @State private var lastCacheKey: (lineId: Int, words: [LyricsWord], end: Double)?
 
     var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !player.isPlaying)) { context in
+            let position = clock.displayPosition(at: context.date)
+            Text(buildAttributedString(position: position))
+        }
+    }
+
+    private func buildAttributedString(position: Double) -> AttributedString {
+        // Check if we need to rebuild the cache
+        let currentCacheKey = cacheKey
+        if let lastCacheKey = lastCacheKey,
+           lastCacheKey.lineId == currentCacheKey.lineId,
+           lastCacheKey.words.count == currentCacheKey.words.count,
+           lastCacheKey.end == currentCacheKey.end,
+           lastCacheKey.words.map(\.time) == currentCacheKey.words.map(\.time),
+           let cached = cachedAttributedString {
+            return cached
+        }
+
         var text = AttributedString()
         for (index, word) in line.words.enumerated() {
             if index > 0 { text += AttributedString(" ") }
-            let next = line.words.dropFirst(index + 1).compactMap(\.time).first ?? end
+            let next = line.words.dropFirst(index + 1).compactMap(\.time).first ?? cacheKey.end
             let start = word.time ?? line.time
             let progress = min(1, max(0, (position - start) / max(0.08, next - start)))
             var piece = AttributedString(word.text)
             piece.foregroundColor = Color.primary.opacity(0.4 + 0.6 * progress)
             text += piece
         }
-        return Text(text)
+
+        // Update cache
+        cachedAttributedString = text
+        lastCacheKey = currentCacheKey
+        return text
+    }
+}
+
+/// Word-level tap-to-seek overlay for enhanced LRC lyrics.
+/// Renders each word as a tappable element that seeks to its timestamp.
+private struct WordSeekOverlay: View {
+    let line: LyricsLine
+    let lyrics: TimedLyrics
+    let player: Player
+    let clock: LyricsPlaybackClock
+    let compact: Bool
+
+    var body: some View {
+        GeometryReader { geometry in
+            let words = line.words
+            let totalWidth = geometry.size.width
+            let lineStart = line.time
+            let lineEnd = line.id + 1 < lyrics.lines.count ? lyrics.lines[line.id + 1].time : (player.duration > 0 ? player.duration : line.time + 4)
+            let lineDuration = max(0.1, lineEnd - lineStart)
+            
+            ZStack(alignment: .leading) {
+                ForEach(Array(words.enumerated()), id: \.offset) { index, word in
+                    let wordStart = word.time ?? line.time
+                    let wordEnd = words.dropFirst(index + 1).compactMap(\.time).first ?? lineEnd
+                    let wordDuration = max(0.05, wordEnd - wordStart)
+                    let wordStartX = totalWidth * ((wordStart - lineStart) / lineDuration)
+                    let wordWidth = max(30, totalWidth * (wordDuration / lineDuration))
+                    
+                    Button {
+                        guard word.time != nil else { return }
+                        Task { await player.seek(to: wordStart) }
+                    } label: {
+                        Text(word.text)
+                            .font(.system(size: compact ? 19 : 26, weight: .bold))
+                            .foregroundStyle(Color.primary)
+                            .frame(width: wordWidth, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .position(x: wordStartX + wordWidth / 2, y: geometry.size.height / 2)
+                    .disabled(word.time == nil)
+                    .accessibilityLabel("Seek to \(word.text)")
+                    .help("Seek to \(word.text) at \(LyricsView.timestamp(wordStart))")
+                }
+            }
+            .frame(width: totalWidth, height: geometry.size.height, alignment: .leading)
+        }
     }
 }
 

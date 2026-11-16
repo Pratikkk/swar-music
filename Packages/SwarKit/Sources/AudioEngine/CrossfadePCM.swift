@@ -2,29 +2,6 @@ import Foundation
 import AudioToolbox
 import Decoding
 
-public enum CrossfadeCurve: Sendable {
-    /// Complementary gains preserve peak headroom, with a possible perceptual dip.
-    case equalGain
-    /// Constant power for uncorrelated sources; -3.01 dB headroom is applied to
-    /// dry audio too, so the fade endpoints do not introduce a gain step.
-    case equalPower
-
-    public var dryGain: Float { self == .equalPower ? Float(1 / sqrt(2.0)) : 1 }
-
-    public func gains(progress: Double) -> (outgoing: Float, incoming: Float) {
-        let p = progress.isFinite ? min(1, max(0, progress)) : 0
-        if p == 0 { return (dryGain, 0) }
-        if p == 1 { return (0, dryGain) }
-        let angle = p * .pi / 2
-        switch self {
-        case .equalPower: return (Float(cos(angle)) * dryGain, Float(sin(angle)) * dryGain)
-        case .equalGain:
-            let incoming = Float(pow(sin(angle), 2))
-            return (1 - incoming, incoming)
-        }
-    }
-}
-
 /// Two separate decoders on a producer worker, never the render callback.
 /// Output is interleaved Float32. Reads perform no buffer allocation or file opens.
 /// Both sources must already have the same sample rate/channel count; this first

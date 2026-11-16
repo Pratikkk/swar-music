@@ -17,7 +17,8 @@ struct CoverRequest: Hashable, Sendable {
 
 final class CoverBitmap: NSObject, @unchecked Sendable {
     let image: CGImage
-    init(_ image: CGImage) { self.image = image }
+    let pixels: Int
+    init(_ image: CGImage, pixels: Int) { self.image = image; self.pixels = pixels }
 }
 
 /// NSCache supports concurrent access; bitmaps are immutable. Cache hits require
@@ -25,6 +26,8 @@ final class CoverBitmap: NSObject, @unchecked Sendable {
 final class CoverCache: @unchecked Sendable {
     static let shared = CoverCache()
     private let images = NSCache<NSString, CoverBitmap>()
+    // Track keys separately since NSCache doesn't expose allKeys
+    private var keys = Set<String>()
     private let decode: @Sendable (CoverRequest) async -> CoverBitmap?
     private final class Waiter: @unchecked Sendable {
         var cancelled = false
@@ -62,7 +65,12 @@ final class CoverCache: @unchecked Sendable {
     }
     fileprivate func store(_ bitmap: CoverBitmap, for request: CoverRequest) {
         images.setObject(bitmap, forKey: request.key as NSString, cost: bitmap.image.bytesPerRow * bitmap.image.height)
+        keys.insert(request.key)
     }
+    
+    /// Returns a bitmap scaled to the requested pixel size. If the cached bitmap
+    /// is larger than requested, it is downscaled on-demand. If smaller, the
+    /// cached version is returned as-is (upscaling is avoided for quality).
     func image(for request: CoverRequest) async -> CoverBitmap? {
         guard !Task.isCancelled else { return nil }
         if let cached = cached(request) { return cached }
@@ -74,6 +82,81 @@ final class CoverCache: @unchecked Sendable {
         } onCancel: {
             self.cancel(waiter, id: waiterID, key: request.key)
         }
+    }
+
+    /// Prefetches adjacent album artwork for smoother scrolling. Given a list of
+    /// URLs and a center index, prefetches artwork for nearby indices.
+    /// - Parameters:
+    ///   - urls: All artwork URLs in the current view
+    ///   - centerIndex: Currently visible center index
+    ///   - window: Number of items on each side to prefetch (default 2)
+    ///   - pixels: Target pixel size for thumbnails
+    func prefetchAdjacent(urls: [URL], centerIndex: Int, window: Int = 2, pixels: Int = 384) async {
+        guard !urls.isEmpty else { return }
+        let start = max(0, centerIndex - window)
+        let end = min(urls.count - 1, centerIndex + window)
+        await withTaskGroup(of: Void.self) { group in
+            for i in start...end {
+                guard i != centerIndex else { continue }
+                group.addTask { [weak self] in
+                    guard let self else { return }
+                    let request = CoverRequest(url: urls[i], pixels: pixels)
+                    _ = await self.image(for: request)
+                }
+            }
+        }
+    }
+    
+    /// Returns a bitmap scaled to exactly the requested pixel size, downscaling
+    /// from the largest cached version if needed. Returns nil if no cached
+    /// version exists at the requested size or larger.
+    func imageScaledTo(request: CoverRequest) async -> CoverBitmap? {
+        guard !Task.isCancelled else { return nil }
+        // First try exact match
+        if let cached = cached(request) { return cached }
+        
+        // Try to find a larger cached version we can downscale from
+        var best: CoverBitmap?
+        var bestPixels = Int.max
+        for key in keys {
+            guard let cached = images.object(forKey: key as NSString) else { continue }
+            // Parse the pixel size from the key (format: "path|pixels")
+            guard let pipeIndex = key.lastIndex(of: "|"),
+                  let cachedPixels = Int(key[key.index(after: pipeIndex)...]),
+                  cachedPixels >= request.pixels else { continue }
+            if cachedPixels < bestPixels {
+                best = cached
+                bestPixels = cachedPixels
+            }
+        }
+        
+        guard let best else { return nil }
+        
+        // Downscale the larger bitmap to the requested size
+        guard !Task.isCancelled else { return nil }
+        return await downscale(bitmap: best, toPixels: request.pixels)
+    }
+    
+    private func downscale(bitmap: CoverBitmap, toPixels: Int) async -> CoverBitmap? {
+        guard !Task.isCancelled else { return nil }
+        return await Task.detached(priority: .utility) {
+            let scale = Double(toPixels) / Double(bitmap.pixels)
+            let width = Int(Double(bitmap.image.width) * scale)
+            let height = Int(Double(bitmap.image.height) * scale)
+            guard let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: bitmap.image.bitsPerComponent,
+                bytesPerRow: 0,
+                space: bitmap.image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: bitmap.image.bitmapInfo.rawValue
+            ) else { return nil }
+            context.interpolationQuality = .high
+            context.draw(bitmap.image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            guard let scaled = context.makeImage() else { return nil }
+            return CoverBitmap(scaled, pixels: toPixels)
+        }.value
     }
 
     private func register(_ waiter: Waiter, id: UUID, request: CoverRequest,
@@ -133,7 +216,6 @@ final class CoverCache: @unchecked Sendable {
         inFlightLock.unlock()
         for continuation in continuations { continuation.resume(returning: bitmap) }
     }
-
 }
 
 /// Serial decoding bounds CPU/temporary image memory and rechecks the cache to
@@ -152,7 +234,7 @@ private actor CoverDecoder {
                     kCGImageSourceShouldCacheImmediately: true
                   ] as CFDictionary) else { return nil }
             guard !Task.isCancelled else { return nil }
-            return CoverBitmap(image)
+            return CoverBitmap(image, pixels: request.pixels)
         }
     }
 }

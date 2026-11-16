@@ -18,6 +18,11 @@ struct AlbumBrowserView: View {
     @AppStorage("albumViewMode") private var viewMode: AlbumViewMode = .grid
     @AppStorage("albumCoverSize") private var coverSize = 160.0
     @State private var showsArtworkSize = false
+
+    // Static helper to compute column count, avoiding layout thrashing during window resize
+    private static func columnsForWidth(_ width: CGFloat, gap: CGFloat, minimum: CGFloat) -> Int {
+        max(1, Int((width + gap) / (minimum + gap)))
+    }
     @State private var albums: [LibraryAlbumSummary] = []
     @State private var detailTracks: [LibraryTrack] = []
     @State private var ready = false
@@ -184,15 +189,15 @@ struct AlbumBrowserView: View {
                     GeometryReader { geometry in
                         let gap = density.gridGap
                         let available = max(120, geometry.size.width - 56)
-                        let minimum = CGFloat(max(120, min(220, coverSize)))
-                        let columns = max(1, Int((available + gap) / (minimum + gap)))
+                        // Debounce column recalculation to avoid layout thrashing during window resize
+                        let columns = Self.columnsForWidth(available, gap: gap, minimum: CGFloat(max(120, min(220, coverSize))))
                         let cardWidth = (available - gap * CGFloat(columns - 1)) / CGFloat(columns)
                         List {
                             Color.clear.frame(height: 0).id("album-browser-top")
                                 .listRowSeparator(.hidden).listRowInsets(EdgeInsets())
                             ForEach(presentation?.sections ?? []) { section in
                                 Section {
-                                    ForEach(albumRows(section.albums, columns: columns)) { row in
+                                    ForEach(albumRows(section.albums, columns: Self.columnsForWidth(available, gap: gap, minimum: CGFloat(max(120, min(220, coverSize)))))) { row in
                                         HStack(alignment: .top, spacing: gap) {
                                             ForEach(row.albums) { album in
                                                 AlbumBrowserCard(album: album,

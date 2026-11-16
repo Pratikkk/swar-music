@@ -1,4 +1,5 @@
 import Foundation
+import Decoding
 
 public enum CollectionFilter: String, CaseIterable, Identifiable, Sendable {
     case all = "All Songs"
@@ -51,11 +52,14 @@ public struct TrackMetadata: Codable, Sendable, Equatable {
     public var year: String
     public var trackNumber: Int
     public var discNumber: Int
+    /// Crossfade curve for this track. Nil uses the global setting.
+    public var crossfadeCurve: CrossfadeCurve?
 
     public init(track: LibraryTrack) {
         title = track.title; artist = track.artist; albumArtist = track.albumArtist
         album = track.album; genre = track.genre; year = track.year ?? ""
         trackNumber = track.trackNumber; discNumber = track.discNumber
+        crossfadeCurve = nil
     }
 
     func validated() throws -> Self {

@@ -210,11 +210,34 @@ private struct NowPlayingArtwork: View {
         } else if player.underrunFrames > 0 {
             Label("Buffer underruns: \(player.underrunFrames) frames", systemImage: "exclamationmark.triangle")
                 .font(.caption).foregroundStyle(.orange)
-        } else if let incoming = player.crossfadeIncomingTitle {
-            Label("Crossfade → " + incoming, systemImage: "waveform.path")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                .help("Transition in progress to " + incoming + ". The main title changes after the overlap.")
-                .accessibilityLabel("Crossfade to " + incoming)
+        } else if player.crossfadeProgress > 0 {
+            // Crossfade progress visualization
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Label("Crossfade → " + (player.crossfadeIncomingTitle ?? "Next track"), systemImage: "waveform.path")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer()
+                    Text("\(Int(player.crossfadeProgress * 100))%")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                ProgressView(value: player.crossfadeProgress)
+                    .progressViewStyle(.linear)
+                    .tint(.secondary)
+                if player.beatWindow > 0 {
+                    HStack {
+                        Text("Beat window: \(player.beatWindow) beats")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                        Spacer()
+                        if player.crossfadeTotalDuration > 0 {
+                            Text("\(player.crossfadeCurrentPosition, specifier: "%.1f")s / \(player.crossfadeTotalDuration, specifier: "%.1f")s")
+                                .font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+            .help("Crossfade progress: \(Int(player.crossfadeProgress * 100))%. Beat window: \(player.beatWindow) beats.")
+            .accessibilityLabel("Crossfade progress")
+            .accessibilityValue("\(Int(player.crossfadeProgress * 100)) percent")
         } else if player.isCrossfadeProcessing {
             Label("Smart Crossfade · Processed audio", systemImage: "waveform.path")
                 .font(.caption).foregroundStyle(.secondary)

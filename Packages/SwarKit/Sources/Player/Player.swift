@@ -24,6 +24,10 @@ public final class Player {
     }
     public private(set) var isCrossfadeProcessing = false
     public private(set) var crossfadeIncomingTitle: String?
+    public private(set) var crossfadeProgress: Double = 0
+    public private(set) var crossfadeTotalDuration: Double = 0
+    public private(set) var crossfadeCurrentPosition: Double = 0
+    public private(set) var beatWindow: Int = 0
     public private(set) var title = "No file open"
     public private(set) var subtitle = ""
     public private(set) var artworkURL: URL?
@@ -1107,6 +1111,8 @@ public final class Player {
         } else if snapshot.error != nil { playbackIntent = false }
         if snapshot.didFinish { playbackIntent = false }
         if snapshot.error != nil { listenCounter.interrupt() }
+        if snapshot.didFinish { playbackIntent = false }
+        if snapshot.error != nil { listenCounter.interrupt() }
         if listenCounter.sample(time: listeningTime(), position: snapshot.position,
                                 duration: snapshot.duration, playing: snapshot.isPlaying && snapshot.error == nil),
            let currentURL {
@@ -1123,6 +1129,47 @@ public final class Player {
         // failures remain visible until a successful user operation replaces them.
         if let error = snapshot.error { setError(error, fromPlayback: true) }
         else if errorIsFromPlayback { setError(nil) }
+        
+        // Update crossfade progress
+        if let crossfadeID = snapshot.crossfadeID {
+            // Crossfade is in progress - calculate progress
+            let crossfadeDuration = crossfadeLength.duration
+            if crossfadeDuration > 0 {
+                // Find the incoming track position
+                let incomingTitle = snapshot.crossfadeID.flatMap { id in
+                    (queue.first { $0.id == id } ?? stagedGaplessEntries[id])?.title
+                }
+                if crossfadeIncomingTitle != incomingTitle { crossfadeIncomingTitle = incomingTitle }
+                // Calculate progress: how far into the crossfade we are
+                // The crossfade starts at (duration - overlap) and ends at duration
+                let overlapDuration = crossfadeLength.duration
+                if overlapDuration > 0 {
+                    let crossfadeStart = snapshot.duration - overlapDuration
+                    if snapshot.position >= crossfadeStart {
+                        crossfadeProgress = min(1.0, (snapshot.position - crossfadeStart) / overlapDuration)
+                        crossfadeTotalDuration = overlapDuration
+                        crossfadeCurrentPosition = snapshot.position - crossfadeStart
+                    } else {
+                        crossfadeProgress = 0
+                        crossfadeTotalDuration = overlapDuration
+                        crossfadeCurrentPosition = 0
+                    }
+                    // Calculate beat window
+                    beatWindow = crossfadeLength.beats
+                } else {
+                    crossfadeProgress = 0
+                    crossfadeTotalDuration = 0
+                    crossfadeCurrentPosition = 0
+                    beatWindow = 0
+                }
+            } else {
+                crossfadeProgress = 0
+                crossfadeTotalDuration = 0
+                crossfadeCurrentPosition = 0
+                beatWindow = 0
+                crossfadeIncomingTitle = nil
+            }
+        }
     }
 
     private func setError(_ message: String?, fromPlayback: Bool = false) {

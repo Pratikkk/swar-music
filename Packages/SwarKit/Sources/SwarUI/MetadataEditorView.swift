@@ -1,5 +1,6 @@
 import SwiftUI
 import Library
+import Decoding
 
 @MainActor
 struct MetadataEditorView: View {
@@ -30,6 +31,14 @@ struct MetadataEditorView: View {
                 TextField("Year", text: $metadata.year)
                 TextField("Track", value: $metadata.trackNumber, format: .number.grouping(.never))
                 TextField("Disc", value: $metadata.discNumber, format: .number.grouping(.never))
+                Picker("Crossfade Curve", selection: Binding(
+                    get: { metadata.crossfadeCurve ?? .equalPower },
+                    set: { metadata.crossfadeCurve = $0 }
+                )) {
+                    ForEach(CrossfadeCurve.allCases) { curve in
+                        Text(curve.description).tag(curve)
+                    }
+                }
             }.textFieldStyle(.roundedBorder).disabled(saving)
             if let error { Text(error).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
             HStack {
