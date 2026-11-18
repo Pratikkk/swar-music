@@ -1,3 +1,4 @@
+import Accelerate
 import Foundation
 import AudioToolbox
 import CryptoKit
@@ -35,15 +36,21 @@ public enum RhythmAnalysis {
         }
         let low = max(1, Int(rate * 60 / 180)), high = Int(rate * 60 / 60)
         var scores = [Double](repeating: 0, count: high + 2)
-        for lag in low...high {
-            var dot = 0.0, left = 0.0, right = 0.0
-            for i in lag..<onsets.count {
-                dot += centered[i] * centered[i - lag]
-                left += centered[i] * centered[i]
-                right += centered[i - lag] * centered[i - lag]
-            }
-            scores[lag] = dot / max(1e-12, sqrt(left * right))
-        }
+   l        let n = centered.count
+     var prefixSq = [Double](repeating: 0, count: n + 1)
+        for i in 0..<n { prefixSq[i + 1] = prefixSq[i] + centered[i] * centered[i] }
+        centered.withUnsafeBufferPointer { buf in
+                                   guard let base = buf.baseAddress else { return }
+                                   for lag in low...high {
+        let count = n - lag
+        guard count > 0 else { continue }
+        var dot = 0.0
+        vDSP_dotprD(base + lag, 1, base, 1, &dot, vDSP_Length(count))
+        let left = prefixSq[n] - prefixSq[lag]
+        let right = prefixSq[count]
+        scores[lag] = dot / max(1e-12, sqrt(left * right))
+                                   }
+                                         }
         let strongest = (low...high).max { scores[$0] < scores[$1] } ?? low
         // Prefer the first strong local peak over its half-tempo harmonic.
         let lag = (low...high).first {
