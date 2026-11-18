@@ -27,9 +27,9 @@ struct PlaybackSeekControl: View {
             if waveformEnabled {
                 WaveformSeekView(player: player, state: $state, samples: waveformURL == player.currentURL ? samples : [], mini: mini, onCommit: { commit($0, final: true) }))
                     .id(player.sourceRevision)
-                    .accessibilityRepresentation { NativeSeekSlider(player: player, state: $state, onCommit: { commit($0, final: true) }) }
+                    .accessibilityRepresentation { NativeSeekSlider(player: player, state: $state, mini: mini, onCommit: { commit($0, final: true) }) }
                     .help(waveformUnavailable ? "Waveform unavailable. Click or drag to seek." : "Click or drag the waveform to seek.")
-            } else { NativeSeekSlider(player: player, state: $state, onCommit: { commit($0, final: true) }) }
+            } else { NativeSeekSlider(player: player, state: $state, mini: mini, onCommit: { commit($0, final: true) }) }
         }
         .disabled(player.duration <= 0)
         .allowsHitTesting(!player.isBusy || player.isSeeking)
@@ -125,6 +125,7 @@ if let request = state.request() { onCommit(request) }
 private struct NativeSeekSlider: View {
 let player: Player
 @Binding var state: SeekSliderState
+var mini = false
 let onCommit: (SeekSliderState.Request) -> Void
 
 var body: some View {
@@ -139,5 +140,8 @@ player.beginScrubbing()
 onCommit(request)
 }
 })
+    .controlSize(mini ? .mini : .regular)
+    .accessibilityLabel("Playback position")
+    .accessibilityValue("\(Int(state.displayedPosition(player.position))) of \(Int(max(0, player.duration))) seconds")
 }
 }
