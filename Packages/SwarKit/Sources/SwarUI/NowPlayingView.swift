@@ -128,6 +128,7 @@ private struct NowPlayingArtwork: View {
     let browseArtist: (String) -> Void
     let browseAlbum: (String) -> Void
     @State private var showActivity = false
+    @State private var artworkScale: CGFloat = 1
     @AppStorage("nowPlayingTechnicalDetails") private var technicalDetails = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -141,6 +142,7 @@ private struct NowPlayingArtwork: View {
                 VStack(spacing: 12) {
                     CoverArt(url: player.artworkURL, title: player.title, cornerRadius: 14, crossfade: true)
                         .frame(width: size, height: size)
+                        .scaleEffect(artworkScale)
                         .currentSongActions(library: library, player: player)
                         .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
                         .overlay {
@@ -172,6 +174,15 @@ private struct NowPlayingArtwork: View {
                 guard player.isBusy else { return }
                 do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
                 showActivity = true
+            }
+            .task(id: player.currentURL) {
+                // Subtle scale animation on track change for visual feedback
+                guard !reduceMotion else { return }
+                artworkScale = 0.96
+                try? await Task.sleep(for: .milliseconds(80))
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    artworkScale = 1
+                }
             }
             ZStack { status }.frame(height: 26).padding(.horizontal, 24)
         }
@@ -241,6 +252,80 @@ private struct NowPlayingArtwork: View {
         } else if player.isCrossfadeProcessing {
             Label("Smart Crossfade · Processed audio", systemImage: "waveform.path")
                 .font(.caption).foregroundStyle(.secondary)
+        } else if let formatInfo = player.formatInfo, formatInfo.ringCapacityFrames > 0 {
+            // Ring buffer performance metrics for audiophile diagnostics
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Label("Ring Buffer", systemImage: "waveform.badge.magnifyingglass")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Fill: \(Int(formatInfo.ringFillRatio * 100))%")
+                        .font(.caption.monospacedDigit()).foregroundStyle(formatInfo.ringFillRatio < 0.3 ? .orange : .secondary)
+                }
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Current").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(formatInfo.ringCurrentFillFrames) / \(formatInfo.ringCapacityFrames) frames")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Peak").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(formatInfo.ringMaxFillFrames) frames")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Min").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(formatInfo.ringMinFillFrames == UInt32.max ? 0 : formatInfo.ringMinFillFrames) frames")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Underruns").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(formatInfo.underrunFrames)")
+                            .font(.caption.monospacedDigit()).foregroundStyle(formatInfo.underrunFrames > 0 ? .orange : .secondary)
+                    }
+                }
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Write Cycles").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(formatInfo.ringWriteCycles)")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Read Cycles").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(formatInfo.ringReadCycles)")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Total Written").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(formatInfo.ringTotalFramesWritten.formatted())")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Total Read").font(.caption2).foregroundStyle(.tertiary)
+                        Text("\(formatInfo.ringTotalFramesRead.formatted())")
+                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    }
+                }
+                // Bit-perfect verification status
+                if let verifiedAt = formatInfo.bitPerfectVerifiedAt {
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark.seal.fill").foregroundStyle(.teal)
+                            Text("Bit-Perfect Verified")
+                                .font(.caption.weight(.medium)).foregroundStyle(.teal)
+                            Spacer()
+                            Text(verifiedAt, style: .relative)
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                        if formatInfo.bitPerfectVerifiedFrames > 0 {
+                            Text("\(formatInfo.bitPerfectVerifiedFrames.formatted()) frames verified")
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .padding(8).background(Color.teal.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            .padding(10).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 }

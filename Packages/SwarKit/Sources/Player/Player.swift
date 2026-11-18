@@ -1209,7 +1209,18 @@ public final class Player {
             return FormatClassifier.describe(source: source, path: SignalPath(
                 output: output, clientPCM: client,
                 underrunFrames: snapshot.underrunFrames,
-                isExclusive: snapshot.isExclusive, transport: transport))
+                isExclusive: snapshot.isExclusive, transport: transport,
+                bitPerfectVerifiedAt: formatInfo?.bitPerfectVerifiedAt,
+                bitPerfectVerifiedFrames: formatInfo?.bitPerfectVerifiedFrames ?? 0,
+                ringTotalFramesWritten: snapshot.ringTotalFramesWritten,
+                ringTotalFramesRead: snapshot.ringTotalFramesRead,
+                ringMaxFillFrames: snapshot.ringMaxFillFrames,
+                ringMinFillFrames: snapshot.ringMinFillFrames,
+                ringWriteCycles: snapshot.ringWriteCycles,
+                ringReadCycles: snapshot.ringReadCycles,
+                ringCurrentFillFrames: snapshot.ringCurrentFillFrames,
+                ringCapacityFrames: snapshot.ringCapacityFrames,
+                ringFillRatio: snapshot.ringFillRatio))
         }
         if formatInfo != nextInfo { formatInfo = nextInfo }
     }

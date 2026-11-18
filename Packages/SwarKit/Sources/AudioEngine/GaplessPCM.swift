@@ -111,6 +111,45 @@ final class GaplessPCM {
     private(set) var eof = false
     private(set) var requestedID: UUID?
     private(set) var requestedToken: UUID?
+    private let ringCapacity: UInt32
+    
+    // Performance metrics
+    private var maxFillFrames: UInt32 = 0
+    private var minFillFrames: UInt32 = UInt32.max
+    private var totalFramesWritten: UInt64 = 0
+    private var totalFramesRead: UInt64 = 0
+    private var writeCycles: UInt64 = 0
+    private var readCycles: UInt64 = 0
+    
+    struct PerformanceMetrics {
+        let totalFramesWritten: UInt64
+        let totalFramesRead: UInt64
+        let maxFillFrames: UInt32
+        let minFillFrames: UInt32
+        let writeCycles: UInt64
+        let readCycles: UInt64
+        let underruns: UInt64
+        let currentFillFrames: UInt32
+        let capacityFrames: UInt32
+        let fillRatio: Double
+    }
+    
+    func performanceMetrics() -> PerformanceMetrics {
+        let currentFill = swar_ring_readable(ring)
+        let fillRatio = ringCapacity > 0 ? Double(currentFill) / Double(ringCapacity) : 0
+        return PerformanceMetrics(
+            totalFramesWritten: swar_ring_total_written(ring),
+            totalFramesRead: swar_ring_total_read(ring),
+            maxFillFrames: swar_ring_max_fill(ring),
+            minFillFrames: swar_ring_min_fill(ring),
+            writeCycles: swar_ring_write_cycles(ring),
+            readCycles: swar_ring_read_cycles(ring),
+            underruns: swar_ring_underruns(ring),
+            currentFillFrames: currentFill,
+            capacityFrames: ringCapacity,
+            fillRatio: fillRatio
+        )
+    }
 
     init(decoder: any AudioDecoding, url: URL, entryID: UUID? = nil, token: UUID? = nil, capacity: UInt32? = nil, processed: Bool = false) throws {
         self.processed = processed
@@ -120,7 +159,10 @@ final class GaplessPCM {
             && stride == Int(decoder.pcmFormat.mChannelsPerFrame) * 4) else {
             throw AudioFailure("Processed playback requires interleaved Float32 PCM.")
         }
-        guard let ring = swar_ring_create(capacity ?? UInt32(decoder.source.sampleRate), decoder.pcmFormat.mBytesPerFrame) else {
+        // Increased default capacity to 2 seconds for better buffer health
+        let defaultCapacity = capacity ?? UInt32(decoder.source.sampleRate * 2)
+        self.ringCapacity = defaultCapacity
+        guard let ring = swar_ring_create(defaultCapacity, decoder.pcmFormat.mBytesPerFrame) else {
             throw AudioFailure("Could not allocate a lock-free audio buffer.")
         }
         self.ring = ring
@@ -193,11 +235,14 @@ final class GaplessPCM {
 
     func fill(upTo target: UInt32 = .max) throws {
         guard !eof else { return }
+        // Aggressive fill: keep buffer as full as possible to handle system latency
         while swar_ring_writable(ring) > 0 {
             _ = current
             let readable = swar_ring_readable(ring)
-            guard readable < target else { break }
-            var requested = min(4096, swar_ring_writable(ring), target - readable)
+            // Dynamic target: fill to 90% capacity or explicit target, whichever is smaller
+            let dynamicTarget = min(target, UInt32(Double(ringCapacity) * 0.9))
+            guard readable < dynamicTarget else { break }
+            var requested = min(8192, swar_ring_writable(ring), dynamicTarget - readable)
             if let pair = crossfade, segments.count == 1 {
                 let segment = segments[0]
                 let start = segment.start + UInt64(pair.reader.outgoingTransitionFrame - segment.baseFrame)

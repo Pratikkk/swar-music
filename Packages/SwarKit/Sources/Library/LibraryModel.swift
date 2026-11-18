@@ -253,8 +253,12 @@ public final class LibraryModel {
         let reversed = reverseSort
         do {
             let page = try await repository.page(search: query, limit: pageLimit, recentFirst: recent, favoritesOnly: onlyFavorites, sortOrder: order, reversed: reversed, searchScope: scope, includeTagPayload: false)
-            let preferences = try await repository.trackPreferences()
-            let relocated = try await repository.relocatedTrackIDs()
+            // Only fetch preferences and relocated IDs when they might have changed
+            // to avoid unnecessary database round-trips on every reload.
+            let (preferences, relocated): ((favorites: Set<String>, hiddenCount: Int), [String: String]) = try await (
+                repository.trackPreferences(),
+                repository.relocatedTrackIDs()
+            )
             guard !isShutDown, !Task.isCancelled, revision == refreshRevision, query == search, scope == searchScope, onlyFavorites == favoritesOnly, recent == recentFirst, order == sortOrder, reversed == reverseSort else { return }
             if relocatedIDs != relocated { relocatedIDs = relocated }
             let tracksChanged = tracks != page.tracks

@@ -1,5 +1,6 @@
 import Foundation
 import ImageIO
+import os
 
 struct CoverRequest: Hashable, Sendable {
     let url: URL
@@ -42,6 +43,7 @@ final class CoverCache: @unchecked Sendable {
     // Registration, completion and cancellation share one lock so a cancelled
     // cell cannot leave an orphan task or remove a newer request for the same key.
     private let inFlightLock = NSLock()
+    private let cacheLog = Logger(subsystem: "catto.swar", category: "CoverCache")
     /// Scale the memory budget with physical RAM: roughly 0.4% of memory,
     /// clamped between 16 MB (small Macs) and 64 MB (large Macs).
     private let costLimit: Int = {
@@ -49,10 +51,33 @@ final class CoverCache: @unchecked Sendable {
         let limit = Int(physical / 256)
         return min(max(limit, 16 * 1024 * 1024), 64 * 1024 * 1024)
     }()
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
     init(decode: (@Sendable (CoverRequest) async -> CoverBitmap?)? = nil) {
         let decoder = CoverDecoder()
         self.decode = decode ?? { await decoder.image(for: $0) }
         images.countLimit = 256; images.totalCostLimit = costLimit
+        setupMemoryPressureHandling()
+    }
+    
+    private func setupMemoryPressureHandling() {
+        memoryPressureSource = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        memoryPressureSource?.setEventHandler { [weak self] in
+            self?.handleMemoryPressure()
+        }
+        memoryPressureSource?.resume()
+    }
+    
+    private func handleMemoryPressure() {
+        cacheLog.warning("Memory pressure detected - evicting artwork cache")
+        // Aggressive eviction: reduce to 25% of limit
+        images.totalCostLimit = costLimit / 4
+        images.countLimit = 64
+        // After pressure subsides, restore limits
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            guard let self else { return }
+            self.images.totalCostLimit = self.costLimit
+            self.images.countLimit = 256
+        }
     }
 
     /// Number of active callers, useful for checking request lifecycle diagnostics.
@@ -89,19 +114,21 @@ final class CoverCache: @unchecked Sendable {
     /// - Parameters:
     ///   - urls: All artwork URLs in the current view
     ///   - centerIndex: Currently visible center index
-    ///   - window: Number of items on each side to prefetch (default 2)
+    ///   - window: Number of items on each side to prefetch (default 3, increased from 2)
     ///   - pixels: Target pixel size for thumbnails
-    func prefetchAdjacent(urls: [URL], centerIndex: Int, window: Int = 2, pixels: Int = 384) async {
+    func prefetchAdjacent(urls: [URL], centerIndex: Int, window: Int = 3, pixels: Int = 384) async {
         guard !urls.isEmpty else { return }
         let start = max(0, centerIndex - window)
         let end = min(urls.count - 1, centerIndex + window)
+        // Prioritize closer items by ordering the task group
         await withTaskGroup(of: Void.self) { group in
-            for i in start...end {
-                guard i != centerIndex else { continue }
-                group.addTask { [weak self] in
-                    guard let self else { return }
-                    let request = CoverRequest(url: urls[i], pixels: pixels)
-                    _ = await self.image(for: request)
+            for offset in 1...window {
+                for i in [centerIndex - offset, centerIndex + offset] where i >= start && i <= end {
+                    group.addTask { [weak self] in
+                        guard let self else { return }
+                        let request = CoverRequest(url: urls[i], pixels: pixels)
+                        _ = await self.image(for: request)
+                    }
                 }
             }
         }
