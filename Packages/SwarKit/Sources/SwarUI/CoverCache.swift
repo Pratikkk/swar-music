@@ -65,7 +65,7 @@ final class CoverCache: @unchecked Sendable {
     }
     fileprivate func store(_ bitmap: CoverBitmap, for request: CoverRequest) {
         images.setObject(bitmap, forKey: request.key as NSString, cost: bitmap.image.bytesPerRow * bitmap.image.height)
-        keys.insert(request.key)
+       inFlightLock.withLock { _ = keys.insert(request.key) }
     }
     
     /// Returns a bitmap scaled to the requested pixel size. If the cached bitmap
@@ -118,8 +118,12 @@ final class CoverCache: @unchecked Sendable {
         // Try to find a larger cached version we can downscale from
         var best: CoverBitmap?
         var bestPixels = Int.max
-        for key in keys {
-            guard let cached = images.object(forKey: key as NSString) else { continue }
+        let urlPrefix = "\(request.url.standardizedFileURL.path)|"
+        let snapshotKeys = inFlightLock.withLock { Array(keys) }
+        var evictedKeys: [String] = []
+        for key in snapshotKeys {
+            guard let cached = images.object(forKey: key as NSString) else { evictedKeys.append(key); continue }
+            guard key.hasPrefix(urlPrefix) else { continue }
             // Parse the pixel size from the key (format: "path|pixels")
             guard let pipeIndex = key.lastIndex(of: "|"),
                   let cachedPixels = Int(key[key.index(after: pipeIndex)...]),
@@ -130,6 +134,7 @@ final class CoverCache: @unchecked Sendable {
             }
         }
         
+            if !evictedKeys.isEmpty { inFlightLock.withLock { evictedKeys.forEach { if images.object(forKey: $0 as NSString) == nil { keys.remove($0) } } } }
         guard let best else { return nil }
         
         // Downscale the larger bitmap to the requested size
