@@ -51,7 +51,7 @@ struct PlaybackSeekControl: View {
         .disabled(player.duration <= 0)
         .allowsHitTesting(!player.isBusy || player.isSeeking)
         .task(id: state.dragging) {
-            guard state.dragging else { return }
+            guard state.dragging, player.supportsFastSeeking else { return }
             var lastPosition: Double? = player.position
             while state.dragging && !Task.isCancelled {
                 do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
