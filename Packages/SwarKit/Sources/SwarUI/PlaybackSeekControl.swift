@@ -25,45 +25,14 @@ struct PlaybackSeekControl: View {
     var body: some View {
         Group {
             if waveformEnabled {
-                WaveformSeekSurface(samples: waveformURL == player.currentURL ? samples : [],
-                    progress: player.duration > 0 ? state.displayedPosition(player.position) / player.duration : 0,
-                    duration: player.duration,
-                    mini: mini,
-                    isDragging: state.dragging,
-                    changed: { fraction in
-                        if !state.dragging {
-                            state.begin(at: state.displayedPosition(player.position))
-                            player.beginScrubbing()
-                        }
-                        state.change(to: fraction * player.duration)
-                    }, ended: { fraction in
-                        state.change(to: fraction * player.duration)
-                        if let request = state.end() { commit(request, final: true) }
-                    }, step: { delta in
-                        state.change(to: state.displayedPosition(player.position) + delta)
-                        if let request = state.request() { commit(request, final: true) }
-                    })
+                WaveformSeekView(player: player, state: $state, samples: waveformURL == player.currentURL ? samples : [], mini: mini, onCommit: { commit($0, final: true) }))
                     .id(player.sourceRevision)
-                    .accessibilityRepresentation { nativeSlider }
+                    .accessibilityRepresentation { NativeSeekSlider(player: player, state: $state, onCommit: { commit($0, final: true) }) }
                     .help(waveformUnavailable ? "Waveform unavailable. Click or drag to seek." : "Click or drag the waveform to seek.")
-            } else { nativeSlider }
+            } else { NativeSeekSlider(player: player, state: $state, onCommit: { commit($0, final: true) }) }
         }
         .disabled(player.duration <= 0)
         .allowsHitTesting(!player.isBusy || player.isSeeking)
-        .task(id: state.dragging) {
-            guard state.dragging, player.supportsFastSeeking else { return }
-            var lastPosition: Double? = player.position
-            while state.dragging && !Task.isCancelled {
-                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-                guard state.dragging && !Task.isCancelled else { return }
-                // Send an explicit end-of-song seek only when the pointer is released.
-                if lastPosition != state.value, player.duration - state.value > 0.05,
-                   let request = state.request() {
-                    lastPosition = request.position
-                    await write(request, final: false)
-                }
-            }
-        }
         .onChange(of: player.currentURL, initial: true) { synchronize() }
         .onChange(of: player.duration) { synchronize() }
         .onChange(of: player.sourceRevision) { cancel() }
@@ -90,22 +59,6 @@ struct PlaybackSeekControl: View {
         .onChange(of: waveformEnabled) { cancel() }
     }
 
-    private var nativeSlider: some View {
-        Slider(value: Binding(get: { state.displayedPosition(player.position) }, set: {
-            state.change(to: $0)
-            if !state.dragging, let request = state.request() { commit(request, final: true) }
-        }), in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
-            if editing {
-                state.begin(at: state.displayedPosition(player.position))
-                player.beginScrubbing()
-            } else if let request = state.end() {
-                commit(request, final: true)
-            }
-        })
-        .controlSize(mini ? .mini : .regular)
-        .accessibilityLabel("Playback position")
-        .accessibilityValue("\(Int(state.displayedPosition(player.position))) of \(Int(max(0, player.duration))) seconds")
-    }
 
     private func synchronize() {
         state.synchronize(position: player.position, duration: player.duration, url: player.currentURL)
@@ -133,4 +86,58 @@ struct PlaybackSeekControl: View {
         guard request.url == player.currentURL else { synchronize(); return }
         state.finish(request, position: player.position, seeking: player.isSeeking)
     }
+}
+@MainActor
+private struct WaveformSeekView: View {
+let player: Player
+@Binding var state: SeekSliderState
+let samples: [Float]
+let mini: Bool
+let onCommit: (SeekSliderState.Request) -> Void
+
+var body: some View {
+WaveformSeekSurface(
+samples: samples,
+progress: player.duration > 0 ? state.displayedPosition(player.position) / player.duration : 0,
+duration: player.duration,
+mini: mini,
+isDragging: state.dragging,
+changed: { fraction in
+if !state.dragging {
+state.begin(at: state.displayedPosition(player.position))
+player.beginScrubbing()
+}
+state.change(to: fraction * player.duration)
+},
+ended: { fraction in
+state.change(to: fraction * player.duration)
+if let request = state.end() { onCommit(request) }
+},
+step: { delta in
+state.change(to: state.displayedPosition(player.position) + delta)
+if let request = state.request() { onCommit(request) }
+}
+)
+}
+}
+
+@MainActor
+private struct NativeSeekSlider: View {
+let player: Player
+@Binding var state: SeekSliderState
+let onCommit: (SeekSliderState.Request) -> Void
+
+var body: some View {
+Slider(value: Binding(get: { state.displayedPosition(player.position) }, set: {
+state.change(to: $0)
+if !state.dragging, let request = state.request() { onCommit(request) }
+}), in: 0...max(player.duration, 0.01), onEditingChanged: { editing in
+if editing {
+state.begin(at: state.displayedPosition(player.position))
+player.beginScrubbing()
+} else if let request = state.end() {
+onCommit(request)
+}
+})
+}
 }
