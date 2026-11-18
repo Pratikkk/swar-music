@@ -269,8 +269,14 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
         if ((uint32_t)count > requested - *read) count = (int)(requested - *read);
         if (d->codec->codec_id == AV_CODEC_ID_ALAC && count > d->info.frame_count - d->delivered)
             count = (int)(d->info.frame_count - d->delivered);
-        for (int frame = 0; frame < count; ++frame) {
-            for (int channel = 0; channel < channels; ++channel) {
+       if (!planar && storage == stride && (d->info.is_float || d->info.pcm_bits == storage * 8) && A(av_get_packed_sample_fmt)(d->sample_format) != AV_SAMPLE_FMT_U8) {
+           size_t bytes = (size_t)count * (size_t)channels * (size_t)stride;
+           const uint8_t *src = d->frame->extended_data[0] + (size_t)d->offset * (size_t)channels * (size_t)storage;
+           memcpy(dest, src, bytes);
+           dest += bytes;
+         } else {
+           for (int frame = 0; frame < count; ++frame) {
+     for (int channel = 0; channel < channels; ++channel) {
                 const uint8_t *src = planar ? d->frame->extended_data[channel] + (size_t)(d->offset + frame) * storage :
                     d->frame->extended_data[0] + ((size_t)(d->offset + frame) * channels + channel) * storage;
                 uint32_t value = 0;
@@ -286,7 +292,8 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
                 dest += stride;
             }
         }
-        d->offset += count;
+     }
+     d->offset += count;
         *read += count;
         d->delivered += count;
     }
