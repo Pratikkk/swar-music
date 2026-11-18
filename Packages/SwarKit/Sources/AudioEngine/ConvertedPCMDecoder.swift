@@ -89,7 +89,8 @@ public final class ConvertedPCMDecoder: AudioDecoding {
 
     public func read(into buffer: UnsafeMutableRawPointer, frames: UInt32) throws -> UInt32 {
         guard !failed else { throw AudioFailure("Reset the converted decoder after a failure.") }
-        guard frames <= 4096 else { throw AudioFailure("Converted reads are limited to 4096 frames.") }
+        // Support larger reads for better pipeline throughput (matches GaplessPCM's 8192 frame chunks)
+        guard frames <= 8192 else { throw AudioFailure("Converted reads are limited to 8192 frames.") }
         let requested = min(Int(frames), Int(min(Int64(frames), frameCount - outputPosition)))
         var copied = 0
         do {

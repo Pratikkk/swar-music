@@ -37,10 +37,22 @@ public struct PlaybackSnapshot: Sendable {
     public let isExclusive: Bool
     /// Incoming queue entry only while its overlap is being consumed by the output.
     public let crossfadeID: UUID?
+    /// Ring buffer performance metrics for audiophile diagnostics
+    public let ringTotalFramesWritten: UInt64
+    public let ringTotalFramesRead: UInt64
+    public let ringMaxFillFrames: UInt32
+    public let ringMinFillFrames: UInt32
+    public let ringWriteCycles: UInt64
+    public let ringReadCycles: UInt64
+    public let ringCurrentFillFrames: UInt32
+    public let ringCapacityFrames: UInt32
+    public let ringFillRatio: Double
 
     public init(source: SourceFormat? = nil, output: OutputDescription? = nil, clientPCM: PlaybackPCMFormat? = nil,
                 duration: Double = 0, position: Double = 0, isPlaying: Bool = false,
-                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil, needsOutputRecovery: Bool = false, isExclusive: Bool = false, crossfadeID: UUID? = nil) {
+                underrunFrames: UInt64 = 0, error: String? = nil, didFinish: Bool = false, playbackToken: UUID? = nil, continuationID: UUID? = nil, needsOutputRecovery: Bool = false, isExclusive: Bool = false, crossfadeID: UUID? = nil,
+                ringTotalFramesWritten: UInt64 = 0, ringTotalFramesRead: UInt64 = 0, ringMaxFillFrames: UInt32 = 0, ringMinFillFrames: UInt32 = 0,
+                ringWriteCycles: UInt64 = 0, ringReadCycles: UInt64 = 0, ringCurrentFillFrames: UInt32 = 0, ringCapacityFrames: UInt32 = 0, ringFillRatio: Double = 0) {
         self.source = source; self.output = output; self.clientPCM = clientPCM; self.duration = duration
         self.position = position; self.isPlaying = isPlaying
         self.underrunFrames = underrunFrames; self.error = error; self.didFinish = didFinish
@@ -48,6 +60,15 @@ public struct PlaybackSnapshot: Sendable {
         self.needsOutputRecovery = needsOutputRecovery
         self.isExclusive = isExclusive
         self.crossfadeID = crossfadeID
+        self.ringTotalFramesWritten = ringTotalFramesWritten
+        self.ringTotalFramesRead = ringTotalFramesRead
+        self.ringMaxFillFrames = ringMaxFillFrames
+        self.ringMinFillFrames = ringMinFillFrames
+        self.ringWriteCycles = ringWriteCycles
+        self.ringReadCycles = ringReadCycles
+        self.ringCurrentFillFrames = ringCurrentFillFrames
+        self.ringCapacityFrames = ringCapacityFrames
+        self.ringFillRatio = ringFillRatio
     }
 }
 
@@ -404,7 +425,8 @@ private final class EngineState: @unchecked Sendable {
         guard pumping != shouldPump else { return }
         pumping = shouldPump
         if shouldPump {
-            timer?.schedule(deadline: .now(), repeating: .milliseconds(40), leeway: .milliseconds(10))
+            // 10ms interval with 2ms leeway for tighter timing control
+            timer?.schedule(deadline: .now(), repeating: .milliseconds(10), leeway: .milliseconds(2))
         } else {
             // Keep the source balanced and reusable, without waking while idle.
             timer?.schedule(deadline: .distantFuture)
@@ -415,6 +437,13 @@ private final class EngineState: @unchecked Sendable {
         defer { updateTimer() }
         let audible = session?.pcm.audible
         if let audible { url = audible.segment.url }
+        
+        // Get ring buffer performance metrics
+        let metrics = session?.pcm.performanceMetrics()
+        let ringMetrics = metrics ?? GaplessPCM.PerformanceMetrics(
+            totalFramesWritten: 0, totalFramesRead: 0, maxFillFrames: 0, minFillFrames: 0,
+            writeCycles: 0, readCycles: 0, underruns: 0, currentFillFrames: 0, capacityFrames: 0, fillRatio: 0)
+        
         return PlaybackSnapshot(source: audible.map { ($0.segment.decoder as? ConvertedPCMDecoder)?.originalSource ?? $0.segment.decoder.source },
                                 output: session?.outputStatus.output,
                                 clientPCM: audible.map { value in
@@ -433,7 +462,16 @@ private final class EngineState: @unchecked Sendable {
                                 error: error, didFinish: session?.didFinish ?? false,
                                 playbackToken: audible?.segment.token, continuationID: audible?.segment.entryID,
                                 needsOutputRecovery: needsRecovery || session?.outputStatus.error != nil,
-                                isExclusive: session?.exclusive ?? false, crossfadeID: audible?.crossfadeID)
+                                isExclusive: session?.exclusive ?? false, crossfadeID: audible?.crossfadeID,
+                                ringTotalFramesWritten: ringMetrics.totalFramesWritten,
+                                ringTotalFramesRead: ringMetrics.totalFramesRead,
+                                ringMaxFillFrames: ringMetrics.maxFillFrames,
+                                ringMinFillFrames: ringMetrics.minFillFrames,
+                                ringWriteCycles: ringMetrics.writeCycles,
+                                ringReadCycles: ringMetrics.readCycles,
+                                ringCurrentFillFrames: ringMetrics.currentFillFrames,
+                                ringCapacityFrames: ringMetrics.capacityFrames,
+                                ringFillRatio: ringMetrics.fillRatio)
     }
 
     func closeSession() { preparer.invalidate(); preparation = UUID(); session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil; needsRecovery = false }
@@ -544,9 +582,9 @@ private final class OutputSession {
     }
 
     private func prime() throws {
-        // Start with 200 ms, then let the 10 ms producer timer fill the one-second ring.
-        // Capacity is unchanged; only synchronous decode work before start/seek is bounded.
-        try pcm.fill(upTo: UInt32(ceil(decoder.source.sampleRate * 0.2)))
+        // Start with 500 ms for better buffer health and smoother startup.
+        // The producer timer (40ms interval) will maintain the fill level.
+        try pcm.fill(upTo: UInt32(ceil(decoder.source.sampleRate * 0.5)))
     }
 
     func close() {
@@ -555,6 +593,8 @@ private final class OutputSession {
         deviceMonitor?.setActive(false)
         deviceMonitor = nil
         if let unit {
+            // Uninstall render callback first to prevent use-after-free on the ring buffer
+            swar_uninstall_render_callback(unit)
             AudioOutputUnitStop(unit)
             AudioUnitUninitialize(unit)
             AudioComponentInstanceDispose(unit)

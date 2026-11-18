@@ -73,11 +73,29 @@ public struct SignalPath: Sendable {
     public var transport: OutputTransport
     public var systemVolume: SystemVolumeState
     public var integrity: SampleIntegrity
+    /// Bit-perfect verification tracking
+    public var bitPerfectVerifiedAt: Date? = nil
+    public var bitPerfectVerifiedFrames: UInt64 = 0
+    /// Ring buffer performance metrics
+    public var ringTotalFramesWritten: UInt64 = 0
+    public var ringTotalFramesRead: UInt64 = 0
+    public var ringMaxFillFrames: UInt32 = 0
+    public var ringMinFillFrames: UInt32 = 0
+    public var ringWriteCycles: UInt64 = 0
+    public var ringReadCycles: UInt64 = 0
+    public var ringCurrentFillFrames: UInt32 = 0
+    public var ringCapacityFrames: UInt32 = 0
+    public var ringFillRatio: Double = 0
 
     public init(output: SignalOutput? = nil, clientPCM: SignalPCM? = nil, underrunFrames: UInt64 = 0, softwareVolume: Bool = false,
                 equalizer: Bool = false, loudnessMatching: Bool = false,
                 isExclusive: Bool = false, transport: OutputTransport = .unknown,
-                systemVolume: SystemVolumeState = .unknown, integrity: SampleIntegrity = .unverified) {
+                systemVolume: SystemVolumeState = .unknown, integrity: SampleIntegrity = .unverified,
+                bitPerfectVerifiedAt: Date? = nil, bitPerfectVerifiedFrames: UInt64 = 0,
+                ringTotalFramesWritten: UInt64 = 0, ringTotalFramesRead: UInt64 = 0,
+                ringMaxFillFrames: UInt32 = 0, ringMinFillFrames: UInt32 = 0,
+                ringWriteCycles: UInt64 = 0, ringReadCycles: UInt64 = 0,
+                ringCurrentFillFrames: UInt32 = 0, ringCapacityFrames: UInt32 = 0, ringFillRatio: Double = 0) {
         self.output = output
         self.clientPCM = clientPCM
         self.underrunFrames = underrunFrames
@@ -88,8 +106,20 @@ public struct SignalPath: Sendable {
         self.transport = transport
         self.systemVolume = systemVolume
         self.integrity = integrity
+        self.bitPerfectVerifiedAt = bitPerfectVerifiedAt
+        self.bitPerfectVerifiedFrames = bitPerfectVerifiedFrames
+        self.ringTotalFramesWritten = ringTotalFramesWritten
+        self.ringTotalFramesRead = ringTotalFramesRead
+        self.ringMaxFillFrames = ringMaxFillFrames
+        self.ringMinFillFrames = ringMinFillFrames
+        self.ringWriteCycles = ringWriteCycles
+        self.ringReadCycles = ringReadCycles
+        self.ringCurrentFillFrames = ringCurrentFillFrames
+        self.ringCapacityFrames = ringCapacityFrames
+        self.ringFillRatio = ringFillRatio
     }
-}
+    }
+
 
 public struct FormatChipInfo: Sendable, Equatable {
     public let source: SourceFormat
@@ -102,6 +132,50 @@ public struct FormatChipInfo: Sendable, Equatable {
     public let conversionReasons: [String]
     public let verificationNotes: [String]
     public let isExclusive: Bool
+    /// Bit-perfect verification tracking
+    public let bitPerfectVerifiedAt: Date?
+    public let bitPerfectVerifiedFrames: UInt64
+    /// Ring buffer performance metrics for audiophile diagnostics
+    public let ringTotalFramesWritten: UInt64
+    public let ringTotalFramesRead: UInt64
+    public let ringMaxFillFrames: UInt32
+    public let ringMinFillFrames: UInt32
+    public let ringWriteCycles: UInt64
+    public let ringReadCycles: UInt64
+    public let ringCurrentFillFrames: UInt32
+    public let ringCapacityFrames: UInt32
+    public let ringFillRatio: Double
+    
+    public init(source: SourceFormat, output: SignalOutput?, clientPCM: SignalPCM?,
+                underrunFrames: UInt64, tier: FormatTier, label: String, status: SignalStatus,
+                conversionReasons: [String], verificationNotes: [String], isExclusive: Bool,
+                bitPerfectVerifiedAt: Date? = nil, bitPerfectVerifiedFrames: UInt64 = 0,
+                ringTotalFramesWritten: UInt64 = 0, ringTotalFramesRead: UInt64 = 0,
+                ringMaxFillFrames: UInt32 = 0, ringMinFillFrames: UInt32 = 0,
+                ringWriteCycles: UInt64 = 0, ringReadCycles: UInt64 = 0,
+                ringCurrentFillFrames: UInt32 = 0, ringCapacityFrames: UInt32 = 0, ringFillRatio: Double = 0) {
+        self.source = source
+        self.output = output
+        self.clientPCM = clientPCM
+        self.underrunFrames = underrunFrames
+        self.tier = tier
+        self.label = label
+        self.status = status
+        self.conversionReasons = conversionReasons
+        self.verificationNotes = verificationNotes
+        self.isExclusive = isExclusive
+        self.bitPerfectVerifiedAt = bitPerfectVerifiedAt
+        self.bitPerfectVerifiedFrames = bitPerfectVerifiedFrames
+        self.ringTotalFramesWritten = ringTotalFramesWritten
+        self.ringTotalFramesRead = ringTotalFramesRead
+        self.ringMaxFillFrames = ringMaxFillFrames
+        self.ringMinFillFrames = ringMinFillFrames
+        self.ringWriteCycles = ringWriteCycles
+        self.ringReadCycles = ringReadCycles
+        self.ringCurrentFillFrames = ringCurrentFillFrames
+        self.ringCapacityFrames = ringCapacityFrames
+        self.ringFillRatio = ringFillRatio
+    }
 
     public var sourceDetail: String {
         var parts = [source.codec]
@@ -216,9 +290,23 @@ public enum FormatClassifier {
             path.systemVolume == .unity && path.underrunFrames == 0
         let status: SignalStatus = !conversions.isEmpty ? .converted :
             (canClaimVerified && notes.isEmpty ? .bitPerfect : .unverified)
+        // Track bit-perfect verification state
+        let bitPerfectVerifiedAt = (status == .bitPerfect && path.bitPerfectVerifiedAt == nil) ? Date() : path.bitPerfectVerifiedAt
+        let bitPerfectVerifiedFrames = status == .bitPerfect ? path.bitPerfectVerifiedFrames + path.underrunFrames : path.bitPerfectVerifiedFrames
         return FormatChipInfo(source: source, output: path.output, clientPCM: path.clientPCM, underrunFrames: path.underrunFrames, tier: tier, label: label,
                               status: status, conversionReasons: conversions, verificationNotes: notes,
-                              isExclusive: path.isExclusive)
+                              isExclusive: path.isExclusive,
+                              bitPerfectVerifiedAt: bitPerfectVerifiedAt,
+                              bitPerfectVerifiedFrames: bitPerfectVerifiedFrames,
+                              ringTotalFramesWritten: path.ringTotalFramesWritten,
+                              ringTotalFramesRead: path.ringTotalFramesRead,
+                              ringMaxFillFrames: path.ringMaxFillFrames,
+                              ringMinFillFrames: path.ringMinFillFrames,
+                              ringWriteCycles: path.ringWriteCycles,
+                              ringReadCycles: path.ringReadCycles,
+                              ringCurrentFillFrames: path.ringCurrentFillFrames,
+                              ringCapacityFrames: path.ringCapacityFrames,
+                              ringFillRatio: path.ringFillRatio)
     }
 
     private static func khz(_ rate: Double) -> String { "\(String(format: "%g", rate / 1000)) kHz" }

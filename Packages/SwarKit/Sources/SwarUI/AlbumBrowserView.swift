@@ -18,6 +18,7 @@ struct AlbumBrowserView: View {
     @AppStorage("albumViewMode") private var viewMode: AlbumViewMode = .grid
     @AppStorage("albumCoverSize") private var coverSize = 160.0
     @State private var showsArtworkSize = false
+    @State private var prefetchCenterIndex = 0
 
     // Static helper to compute column count, avoiding layout thrashing during window resize
     private static func columnsForWidth(_ width: CGFloat, gap: CGFloat, minimum: CGFloat) -> Int {
@@ -209,6 +210,22 @@ struct AlbumBrowserView: View {
                                                     .frame(width: cardWidth, alignment: .top)
                                                     .albumActions(library: library, player: player, album: album)
                                                     .id(album.id)
+                                                    .onAppear {
+                                        // Trigger adjacent prefetch when this card appears
+                                        let allAlbums = presentation?.sections.flatMap(\.albums) ?? []
+                                        if let index = allAlbums.firstIndex(where: { $0.id == album.id }) {
+                                            prefetchCenterIndex = index
+                                            Task {
+                                                let urls = allAlbums.compactMap { library.artworkURL($0.artworkKey) }
+                                                await CoverCache.shared.prefetchAdjacent(
+                                                    urls: urls,
+                                                    centerIndex: index,
+                                                    window: 3,
+                                                    pixels: coverSize <= 140 ? 256 : coverSize >= 200 ? 512 : 384
+                                                )
+                                            }
+                                        }
+                                    }
                                             }
                                             if row.albums.count < columns { Spacer(minLength: 0) }
                                         }
@@ -248,6 +265,20 @@ struct AlbumBrowserView: View {
                                         .albumActions(library: library, player: player, album: album)
                                         .listRowInsets(EdgeInsets(top: density == .compact ? 4 : 6, leading: 28, bottom: density == .compact ? 4 : 6, trailing: 28))
                                         .listRowBackground(Color.clear).id(album.id)
+                                        .onAppear {
+                                            let allAlbums = presentation?.sections.flatMap(\.albums) ?? []
+                                            if let index = allAlbums.firstIndex(where: { $0.id == album.id }) {
+                                                Task {
+                                                    let urls = allAlbums.compactMap { library.artworkURL($0.artworkKey) }
+                                                    await CoverCache.shared.prefetchAdjacent(
+                                                        urls: urls,
+                                                        centerIndex: index,
+                                                        window: 3,
+                                                        pixels: 128
+                                                    )
+                                                }
+                                            }
+                                        }
                                 }
                             } header: {
                                 if recent { Text(section.title).font(.system(size: 17, weight: .semibold)) }
