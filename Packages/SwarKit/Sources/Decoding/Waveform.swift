@@ -46,7 +46,8 @@ public enum WaveformAnalysis {
             let frames = try decoder.read(into: buffer, frames: UInt32(min(16384, decoder.frameCount - position)))
             guard frames > 0 else { break }
             let bytes = buffer.assumingMemoryBound(to: UInt8.self)
-            for frame in 0..<Int(frames) {
+            let frameStep = max(1, Int(frames) / 256)
+            for frame in stride(from: 0, to: Int(frames), by: frameStep) {
                 var peak: Float = 0
                 var frameEnergy = 0.0
                 for channel in 0..<channels {
