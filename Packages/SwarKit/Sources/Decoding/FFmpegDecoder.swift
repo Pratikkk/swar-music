@@ -25,7 +25,7 @@ public final class FFmpegDecoder: AudioDecoding {
     private var decoder: OpaquePointer
     private let fileURL: URL
     private let libraryURL: URL
-p    private var errorBuffer = [CChar](repeating: 0, count: 512)rivate var errorBuffer = [CChar](repeating: 0, count: 512)
+    private var errorBuffer = [CChar](repeating: 0, count: 512)
 
     public init(url: URL, codecDirectory: URL? = nil) throws {
         guard url.isFileURL else { throw AudioFailure("Only local audio files are supported.") }
