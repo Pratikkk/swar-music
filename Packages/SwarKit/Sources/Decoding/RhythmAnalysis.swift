@@ -36,21 +36,21 @@ public enum RhythmAnalysis {
         }
         let low = max(1, Int(rate * 60 / 180)), high = Int(rate * 60 / 60)
         var scores = [Double](repeating: 0, count: high + 2)
-           let n = centered.count
-     var prefixSq = [Double](repeating: 0, count: n + 1)
+        let n = centered.count
+        var prefixSq = [Double](repeating: 0, count: n + 1)
         for i in 0..<n { prefixSq[i + 1] = prefixSq[i] + centered[i] * centered[i] }
         centered.withUnsafeBufferPointer { buf in
-                                   guard let base = buf.baseAddress else { return }
-                                   for lag in low...high {
-        let count = n - lag
-        guard count > 0 else { continue }
-        var dot = 0.0
-        vDSP_dotprD(base + lag, 1, base, 1, &dot, vDSP_Length(count))
-        let left = prefixSq[n] - prefixSq[lag]
-        let right = prefixSq[count]
-        scores[lag] = dot / max(1e-12, sqrt(left * right))
-                                   }
-                                         }
+            guard let base = buf.baseAddress else { return }
+            for lag in low...high {
+                let count = n - lag
+                guard count > 0 else { continue }
+                var dot = 0.0
+                vDSP_dotprD(base + lag, 1, base, 1, &dot, vDSP_Length(count))
+                let left = prefixSq[n] - prefixSq[lag]
+                let right = prefixSq[count]
+                scores[lag] = dot / max(1e-12, sqrt(left * right))
+            }
+        }
         let strongest = (low...high).max { scores[$0] < scores[$1] } ?? low
         // Prefer the first strong local peak over its half-tempo harmonic.
         let lag = (low...high).first {
@@ -242,6 +242,7 @@ public actor RhythmStore {
     public static let shared = RhythmStore()
     private let directory: URL?
     private var tail: Task<Void, Never>?
+    private var tailKey: String?  // Track the key associated with the current tail task
     
     // In-memory LRU cache with bounds
     private var memory: [String: RhythmProfile] = [:]
@@ -276,10 +277,11 @@ public actor RhythmStore {
     public func cancelForURL(_ url: URL, accessRoot: URL) async {
         let key = await makeKey(url: url, accessRoot: accessRoot)
         // Cancel any in-flight task for this key
-        if let task = tail, task.description.contains(key) {
+        if let task = tail, tailKey == key {
             // The tail task is for this key, cancel it
             tail?.cancel()
             tail = nil
+            tailKey = nil
         }
         // Remove from memory cache
         memory.removeValue(forKey: key)
@@ -292,12 +294,16 @@ public actor RhythmStore {
     }
     
     private func makeKey(url: URL, accessRoot: URL) async -> String {
-        return try await Task.detached(priority: .utility) {
-            var file = url.standardizedFileURL; file.removeAllCachedResourceValues()
-            let values = try file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
-            guard values.isRegularFile == true, let size = values.fileSize, let modified = values.contentModificationDate else { return "" }
-            return SHA256.hash(data: Data("rhythm-v1|\(file.path)|\(size)|\(modified.timeIntervalSince1970)".utf8)).map { String(format: "%02x", $0) }.joined()
-        }.value
+        do {
+            return try await Task.detached(priority: .utility) {
+                var file = url.standardizedFileURL; file.removeAllCachedResourceValues()
+                let values = try file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
+                guard values.isRegularFile == true, let size = values.fileSize, let modified = values.contentModificationDate else { return "" }
+                return SHA256.hash(data: Data("rhythm-v1|\(file.path)|\(size)|\(modified.timeIntervalSince1970)".utf8)).map { String(format: "%02x", $0) }.joined()
+            }.value
+        } catch {
+            return ""
+        }
     }
 
     public func profile(url: URL, accessRoot: URL, codecDirectory: URL? = nil) async throws -> RhythmProfile {
@@ -351,7 +357,8 @@ public actor RhythmStore {
             }
             return result
         }
-        tail = Task { _ = try? await task.value }
+        tail = task
+        tailKey = key
         return try await withTaskCancellationHandler {
             let result = try await task.value
             try Task.checkCancellation()
@@ -365,4 +372,3 @@ public actor RhythmStore {
         } onCancel: { task.cancel() }
     }
 }
-
