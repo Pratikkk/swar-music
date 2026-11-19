@@ -53,9 +53,43 @@ struct swarApp: App {
 /// Refresh the running Dock tile as well as the bundle's Finder/About icon.
 /// Development builds can otherwise keep a cached generic icon across rebuilds.
 final class SwarAppDelegate: NSObject, NSApplicationDelegate {
+    private var occlusionObserver: Any?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
               let icon = NSImage(contentsOf: url) else { return }
         NSApplication.shared.applicationIconImage = icon
+
+        // Initialize occlusion observer
+        _ = OcclusionObserver.shared
+
+        // Notify Player and AudioEngine of occlusion changes
+        occlusionObserver = NotificationCenter.default
+            .publisher(for: NSApplication.didChangeOcclusionStateNotification)
+            .merge(with: NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification))
+            .merge(with: NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
+            .merge(with: NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification))
+            .merge(with: NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification))
+            .merge(with: NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification))
+            .sink { [weak self] _ in
+                self?.notifyOcclusionChange()
+            }
     }
+
+    private func notifyOcclusionChange() {
+        let windows = NSApp.windows.filter { $0.isVisible && !$0.isMiniaturized }
+        let occluded = windows.isEmpty || windows.allSatisfy { $0.occlusionState.contains(.visible) == false }
+        let backgrounded = !NSApp.isActive
+
+        // Post custom notification for Player/AudioEngine
+        NotificationCenter.default.post(
+            name: .swarOcclusionStateChanged,
+            object: nil,
+            userInfo: ["occluded": occluded || backgrounded, "backgrounded": backgrounded]
+        )
+    }
+}
+
+extension Notification.Name {
+    static let swarOcclusionStateChanged = Notification.Name("swarOcclusionStateChanged")
 }

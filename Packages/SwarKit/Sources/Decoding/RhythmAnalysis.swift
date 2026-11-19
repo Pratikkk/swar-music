@@ -111,28 +111,103 @@ public enum RhythmAnalysis {
         var sums = [Double](repeating: 0, count: count), counts = [Int](repeating: 0, count: count)
         let stride = max(1, Int(f.mSampleRate / 4000))
         var position: Int64 = 0
-        while position < decoder.frameCount {
-            try Task.checkCancellation()
-            guard ProcessInfo.processInfo.systemUptime - started < timeLimit else { throw AudioFailure("Rhythm analysis exceeded its background time budget.") }
-            let frames = try decoder.read(into: buffer, frames: UInt32(min(8192, decoder.frameCount - position)))
-            guard frames > 0 else { break }
-            let data = buffer.assumingMemoryBound(to: UInt8.self)
-            for frame in 0..<Int(frames) where (Int(position) + frame) % stride == 0 {
-                var energy = 0.0
-                for channel in 0..<channels {
-                    let offset = frame * bytes + channel * sampleBytes
+
+        // Fast-path sample extractor for common PCM formats
+        let channelStride = bytes / channels
+        let sampleExtractor: (UnsafeRawPointer, Int, Int) -> Double
+
+        if floating {
+            if bits == 32 {
+                sampleExtractor = { ptr, frame, channel in
+                    let floatPtr = ptr.assumingMemoryBound(to: Float32.self)
+                    return Double(floatPtr[frame * channels + channel])
+                }
+            } else { // Float64
+                sampleExtractor = { ptr, frame, channel in
+                    let doublePtr = ptr.assumingMemoryBound(to: Float64.self)
+                    return doublePtr[frame * channels + channel]
+                }
+            }
+        } else {
+            switch bits {
+            case 16:
+                sampleExtractor = { ptr, frame, channel in
+                    let int16Ptr = ptr.assumingMemoryBound(to: Int16.self)
+                    let raw = int16Ptr[frame * channels + channel]
+                    return Double(raw) / Double(Int16.max)
+                }
+            case 24, 20:
+                sampleExtractor = { ptr, frame, channel in
+                    let baseOffset = frame * bytes + channel * sampleBytes
+                    var raw: UInt32 = 0
+                    if bigEndian {
+                        raw = UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes, as: UInt8.self)) << 16
+                        raw |= UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes + 1, as: UInt8.self)) << 8
+                        raw |= UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes + 2, as: UInt8.self))
+                    } else {
+                        raw = UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes, as: UInt8.self))
+                        raw |= UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes + 1, as: UInt8.self)) << 8
+                        raw |= UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes + 2, as: UInt8.self)) << 16
+                    }
+                    if highAligned { raw >>= 8 }
+                    if bits == 20 { raw &= 0xFFFFF }
+                    let range = UInt32(1) << bits
+                    let half = Float(range / 2)
+                    let value = signed ? (raw >= range / 2 ? Float(Int32(raw) - Int32(range)) : Float(raw)) : Float(raw) - half
+                    return Double(value / half)
+                }
+            case 32:
+                sampleExtractor = { ptr, frame, channel in
+                    let int32Ptr = ptr.assumingMemoryBound(to: Int32.self)
+                    let raw = int32Ptr[frame * channels + channel]
+                    return Double(raw) / Double(Int32.max)
+                }
+            case 8:
+                sampleExtractor = { ptr, frame, channel in
+                    let uint8Ptr = ptr.assumingMemoryBound(to: UInt8.self)
+                    let raw = uint8Ptr[frame * channels + channel]
+                    return Double(raw) / Double(UInt8.max)
+                }
+            default:
+                // Fallback for unsupported bit depths
+                sampleExtractor = { ptr, frame, channel in
+                    let baseOffset = frame * bytes + channel * sampleBytes
                     var raw: UInt64 = 0
-                    for byte in 0..<sampleBytes { raw |= UInt64(data[offset + byte]) << ((bigEndian ? sampleBytes - byte - 1 : byte) * 8) }
-                    let sample: Double
-                    if floating { sample = bits == 32 ? Double(Float(bitPattern: UInt32(truncatingIfNeeded: raw))) : Double(bitPattern: raw) }
-                    else {
+                    for byte in 0..<sampleBytes {
+                        let shift = (bigEndian ? sampleBytes - byte - 1 : byte) * 8
+                        raw |= UInt64(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes + byte, as: UInt8.self)) << shift
+                    }
+                    if floating {
+                        return bits == 32 ? Double(Float(bitPattern: UInt32(truncatingIfNeeded: raw))) : Double(bitPattern: raw)
+                    } else {
                         if highAligned { raw >>= sampleBytes * 8 - bits }
                         let range = UInt64(1) << bits
                         raw &= range - 1
                         let half = Int64(range / 2)
                         let value = signed ? (raw >= range / 2 ? Int64(raw) - Int64(range) : Int64(raw)) : Int64(raw) - half
-                        sample = Double(value) / Double(half)
+                        return Double(value) / Double(half)
                     }
+                }
+            }
+        }
+
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: 8192 * bytes, alignment: 16)
+        defer { buffer.deallocate() }
+        let started = ProcessInfo.processInfo.systemUptime
+        let count = Int(ceil(Double(decoder.frameCount) / f.mSampleRate * 100))
+        var sums = [Double](repeating: 0, count: count), counts = [Int](repeating: 0, count: count)
+        let stride = max(1, Int(f.mSampleRate / 4000))
+        var position: Int64 = 0
+        while position < decoder.frameCount {
+            try Task.checkCancellation()
+            guard ProcessInfo.processInfo.systemUptime - started < timeLimit else { throw AudioFailure("Rhythm analysis exceeded its background time budget.") }
+            let frames = try decoder.read(into: buffer, frames: UInt32(min(8192, decoder.frameCount - position)))
+            guard frames > 0 else { break }
+            let ptr = buffer.assumingMemoryBound(to: UInt8.self)
+            for frame in 0..<Int(frames) where (Int(position) + frame) % stride == 0 {
+                var energy = 0.0
+                for channel in 0..<channels {
+                    let sample = sampleExtractor(buffer, frame, channel)
                     if sample.isFinite { energy += min(1, sample * sample) / Double(channels) }
                 }
                 let bin = min(count - 1, Int(Double(position + Int64(frame)) / f.mSampleRate * 100))

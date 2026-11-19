@@ -1,5 +1,6 @@
 import AudioToolbox
 import Foundation
+import Accelerate
 import CryptoKit
 
 /// Analysis owns a separate decoder; it never touches playback buffers or device state.
@@ -38,6 +39,94 @@ public enum WaveformAnalysis {
         var energy = [Double](repeating: 0, count: bucketCount)
         var counts = [Int](repeating: 0, count: bucketCount)
         var position: Int64 = 0
+
+        // Fast-path sample extractors for common formats
+        let sampleExtractor: (UnsafeRawPointer, Int, Int) -> Double
+        let channelStride = frameBytes / channels
+
+        if floating {
+            if bits == 32 {
+                sampleExtractor = { ptr, frame, channel in
+                    let floatPtr = ptr.assumingMemoryBound(to: Float32.self)
+                    return Double(floatPtr[frame * channels + channel])
+                }
+            } else { // Float64
+                sampleExtractor = { ptr, frame, channel in
+                    let doublePtr = ptr.assumingMemoryBound(to: Float64.self)
+                    return doublePtr[frame * channels + channel]
+                }
+            }
+        } else {
+            switch bits {
+            case 16:
+                sampleExtractor = { ptr, frame, channel in
+                    let int16Ptr = ptr.assumingMemoryBound(to: Int16.self)
+                    let raw = int16Ptr[frame * channels + channel]
+                    return Double(raw) / Double(Int16.max)
+                }
+            case 24, 20:
+                // 24-bit (stored as 3 bytes) and 20-bit (in 3 bytes, low-aligned 24-bit container)
+                sampleExtractor = { ptr, frame, channel in
+                    let baseOffset = frame * frameBytes + channel * 3
+                    var raw: UInt32 = 0
+                    if bigEndian {
+                        raw = UInt32(ptr.load(fromByteOffset: baseOffset, as: UInt8.self)) << 16
+                        raw |= UInt32(ptr.load(fromByteOffset: baseOffset + 1, as: UInt8.self)) << 8
+                        raw |= UInt32(ptr.load(fromByteOffset: baseOffset + 2, as: UInt8.self))
+                    } else {
+                        raw = UInt32(ptr.load(fromByteOffset: baseOffset, as: UInt8.self))
+                        raw |= UInt32(ptr.load(fromByteOffset: baseOffset + 1, as: UInt8.self)) << 8
+                        raw |= UInt32(ptr.load(fromByteOffset: baseOffset + 2, as: UInt8.self)) << 16
+                    }
+                    if highAligned { raw >>= 8 }
+                    if bits == 20 { raw &= 0xFFFFF }
+                    let range = UInt32(1) << bits
+                    let half = Float(range / 2)
+                    let value = signed ? (raw >= range / 2 ? Float(Int32(raw) - Int32(range)) : Float(raw)) : Float(raw) - half
+                    return Double(value / half)
+                }
+            case 32:
+                sampleExtractor = { ptr, frame, channel in
+                    let int32Ptr = ptr.assumingMemoryBound(to: Int32.self)
+                    let raw = int32Ptr[frame * channels + channel]
+                    return Double(raw) / Double(Int32.max)
+                }
+            case 8:
+                sampleExtractor = { ptr, frame, channel in
+                    let uint8Ptr = ptr.assumingMemoryBound(to: UInt8.self)
+                    let raw = uint8Ptr[frame * channels + channel]
+                    return Double(raw) / Double(UInt8.max)
+                }
+            default:
+                // Fallback for unsupported bit depths
+                sampleExtractor = { ptr, frame, channel in
+                    let baseOffset = frame * frameBytes + channel * sampleBytes
+                    var raw: UInt64 = 0
+                    for byte in 0..<sampleBytes {
+                        let shift = (bigEndian ? sampleBytes - byte - 1 : byte) * 8
+                        raw |= UInt64(ptr.load(fromByteOffset: baseOffset + byte, as: UInt8.self)) << shift
+                    }
+                    if floating {
+                        return bits == 32 ? Double(Float(bitPattern: UInt32(truncatingIfNeeded: raw))) : Double(bitPattern: raw)
+                    } else {
+                        if highAligned { raw >>= sampleBytes * 8 - bits }
+                        let range = UInt64(1) << bits
+                        raw &= range - 1
+                        let half = Int64(range / 2)
+                        let value = signed ? (raw >= range / 2 ? Int64(raw) - Int64(range) : Int64(raw)) : Int64(raw) - half
+                        return Double(value) / Double(half)
+                    }
+                }
+            }
+        }
+
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: 16384 * frameBytes, alignment: 16)
+        defer { buffer.deallocate() }
+        let started = ProcessInfo.processInfo.systemUptime
+        var peaks = [Float](repeating: 0, count: bucketCount)
+        var energy = [Double](repeating: 0, count: bucketCount)
+        var counts = [Int](repeating: 0, count: bucketCount)
+        var position: Int64 = 0
         while position < decoder.frameCount {
             try Task.checkCancellation()
             guard ProcessInfo.processInfo.systemUptime - started < timeLimit else {
@@ -45,29 +134,13 @@ public enum WaveformAnalysis {
             }
             let frames = try decoder.read(into: buffer, frames: UInt32(min(16384, decoder.frameCount - position)))
             guard frames > 0 else { break }
-            let bytes = buffer.assumingMemoryBound(to: UInt8.self)
+            let ptr = buffer.assumingMemoryBound(to: UInt8.self)
             let frameStep = max(1, Int(frames) / 256)
             for frame in stride(from: 0, to: Int(frames), by: frameStep) {
                 var peak: Float = 0
                 var frameEnergy = 0.0
                 for channel in 0..<channels {
-                    let offset = frame * frameBytes + channel * sampleBytes
-                    var raw: UInt64 = 0
-                    for byte in 0..<sampleBytes {
-                        let shift = (bigEndian ? sampleBytes - byte - 1 : byte) * 8
-                        raw |= UInt64(bytes[offset + byte]) << shift
-                    }
-                    let sample: Double
-                    if floating {
-                        sample = bits == 32 ? Double(Float(bitPattern: UInt32(truncatingIfNeeded: raw))) : Double(bitPattern: raw)
-                    } else {
-                        if highAligned { raw >>= sampleBytes * 8 - bits }
-                        let range = UInt64(1) << bits
-                        raw &= range - 1
-                        let half = Int64(range / 2)
-                        let value = signed ? (raw >= range / 2 ? Int64(raw) - Int64(range) : Int64(raw)) : Int64(raw) - half
-                        sample = Double(value) / Double(half)
-                    }
+                    let sample = sampleExtractor(buffer, frame, channel)
                     if sample.isFinite {
                         let amplitude = min(1, abs(sample))
                         peak = max(peak, Float(amplitude))

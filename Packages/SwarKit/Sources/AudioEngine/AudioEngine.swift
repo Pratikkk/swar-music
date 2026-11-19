@@ -313,6 +313,17 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     /// For application termination: stop/dispose the unit before releasing file access.
     public func shutdown() { closeSynchronously() }
 
+    /// Pause the producer timer when app is occluded/backgrounded to save CPU/battery.
+    public func setOccluded(_ occluded: Bool) {
+        controlQueue.async { [state] in
+            if occluded {
+                state.pauseProducerTimer()
+            } else {
+                state.resumeProducerTimer()
+            }
+        }
+    }
+
     private func closeSynchronously() {
         let state = state
         // Drain pending work on both queues before releasing decoder/device resources.
@@ -402,6 +413,7 @@ private final class EngineState: @unchecked Sendable {
     
     // Producer queue only:
     private var producerTimer: DispatchSourceTimer?
+    private var isProducerPaused = false
 
     func scheduleProducerTimerUpdate() {
         // Called on control queue - schedule timer update on producer queue
@@ -412,7 +424,7 @@ private final class EngineState: @unchecked Sendable {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .distantFuture)
         timer.setEventHandler { [weak self] in
-            guard let self, let session, session.isPlaying else { return }
+            guard let self, let session, session.isPlaying, !self.isProducerPaused else { return }
             defer { self.scheduleProducerTimerUpdate() }
             do { try session.pump() }
             catch {
@@ -424,6 +436,18 @@ private final class EngineState: @unchecked Sendable {
         }
         self.producerTimer = timer
         timer.resume()
+    }
+
+    /// Pause the producer timer when app is occluded/backgrounded to save CPU/battery.
+    func pauseProducerTimer() {
+        isProducerPaused = true
+        // Timer will skip firing when paused
+    }
+
+    /// Resume the producer timer when app becomes visible again.
+    func resumeProducerTimer() {
+        isProducerPaused = false
+        // Timer will resume checking session.isPlaying on next fire
     }
 
     func snapshot() -> PlaybackSnapshot {

@@ -272,16 +272,25 @@ public final class Player {
                   current.url != next.url else { return }
             // Conservatively preserve all adjacent tracks from the same album.
             if let nextEntry, Self.preservesGaplessTransition(from: current, to: nextEntry) { return }
-            do {
-                let outgoing = try await RhythmStore.shared.profile(url: current.url, accessRoot: current.accessRoot)
-                let incoming = try await RhythmStore.shared.profile(url: next.url, accessRoot: next.accessRoot)
-                guard !Task.isCancelled, let self, self.playbackToken == plan.token,
-                      !self.isShutDown, !self.outputRecoveryNeeded else { return }
-                let transition = TransitionPlanner.plan(outgoing: outgoing, incoming: incoming,
-                    outgoingDuration: outgoing.duration, incomingDuration: incoming.duration, notBefore: self.position, preferredBeats: plan.length.beats)
-                guard transition.mode != .gapless else { return }
-                await engine.prepareCrossfade(next, currentRoot: current.accessRoot, overlap: transition.duration, after: plan.token)
-            } catch { /* Analysis is optional: the already-prepared gapless successor remains valid. */ }
+            
+            // Defer rhythm analysis unless beat-matched crossfade is likely to be used.
+            // Skip for short crossfade (4 beats) - use adaptiveFade without rhythm analysis.
+            // Only run expensive rhythm analysis for balanced (8 beats) or long (16 beats) crossfade.
+            let shouldAnalyzeRhythm = plan.length != .short
+            var outgoing: RhythmProfile?
+            var incoming: RhythmProfile?
+            if shouldAnalyzeRhythm {
+                do {
+                    outgoing = try await RhythmStore.shared.profile(url: current.url, accessRoot: current.accessRoot)
+                    incoming = try await RhythmStore.shared.profile(url: next.url, accessRoot: next.accessRoot)
+                } catch { outgoing = nil; incoming = nil }
+            }
+            guard !Task.isCancelled, let self, self.playbackToken == plan.token,
+                  !self.isShutDown, !self.outputRecoveryNeeded else { return }
+            let transition = TransitionPlanner.plan(outgoing: outgoing, incoming: incoming,
+                outgoingDuration: outgoing?.duration ?? current.duration, incomingDuration: incoming?.duration ?? next.duration, notBefore: self.position, preferredBeats: plan.length.beats)
+            guard transition.mode != .gapless else { return }
+            await engine.prepareCrossfade(next, currentRoot: current.accessRoot, overlap: transition.duration, after: plan.token)
         }
     }
 
@@ -329,6 +338,15 @@ public final class Player {
         self.volumeController = volumeController
         self.sleepTimer = sleepTimer ?? SleepTimer()
         self.sleepTimer.onExpire = { [weak self] in await self?.pauseForSleepTimer() }
+        
+        // Observe occlusion state changes to pause/resume audio engine timers
+        NotificationCenter.default.addObserver(forName: .swarOcclusionStateChanged, object: nil, queue: .main) { [weak self] notification in
+            guard let self, let userInfo = notification.userInfo,
+                  let occluded = userInfo["occluded"] as? Bool else { return }
+            Task { @MainActor in
+                (self.engine as? AudioPlaybackEngine)?.setOccluded(occluded)
+            }
+        }
     }
 
     private func pauseForSleepTimer() async {

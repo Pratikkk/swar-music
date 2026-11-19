@@ -28,13 +28,14 @@ struct WaveformSeekSurface: View {
     @State private var lastBaseProgress: Double = 0
     @State private var lastBaseTime: TimeInterval = 0
     @State private var lastProgressUpdateID: UInt64 = 0
+    @StateObject private var occlusionObserver = OcclusionObserver.shared
 
     var body: some View {
         // TimelineView drives 120 Hz interpolation on ProMotion when playing,
-        // pausing when playback stops or at end of track.
+        // pausing when playback stops, at end of track, or when app is occluded/backgrounded.
         // The base `progress` comes from the low-frequency player.position (~25 Hz / 40 ms timer).
         // We interpolate between updates using the timeline's high-resolution date.
-        TimelineView(.animation(paused: progress >= 1.0 || duration <= 0 || progress.isNaN || progress.isInfinite)) { timeline in
+        TimelineView(.animation(paused: progress >= 1.0 || duration <= 0 || progress.isNaN || progress.isInfinite || occlusionObserver.shouldPauseAnimations)) { timeline in
             let now = timeline.date.timeIntervalSinceReferenceDate
             
             // Detect when the base progress changes (new player.position snapshot arrived).

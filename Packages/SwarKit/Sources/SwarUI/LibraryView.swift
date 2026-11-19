@@ -146,7 +146,8 @@ public struct LibraryView: View {
             await library.reload(resetLimit: true)
         }
         .task(id: player.isPlaying) {
-            while player.isPlaying && !Task.isCancelled {
+            @ObservedObject var observer = OcclusionObserver.shared
+            while player.isPlaying && !Task.isCancelled && !observer.shouldPauseAnimations {
                 await player.refresh()
                 do { try await Task.sleep(for: .milliseconds(400)) }
                 catch { break }
