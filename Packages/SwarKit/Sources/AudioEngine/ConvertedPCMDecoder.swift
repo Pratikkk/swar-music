@@ -94,9 +94,9 @@ public final class ConvertedPCMDecoder: AudioDecoding {
         var copied = 0
         do {
             while copied < requested {
-                if outputOffset == Int(outputBuffer.frameLength) { try refill() }
+                if outputOffset == Int(outputBuffer.frameLength) { if ended { break }; try refill() }
                 let count = min(requested - copied, Int(outputBuffer.frameLength) - outputOffset)
-                guard count > 0 else { throw AudioFailure("The converted source ended before its declared duration.") }
+                guard count > 0 else { if ended { break }; throw AudioFailure("The converted source ended before its declared duration.") }
                 let samples = outputBuffer.audioBufferList.pointee.mBuffers.mData!
                 buffer.advanced(by: copied * frameBytes).copyMemory(
                     from: samples.advanced(by: outputOffset * frameBytes), byteCount: count * frameBytes)
@@ -120,7 +120,7 @@ public final class ConvertedPCMDecoder: AudioDecoding {
         if let failure = feed.failure { throw failure }
         if status == .error { throw conversionError ?? AudioFailure("Sample-rate conversion failed.") as NSError }
         if status == .endOfStream { ended = true }
-        guard outputBuffer.frameLength > 0 else { throw AudioFailure("The converter produced no audio.") }
+        guard outputBuffer.frameLength > 0  || ended else { throw AudioFailure("The converter produced no audio.") }
     }
 }
 
@@ -135,7 +135,7 @@ private final class ConverterFeed: @unchecked Sendable {
     init(source: CrossfadeFloatSource, buffer: AVAudioPCMBuffer) { self.source = source; self.buffer = buffer }
     func provide(_ packets: AVAudioPacketCount, status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
         do {
-            let count = min(Int64(min(packets, 4096)), source.decoder.frameCount - position)
+            let count = min(Int64(min(packets, 4096), buffer.frameCapacity), source.decoder.frameCount - position)
             guard count > 0 else { status.pointee = .endOfStream; return nil }
             let samples = buffer.mutableAudioBufferList.pointee.mBuffers.mData!.assumingMemoryBound(to: Float.self)
             try source.read(into: samples, frames: Int(count))

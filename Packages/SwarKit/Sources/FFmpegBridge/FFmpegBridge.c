@@ -5,6 +5,7 @@
 #include <libavutil/mathematics.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,13 +23,18 @@
  X(avformat_close_input) X(avformat_seek_file) X(av_seek_frame) X(av_get_bytes_per_sample) \
  X(av_sample_fmt_is_planar) X(av_get_packed_sample_fmt) X(av_rescale_q) \
  X(av_strerror) X(av_get_bits_per_sample) X(avformat_version) X(avcodec_version) X(avutil_version) X(av_dict_get)
+typedef struct {
+#define DECLARE(name) __typeof__(&name) name;
+    API_FUNCTIONS(DECLARE)
+#undef DECLARE
+} SwarFFAPI;
+static pthread_mutex_t g_api_mutex = PTHREAD_MUTEX_INITIALIZER;
+static void *g_library = NULL;
+static SwarFFAPI g_api;
+static int g_api_loaded = 0;
 struct SwarFFDecoder {
     void *library;
-    struct {
-#define DECLARE(name) __typeof__(&name) name;
-        API_FUNCTIONS(DECLARE)
-#undef DECLARE
-    } api;
+    SwarFFAPI api;
     AVFormatContext *format;
     AVCodecContext *codec;
     AVPacket *packet;
@@ -54,7 +60,6 @@ void swar_ff_close(SwarFFDecoder *d) {
     if (d->packet) A(av_packet_free)(&d->packet);
     if (d->codec) A(avcodec_free_context)(&d->codec);
     if (d->format) A(avformat_close_input)(&d->format);
-    if (d->library) dlclose(d->library);
     free(d);
 }
 
@@ -87,27 +92,50 @@ static int next_frame(SwarFFDecoder *d, char *error, size_t size) {
         if (result < 0) return fail(d, error, size, "Submit audio packet", result);
     }
 }
+static int load_shared_api(const char *library, void **out_library, SwarFFAPI *out_api, char *error, size_t size) {
+    pthread_mutex_lock(&g_api_mutex);
+    if (g_api_loaded) {
+        *out_library = g_library;
+        *out_api = g_api;
+        pthread_mutex_unlock(&g_api_mutex);
+        return 0;
+    }
+
+    void *handle = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+    if (!handle) {
+        snprintf(error, size, "Bundled codecs could not load: %s", dlerror());
+        pthread_mutex_unlock(&g_api_mutex);
+        return -1;
+    }
+
+    SwarFFAPI api = {0};
+#define LOAD(name) do { void *symbol = dlsym(handle, #name); if (!symbol) { snprintf(error, size, "Bundled codec API missing: %s", #name); dlclose(handle); pthread_mutex_unlock(&g_api_mutex); return -1; } memcpy(&api.name, &symbol, sizeof(symbol)); } while (0)
+    API_FUNCTIONS(LOAD)
+#undef LOAD
+
+    if ((api.avformat_version() >> 16) != LIBAVFORMAT_VERSION_MAJOR ||
+        (api.avcodec_version() >> 16) != LIBAVCODEC_VERSION_MAJOR ||
+        (api.avutil_version() >> 16) != LIBAVUTIL_VERSION_MAJOR) {
+        snprintf(error, size, "The codec library ABI does not match this app");
+        dlclose(handle);
+        pthread_mutex_unlock(&g_api_mutex);
+        return -1;
+    }
+
+    g_library = handle;
+    g_api = api;
+    g_api_loaded = 1;
+    *out_library = g_library;
+    *out_api = g_api;
+    pthread_mutex_unlock(&g_api_mutex);
+    return 0;
+}
 
 SwarFFDecoder *swar_ff_open(const char *path, const char *library, char *error, size_t size) {
     SwarFFDecoder *d = calloc(1, sizeof(*d));
     if (!d) { fail(NULL, error, size, "Allocate decoder", AVERROR(ENOMEM)); return NULL; }
     d->seek_target = -1;
-    d->library = dlopen(library, RTLD_NOW | RTLD_LOCAL);
-    if (!d->library) {
-        snprintf(error, size, "Bundled codecs could not load: %s", dlerror());
-        swar_ff_close(d); return NULL;
-    }
-#define LOAD(name) { void *symbol = dlsym(d->library, #name); \
-    if (!symbol) { snprintf(error, size, "Bundled codec API missing: %s", #name); swar_ff_close(d); return NULL; } \
-    memcpy(&d->api.name, &symbol, sizeof(symbol)); }
-    API_FUNCTIONS(LOAD)
-#undef LOAD
-    if ((A(avformat_version)() >> 16) != LIBAVFORMAT_VERSION_MAJOR ||
-        (A(avcodec_version)() >> 16) != LIBAVCODEC_VERSION_MAJOR ||
-        (A(avutil_version)() >> 16) != LIBAVUTIL_VERSION_MAJOR) {
-        snprintf(error, size, "The codec library ABI does not match this app");
-        goto failure;
-    }
+    if (load_shared_api(library, &d->library, &d->api, error, size) != 0) { swar_ff_close(d); return NULL; }
     int result = A(avformat_open_input)(&d->format, path, NULL, NULL);
     if (result < 0) { fail(d, error, size, "Open audio content", result); goto failure; }
     result = A(avformat_find_stream_info)(d->format, NULL);
@@ -269,8 +297,14 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
         if ((uint32_t)count > requested - *read) count = (int)(requested - *read);
         if (d->codec->codec_id == AV_CODEC_ID_ALAC && count > d->info.frame_count - d->delivered)
             count = (int)(d->info.frame_count - d->delivered);
-        for (int frame = 0; frame < count; ++frame) {
-            for (int channel = 0; channel < channels; ++channel) {
+       if (!planar && storage == stride && (d->info.is_float || d->info.pcm_bits == storage * 8) && A(av_get_packed_sample_fmt)(d->sample_format) != AV_SAMPLE_FMT_U8) {
+           size_t bytes = (size_t)count * (size_t)channels * (size_t)stride;
+           const uint8_t *src = d->frame->extended_data[0] + (size_t)d->offset * (size_t)channels * (size_t)storage;
+           memcpy(dest, src, bytes);
+           dest += bytes;
+         } else {
+           for (int frame = 0; frame < count; ++frame) {
+     for (int channel = 0; channel < channels; ++channel) {
                 const uint8_t *src = planar ? d->frame->extended_data[channel] + (size_t)(d->offset + frame) * storage :
                     d->frame->extended_data[0] + ((size_t)(d->offset + frame) * channels + channel) * storage;
                 uint32_t value = 0;
@@ -286,7 +320,8 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
                 dest += stride;
             }
         }
-        d->offset += count;
+     }
+     d->offset += count;
         *read += count;
         d->delivered += count;
     }

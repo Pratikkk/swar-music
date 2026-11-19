@@ -25,6 +25,7 @@ public final class FFmpegDecoder: AudioDecoding {
     private var decoder: OpaquePointer
     private let fileURL: URL
     private let libraryURL: URL
+    private var errorBuffer = [CChar](repeating: 0, count: 512)
 
     public init(url: URL, codecDirectory: URL? = nil) throws {
         guard url.isFileURL else { throw AudioFailure("Only local audio files are supported.") }
@@ -74,10 +75,10 @@ public final class FFmpegDecoder: AudioDecoding {
     }
 
     public func read(into buffer: UnsafeMutableRawPointer, frames: UInt32) throws -> UInt32 {
-        var message = [CChar](repeating: 0, count: 512)
+        let errorCapacity = errorBuffer.count
         var count: UInt32 = 0
-        guard swar_ff_read(decoder, buffer, frames, &count, &message, message.count) == 0 else {
-            throw AudioFailure(Self.message(message))
+        guard swar_ff_read(decoder, buffer, frames, &count, &errorBuffer, errorCapacity) == 0 else {
+            throw AudioFailure(Self.message(errorBuffer))
         }
         return count
     }
@@ -90,8 +91,8 @@ public final class FFmpegDecoder: AudioDecoding {
             try seekFromBeginning(to: target)
             return
         }
-        var message = [CChar](repeating: 0, count: 512)
-        if swar_ff_seek(decoder, target, &message, message.count) != 0 {
+        let errorCapacity = errorBuffer.count
+        if swar_ff_seek(decoder, target, &errorBuffer, errorCapacity) != 0 {
             try seekFromBeginning(to: target)
         }
     }
