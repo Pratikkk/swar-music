@@ -242,23 +242,92 @@ public actor RhythmStore {
     public static let shared = RhythmStore()
     private let directory: URL?
     private var tail: Task<Void, Never>?
+    
+    // In-memory LRU cache with bounds
+    private var memory: [String: RhythmProfile] = [:]
+    private var order: [String] = []
+    private let maxMemoryEntries = 32        // Max cached rhythm profiles in memory
+    private let maxMemoryBytes = 2 * 1024 * 1024  // 2 MB max (profiles are larger than waveforms)
+    private let estimatedBytesPerProfile = 8192  // ~8 KB per profile (beats + energy arrays)
+    
     public init(directory: URL? = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("Swar/Rhythm")) { self.directory = directory }
+    
+    /// Evicts oldest entries when memory limits are exceeded
+    private func enforceMemoryLimits() {
+        // Enforce entry count limit
+        while memory.count > maxMemoryEntries {
+            if let oldest = order.first {
+                memory.removeValue(forKey: oldest)
+                order.removeFirst()
+            } else { break }
+        }
+        
+        // Enforce approximate byte limit
+        let estimatedBytes = memory.count * estimatedBytesPerProfile
+        while estimatedBytes > maxMemoryBytes && !order.isEmpty {
+            if let oldest = order.first {
+                memory.removeValue(forKey: oldest)
+                order.removeFirst()
+            } else { break }
+        }
+    }
+    
+    /// Called when a track is skipped or removed - cancels any pending analysis and removes from cache
+    public func cancelForURL(_ url: URL, accessRoot: URL) async {
+        let key = await makeKey(url: url, accessRoot: accessRoot)
+        // Cancel any in-flight task for this key
+        if let task = tail, task.description.contains(key) {
+            // The tail task is for this key, cancel it
+            tail?.cancel()
+            tail = nil
+        }
+        // Remove from memory cache
+        memory.removeValue(forKey: key)
+        order.removeAll { $0 == key }
+    }
+    
+    /// Returns current memory usage statistics
+    public func memoryStats() -> (entries: Int, estimatedBytes: Int) {
+        return (memory.count, memory.count * estimatedBytesPerProfile)
+    }
+    
+    private func makeKey(url: URL, accessRoot: URL) async -> String {
+        return try await Task.detached(priority: .utility) {
+            var file = url.standardizedFileURL; file.removeAllCachedResourceValues()
+            let values = try file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
+            guard values.isRegularFile == true, let size = values.fileSize, let modified = values.contentModificationDate else { return "" }
+            return SHA256.hash(data: Data("rhythm-v1|\(file.path)|\(size)|\(modified.timeIntervalSince1970)".utf8)).map { String(format: "%02x", $0) }.joined()
+        }.value
+    }
 
     public func profile(url: URL, accessRoot: URL, codecDirectory: URL? = nil) async throws -> RhythmProfile {
+        // Generate key first to check memory cache
+        let key = await makeKey(url: url, accessRoot: accessRoot)
+        if key.isEmpty { throw AudioFailure("The song is unavailable for analysis.") }
+        
+        // Check in-memory cache first
+        if let cached = memory[key] {
+            // Move to front (most recently used)
+            order.removeAll { $0 == key }
+            order.append(key)
+            return cached
+        }
+        
         let previous = tail, directory = directory
         let task = Task.detached(priority: .utility) {
             await previous?.value
             try Task.checkCancellation()
             let acquired = accessRoot.startAccessingSecurityScopedResource()
             defer { if acquired { accessRoot.stopAccessingSecurityScopedResource() } }
+            
             func fingerprint() throws -> String {
                 var file = url.standardizedFileURL; file.removeAllCachedResourceValues()
                 let values = try file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey])
                 guard values.isRegularFile == true, let size = values.fileSize, let modified = values.contentModificationDate else { throw AudioFailure("The song is unavailable for analysis.") }
                 return SHA256.hash(data: Data("rhythm-v1|\(file.path)|\(size)|\(modified.timeIntervalSince1970)".utf8)).map { String(format: "%02x", $0) }.joined()
             }
-            let key = try fingerprint()
-            let file = directory?.appendingPathComponent(key + ".json")
+            let fingerprintKey = try fingerprint()
+            let file = directory?.appendingPathComponent(fingerprintKey + ".json")
             if let file, let handle = try? FileHandle(forReadingFrom: file) {
                 defer { try? handle.close() }
                 if let data = try? handle.read(upToCount: 262145), data.count <= 262144,
@@ -270,7 +339,7 @@ public actor RhythmStore {
             }
             let result = try RhythmAnalysis.analyze(decoder: DecoderFactory.open(url: url, codecDirectory: codecDirectory))
             try Task.checkCancellation()
-            guard try fingerprint() == key else { throw AudioFailure("The song changed during rhythm analysis.") }
+            guard try fingerprint() == fingerprintKey else { throw AudioFailure("The song changed during rhythm analysis.") }
             if let directory, let file {
                 try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try? JSONEncoder().encode(result).write(to: file, options: .atomic)
@@ -286,7 +355,14 @@ public actor RhythmStore {
         return try await withTaskCancellationHandler {
             let result = try await task.value
             try Task.checkCancellation()
+            
+            // Store in memory cache and enforce limits
+            self.memory[key] = result
+            self.order.append(key)
+            self.enforceMemoryLimits()
+            
             return result
         } onCancel: { task.cancel() }
     }
 }
+

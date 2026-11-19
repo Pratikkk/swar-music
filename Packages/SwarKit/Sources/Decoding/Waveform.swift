@@ -188,9 +188,84 @@ public actor WaveformStore {
     private var order: [Key] = []
     private var jobs: [Key: Job] = [:]
     private var failures: [Key: Date] = [:]
+    
+    // Memory bounds
+    private let maxMemoryEntries = 32        // Max cached waveforms in memory
+    private let maxMemoryBytes = 4 * 1024 * 1024  // 4 MB max for waveform data
+    private let maxJobs = 16                 // Max concurrent analysis jobs
+    private let maxFailures = 32             // Max tracked failures
 
     public init(directory: URL? = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?.appendingPathComponent("Swar/Waveforms")) {
         self.directory = directory
+    }
+    
+    /// Evicts oldest entries when memory or entry limits are exceeded
+    private func enforceMemoryLimits() {
+        // Enforce entry count limit
+        while memory.count > maxMemoryEntries {
+            if let oldest = order.first {
+                memory.removeValue(forKey: oldest)
+                order.removeFirst()
+            } else { break }
+        }
+        
+        // Enforce approximate byte limit (each waveform ~bucketCount * 4 bytes + overhead)
+        let bytesPerWaveform = WaveformAnalysis.bucketCount * 4 + 256  // ~2.3 KB per waveform
+        let estimatedBytes = memory.count * bytesPerWaveform
+        while estimatedBytes > maxMemoryBytes && !order.isEmpty {
+            if let oldest = order.first {
+                memory.removeValue(forKey: oldest)
+                order.removeFirst()
+            } else { break }
+        }
+        
+        // Enforce jobs limit
+        while jobs.count > maxJobs {
+            if let oldestKey = jobs.keys.first {
+                if let job = jobs[oldestKey], job.waiters.isEmpty {
+                    job.task.cancel()
+                }
+                jobs.removeValue(forKey: oldestKey)
+            } else { break }
+        }
+        
+        // Enforce failures limit
+        while failures.count > maxFailures {
+            if let oldestKey = failures.keys.min(by: { failures[$0]! < failures[$1]! }) {
+                failures.removeValue(forKey: oldestKey)
+            } else { break }
+        }
+    }
+    
+    /// Cleans up stale failures older than 5 minutes
+    private func cleanupStaleFailures() {
+        let now = Date()
+        let staleThreshold: TimeInterval = 300  // 5 minutes
+        for (key, date) in failures {
+            if now.timeIntervalSince(date) > staleThreshold {
+                failures.removeValue(forKey: key)
+            }
+        }
+    }
+    
+    /// Called when a track is skipped or removed - cancels any pending analysis
+    public func cancelForURL(_ url: URL, accessRoot: URL) async {
+        let key = try? await Self.key(url: url, root: accessRoot)
+        guard let key else { return }
+        
+        if let job = jobs[key], job.waiters.isEmpty {
+            job.task.cancel()
+            jobs.removeValue(forKey: key)
+        }
+        // Also remove from memory if present
+        memory.removeValue(forKey: key)
+        order.removeAll { $0 == key }
+    }
+    
+    /// Returns current memory usage statistics
+    public func memoryStats() -> (entries: Int, estimatedBytes: Int, jobs: Int, failures: Int) {
+        let bytesPerWaveform = WaveformAnalysis.bucketCount * 4 + 256
+        return (memory.count, memory.count * bytesPerWaveform, jobs.count, failures.count)
     }
 
     public func waveform(url: URL, accessRoot: URL, codecDirectory: URL? = nil) async throws -> [Float] {
@@ -206,6 +281,10 @@ public actor WaveformStore {
         if var existing = jobs[key] {
             existing.waiters.insert(waiter); jobs[key] = existing; job = existing
         } else {
+            // Enforce limits before starting new job
+            enforceMemoryLimits()
+            cleanupStaleFailures()
+            
             let directory = directory
             let task = Task.detached(priority: .utility) {
                 let acquired = accessRoot.startAccessingSecurityScopedResource()
@@ -227,7 +306,7 @@ public actor WaveformStore {
                 if jobs[key]?.id == job.id {
                     jobs[key] = nil; failures[key] = nil
                     memory[key] = result; order.append(key)
-                    if order.count > 24 { memory[order.removeFirst()] = nil }
+                    enforceMemoryLimits()
                 }
                 try Task.checkCancellation()
                 return result
@@ -236,7 +315,7 @@ public actor WaveformStore {
                     jobs[key] = nil
                     if !(error is CancellationError) {
                         failures[key] = Date()
-                        if failures.count > 24 { failures = [key: Date()] }
+                        enforceMemoryLimits()
                     }
                 }
                 throw error
