@@ -354,7 +354,7 @@ public final class Player {
         // A deadline may arrive during an open or seek. Wait for that operation,
         // allowing cancellation/replacement to withdraw the pending pause.
         while isBusy && !isShutDown {
-            do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
         }
         guard !Task.isCancelled, !isShutDown, isPlaying else { return }
         await control {
@@ -448,7 +448,7 @@ public final class Player {
         isSystemSleeping = true
         gaplessTask?.cancel(); gaplessPlan = nil
         while isBusy && !isShutDown {
-            do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
         }
         guard !Task.isCancelled, !isShutDown else { return }
         sleepWasPlaying = isPlaying || (outputRecoveryNeeded && playbackIntent)
