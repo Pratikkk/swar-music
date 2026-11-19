@@ -66,6 +66,7 @@ struct NowPlayingView: View {
                 Button { showQueue.toggle(); if showQueue { showLyrics = false } } label: {
                     Label("Up Next · \(player.upcomingEntries.count)", systemImage: "list.bullet")
                         .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
                         .padding(.horizontal, 10).frame(height: 28)
                         .foregroundStyle(showQueue ? palette.accent : .primary)
                         .background(.regularMaterial, in: Capsule())
