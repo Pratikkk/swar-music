@@ -8,7 +8,8 @@ public struct PlaybackContinuation: Sendable, Equatable {
     public let id: UUID
     public let url: URL
     public let accessRoot: URL
-    public init(id: UUID, url: URL, accessRoot: URL) { self.id = id; self.url = url; self.accessRoot = accessRoot }
+    public let duration: Double
+    public init(id: UUID, url: URL, accessRoot: URL, duration: Double = 0) { self.id = id; self.url = url; self.accessRoot = accessRoot; self.duration = duration }
 }
 
 /// Created on a utility worker, then transferred exclusively to the engine queue.

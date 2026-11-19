@@ -241,7 +241,7 @@ public final class Player {
     private func nextContinuation() -> PlaybackContinuation? {
         guard let index = currentQueueIndex else {
             if queue.isEmpty, repeatMode != .off, let entry = standaloneEntry {
-                return PlaybackContinuation(id: entry.id, url: entry.url, accessRoot: entry.accessRoot)
+                return PlaybackContinuation(id: entry.id, url: entry.url, accessRoot: entry.accessRoot, duration: entry.duration)
             }
             return nil
         }
@@ -249,7 +249,7 @@ public final class Player {
         if repeatMode == .one { next = queue[index] }
         else if queue.indices.contains(index + 1) { next = queue[index + 1] }
         else { next = repeatMode == .all ? queue.first : nil }
-        return next.map { PlaybackContinuation(id: $0.id, url: $0.url, accessRoot: $0.accessRoot) }
+        return next.map { PlaybackContinuation(id: $0.id, url: $0.url, accessRoot: $0.accessRoot, duration: $0.duration) }
     }
 
     private func scheduleGapless() {
@@ -288,7 +288,7 @@ public final class Player {
             guard !Task.isCancelled, let self, self.playbackToken == plan.token,
                   !self.isShutDown, !self.outputRecoveryNeeded else { return }
             let transition = TransitionPlanner.plan(outgoing: outgoing, incoming: incoming,
-                outgoingDuration: outgoing?.duration ?? current.duration, incomingDuration: incoming?.duration ?? next.duration, notBefore: self.position, preferredBeats: plan.length.beats)
+                outgoingDuration: outgoing?.duration ?? current.duration, incomingDuration: incoming?.duration ?? nextEntry?.duration ?? 0, notBefore: self.position, preferredBeats: plan.length.beats)
             guard transition.mode != .gapless else { return }
             await engine.prepareCrossfade(next, currentRoot: current.accessRoot, overlap: transition.duration, after: plan.token)
         }
@@ -638,7 +638,7 @@ public final class Player {
         unshuffledOrder = []
         currentEntryID = nil
         activeArtworkChange = nil
-        standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: displayTitle)
+        standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: displayTitle, duration: 0)
         await load(url, accessRoot: accessRoot, displayTitle: displayTitle)
     }
 
@@ -697,7 +697,7 @@ public final class Player {
             sourceRevision &+= 1
             if entry == nil {
                 standaloneEntry = QueueEntry(url: url, accessRoot: accessRoot, title: title, subtitle: subtitle,
-                                            artworkURL: artworkURL, artist: presentation?.artist, album: presentation?.album)
+                                            artworkURL: artworkURL, artist: presentation?.artist, album: presentation?.album, duration: 0)
             }
             setError(nil)
             apply(snapshot)

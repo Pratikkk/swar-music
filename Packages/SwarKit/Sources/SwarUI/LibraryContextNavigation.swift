@@ -51,7 +51,7 @@ enum LibraryQueueActions {
             let location = try library.location(for: track)
             return QueueEntry(url: location.file, accessRoot: location.root, title: track.title,
                 subtitle: track.artist + " · " + track.album, artworkURL: library.artworkURL(track.artworkKey),
-                artist: track.artist, album: track.album)
+                artist: track.artist, album: track.album, duration: track.duration)
         }
     }
     static func enqueue(_ tracks: [LibraryTrack], next: Bool, library: LibraryModel, player: Player) {

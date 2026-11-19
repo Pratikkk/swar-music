@@ -10,6 +10,11 @@ private let sessionLog = Logger(subsystem: "catto.swar", category: "AudioSession
 private let timerLog = Logger(subsystem: "catto.swar", category: "AudioTimer")
 private let errorLog = Logger(subsystem: "catto.swar", category: "AudioError")
 
+// Notification name for occlusion state changes
+extension Notification.Name {
+    static let swarOcclusionStateChanged = Notification.Name("swarOcclusionStateChanged")
+}
+
 public struct PlaybackPCMFormat: Sendable, Equatable {
     public let sampleRate: Double
     public let validBits: Int
@@ -97,8 +102,6 @@ public extension PlaybackDriving {
     func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot { try await open(url) }
     func selectOutput(_ deviceID: UInt32?, pause: Bool, exclusive: Bool = false) async throws -> PlaybackSnapshot { await snapshot() }
 }
-
-private let engineLog = Logger(subsystem: "catto.swar", category: "AudioEngine")
 
 /// The @unchecked boundary is limited to state owned by a single serial queue.
 /// The C callback only sees a ring pointer with atomic counters, never this object.
@@ -331,9 +334,9 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         engineLog.debug("\(name): url=\(urlStr) \(details)")
     }
 
-    private func logError(_ name: String, error: Error, url: URL? = nil) {
+    private func logError(_ name: String, error: Error, url: URL? = nil, details: String = "") {
         let urlStr = url?.path ?? "nil"
-        errorLog.error("\(name) FAILED: url=\(urlStr) error=\(error.localizedDescription)")
+        errorLog.error("\(name) FAILED: url=\(urlStr) \(details) error=\(error.localizedDescription)")
     }
 
     /// For producer queue operations that need to be scheduled from control queue context
@@ -375,7 +378,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         let context = try? await performOnControl { state -> (PlaybackContinuation, Double, UUID, Int)? in
             guard let session = state.session, session.processed, session.pcm.current.token == token,
                   session.pcm.requestedID == next.id, !session.pcm.hasQueuedBoundary else { return nil }
-            return (PlaybackContinuation(id: token, url: session.pcm.current.url, accessRoot: currentRoot),
+            return (PlaybackContinuation(id: token, url: session.pcm.current.url, accessRoot: currentRoot, duration: Double(session.pcm.current.decoder.frameCount) / session.pcm.current.decoder.pcmFormat.mSampleRate),
                     session.decoder.pcmFormat.mSampleRate, state.preparation, Int(session.decoder.pcmFormat.mChannelsPerFrame))
         }
         guard let context = context ?? nil else { return }
@@ -408,6 +411,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 state.resumeProducerTimer()
             }
         }
+        NotificationCenter.default.post(name: .swarOcclusionStateChanged, object: nil, userInfo: ["occluded": occluded])
     }
 
     private func closeSynchronously() {
@@ -457,7 +461,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         }
         let previous = state.deviceID
         let resume = (resumeOverride ?? session.isPlaying) && !pause
-        engineLog.debug("switchOutput: switching device, previous=\(previous) new=\(deviceID?.description ?? "nil") resume=\(resume) pause=\(pause)")
+        engineLog.debug("switchOutput: switching device, previous=\(previous as NSObject?) new=\(deviceID?.description ?? "nil") resume=\(resume) pause=\(pause)")
         // A vanished driver can reject Stop; disposal must still allow rebuilding.
         try? session.pause()
         let audible = session.pcm.audible
