@@ -67,7 +67,7 @@ struct NowPlayingView: View {
                     Label("Up Next · \(player.upcomingEntries.count)", systemImage: "list.bullet")
                         .font(.system(size: 12, weight: .medium))
                         .monospacedDigit()
-                        .padding(.horizontal, 10).frame(height: 28)
+                        .padding(.horizontal, 10).frame(minWidth: 118).frame(height: 28, alignment: .center)
                         .foregroundStyle(showQueue ? palette.accent : .primary)
                         .background(.regularMaterial, in: Capsule())
                 }
