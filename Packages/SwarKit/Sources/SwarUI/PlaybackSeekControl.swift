@@ -25,7 +25,7 @@ struct PlaybackSeekControl: View {
     var body: some View {
         Group {
             if waveformEnabled {
-                WaveformSeekView(player: player, state: $state, samples: waveformURL == player.currentURL ? samples : [], mini: mini, onCommit: { commit($0, final: true) }))
+                WaveformSeekView(player: player, state: $state, samples: waveformURL == player.currentURL ? samples : [], mini: mini, onCommit: { commit($0, final: true) })
                     .id(player.sourceRevision)
                     .accessibilityRepresentation { NativeSeekSlider(player: player, state: $state, mini: mini, onCommit: { commit($0, final: true) }) }
                     .help(waveformUnavailable ? "Waveform unavailable. Click or drag to seek." : "Click or drag the waveform to seek.")

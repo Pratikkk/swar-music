@@ -182,7 +182,7 @@ final class GaplessPCM {
     // Caller must stop AUHAL before rewinding/discarding queued PCM.
     func seek(_ seconds: Double) throws {
         let active = current
-        let frame = Int64(max(0, min(seconds, duration) * Double(active.decoder.source.sampleRate))
+        let frame = Int64(max(0, min(seconds, duration) * Double(active.decoder.source.sampleRate)))
         try active.decoder.seek(to: frame)
         swar_ring_reset(ring)
         segments = [Segment(decoder: active.decoder, url: active.url, entryID: active.entryID,

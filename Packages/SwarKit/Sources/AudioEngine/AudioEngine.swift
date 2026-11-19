@@ -523,7 +523,7 @@ private final class OutputSession {
     func seek(_ seconds: Double, resume: Bool? = nil) throws {
         let shouldResume = resume ?? isPlaying
         if isPlaying { try pause() }
-        let target = Int64(max(0, min(seconds, duration) * Double(decoder.source.sampleRate))
+        let target = Int64(max(0, min(seconds, duration) * Double(decoder.source.sampleRate)))
         try pcm.seek(seconds)
         didFinish = false
         // A paused scrub preview needs neither decoded lead-in nor a device

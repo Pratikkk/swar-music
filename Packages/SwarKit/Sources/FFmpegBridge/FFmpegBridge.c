@@ -109,7 +109,7 @@ static int load_shared_api(const char *library, void **out_library, SwarFFAPI *o
     }
 
     SwarFFAPI api = {0};
-#define LOAD(name) do { void *symbol = dlsym(handle, #name); if (!symbol) { snprintf(error, size, "Bundled codec API missing: %s", #name); dlclose(handle); pthread_mutex_unlock(&g_api_mutex); return -1; } memcpy(&api.name, &symbol, sizeof(symbol)); } while (0)
+#define LOAD(name) do { void *symbol = dlsym(handle, #name); if (!symbol) { snprintf(error, size, "Bundled codec API missing: %s", #name); dlclose(handle); pthread_mutex_unlock(&g_api_mutex); return -1; } memcpy(&api.name, &symbol, sizeof(symbol)); } while (0);
     API_FUNCTIONS(LOAD)
 #undef LOAD
 
