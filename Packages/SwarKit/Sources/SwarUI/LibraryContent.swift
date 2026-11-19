@@ -166,6 +166,11 @@ struct LibraryContent: View {
 
     private func trackRow(_ track: LibraryTrack, context: [LibraryTrack], currentTrackID: String?) -> some View {
             let current = track.id == currentTrackID
+            let isFavorite = library.favoriteTrackIDs.contains(track.id)
+            let durationText = track.duration.isFinite && track.duration >= 0 && track.duration < Double(Int.max)
+                ? String(format: "%d:%02d", Int(track.duration) / 60, Int(track.duration) % 60) : "–:––"
+            let formatText = [track.codec, track.sampleRate.map { String(format: "%g kHz", $0 / 1000) }]
+                .compactMap { $0 }.joined(separator: " · ")
             return HStack(spacing: 12) {
                 ArtworkPlaybackButton(
                     url: library.artworkURL(track.artworkKey), album: track.album,
@@ -181,7 +186,7 @@ struct LibraryContent: View {
                     HStack(spacing: 5) {
                         Text(track.title).fontWeight(current ? .semibold : .medium)
                             .foregroundStyle(current ? Color.accentColor : Color.primary).lineLimit(1)
-                        if library.favoriteTrackIDs.contains(track.id) {
+                        if isFavorite {
                             Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(palette.accent)
                                 .accessibilityLabel("Favourite")
                         }
@@ -191,12 +196,8 @@ struct LibraryContent: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .trailing, spacing: 3) {
-                    Text(track.duration.isFinite && track.duration >= 0 && track.duration < Double(Int.max)
-                         ? String(format: "%d:%02d", Int(track.duration) / 60, Int(track.duration) % 60) : "–:––")
-                        .monospacedDigit()
-                    Text([track.codec, track.sampleRate.map { String(format: "%g kHz", $0 / 1000) }]
-                        .compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption).lineLimit(1)
+                    Text(durationText).monospacedDigit()
+                    Text(formatText).font(.caption).lineLimit(1)
                 }
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: true, vertical: false)

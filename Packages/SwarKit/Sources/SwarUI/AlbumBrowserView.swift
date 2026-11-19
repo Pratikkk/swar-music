@@ -192,48 +192,49 @@ struct AlbumBrowserView: View {
                         // Debounce column recalculation to avoid layout thrashing during window resize
                         let columns = Self.columnsForWidth(available, gap: gap, minimum: CGFloat(max(120, min(220, coverSize))))
                         let cardWidth = (available - gap * CGFloat(columns - 1)) / CGFloat(columns)
-                        List {
-                            Color.clear.frame(height: 0).id("album-browser-top")
-                                .listRowSeparator(.hidden).listRowInsets(EdgeInsets())
-                            ForEach(presentation?.sections ?? []) { section in
-                                Section {
-                                    ForEach(albumRows(section.albums, columns: Self.columnsForWidth(available, gap: gap, minimum: CGFloat(max(120, min(220, coverSize)))))) { row in
-                                        HStack(alignment: .top, spacing: gap) {
-                                            ForEach(row.albums) { album in
-                                                AlbumBrowserCard(album: album,
-                                                    artworkURL: library.artworkURL(album.artworkKey),
-                                                    busy: player.isBusy || actionInProgress,
-                                                    maximumPixels: coverSize <= 140 ? 256 : coverSize >= 200 ? 512 : 384,
-                                                    open: { selectedAlbum = album.id },
-                                                    play: { perform(album) })
-                                                    .frame(width: cardWidth, alignment: .top)
-                                                    .albumActions(library: library, player: player, album: album)
-                                                    .id(album.id)
+                        let maxPixels = coverSize <= 140 ? 256 : coverSize >= 200 ? 512 : 384
+                        let albums = presentation?.sections.flatMap(\.albums) ?? []
+                        let prefetchIDs = Set(albums.suffix(20).map(\.id))
+                        
+                        ScrollView {
+                            LazyVGrid(
+                                columns: Array(repeating: GridItem(.fixed(cardWidth), spacing: gap), count: columns),
+                                spacing: gap
+                            ) {
+                                ForEach(albums) { album in
+                                    AlbumBrowserCard(album: album,
+                                        artworkURL: library.artworkURL(album.artworkKey),
+                                        busy: player.isBusy || actionInProgress,
+                                        maximumPixels: maxPixels,
+                                        open: { selectedAlbum = album.id },
+                                        play: { perform(album) })
+                                        .frame(width: cardWidth, alignment: .top)
+                                        .albumActions(library: library, player: player, album: album)
+                                        .id(album.id)
+                                        .onAppear {
+                                            if prefetchIDs.contains(album.id) {
+                                                Task { await loadMore() }
                                             }
-                                            if row.albums.count < columns { Spacer(minLength: 0) }
                                         }
-                                        .listRowInsets(EdgeInsets(top: gap / 2, leading: 28, bottom: gap / 2, trailing: 28))
-                                        .listRowSeparator(.hidden)
-                                        .listRowBackground(Color.clear)
-                                    }
-                                } header: {
-                                    if recent {
-                                        Text(section.title).font(.system(size: 17, weight: .semibold))
-                                            .padding(.horizontal, 28)
-                                    }
                                 }
                             }
-                            pageFooter
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                            Color.clear.frame(height: clearance + 24)
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
+                            .padding(.horizontal, 28)
+                            .padding(.top, gap / 2)
+                            .padding(.bottom, clearance + gap / 2 + 24)
+                            .overlay(alignment: .topLeading) {
+                                if recent, let sections = presentation?.sections, let first = sections.first {
+                                    Text(first.title).font(.system(size: 17, weight: .semibold))
+                                        .padding(.horizontal, 28)
+                                        .padding(.top, 8)
+                                }
+                            }
                         }
-                        .listStyle(.plain)
-                        .scrollContentBackground(.hidden)
-                        .environment(\.defaultMinListRowHeight, 0)
-                        .accessibilityLabel("Album grid")
+                        .onChange(of: library.search) { proxy.scrollTo("album-browser-top", anchor: .top) }
+                        .onChange(of: library.searchScope) { proxy.scrollTo("album-browser-top", anchor: .top) }
+                        .onChange(of: recent) { proxy.scrollTo("album-browser-top", anchor: .top) }
+                        .onChange(of: sortOrder) { proxy.scrollTo("album-browser-top", anchor: .top) }
+                        .onChange(of: reversed) { proxy.scrollTo("album-browser-top", anchor: .top) }
+                        .onChange(of: filter) { proxy.scrollTo("album-browser-top", anchor: .top) }
                     }
                 } else {
                     List {
@@ -409,19 +410,6 @@ struct AlbumBrowserView: View {
             for entry in next ? Array(entries.reversed()) : entries { player.enqueue(entry, playNext: next) }
         } catch { player.reportImportError(error) }
     }
-
-    private func albumRows(_ albums: [LibraryAlbumSummary], columns: Int) -> [AlbumGridRow] {
-        guard columns > 0, !albums.isEmpty else { return [] }
-        return stride(from: 0, to: albums.count, by: columns).map { start in
-            let slice = Array(albums[start..<min(start + columns, albums.count)])
-            return AlbumGridRow(id: slice[0].id, albums: slice)
-        }
-    }
-}
-
-private struct AlbumGridRow: Identifiable {
-    let id: String
-    let albums: [LibraryAlbumSummary]
 }
 
 private struct AlbumBrowserCard: View {

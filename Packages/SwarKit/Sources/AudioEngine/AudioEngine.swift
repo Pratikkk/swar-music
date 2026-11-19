@@ -97,39 +97,45 @@ private let engineLog = Logger(subsystem: "catto.swar", category: "AudioEngine")
 /// The @unchecked boundary is limited to state owned by a single serial queue.
 /// The C callback only sees a ring pointer with atomic counters, never this object.
 public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
-    private let queue: DispatchQueue
-    private let queueKey = DispatchSpecificKey<UInt8>()
+    // Two serial queues: control queue for UI operations, producer queue for decoding/PCM filling
+    private let controlQueue: DispatchQueue
+    private let producerQueue: DispatchQueue
+    private let controlQueueKey = DispatchSpecificKey<UInt8>()
+    private let producerQueueKey = DispatchSpecificKey<UInt8>()
     private let state = EngineState()
 
     public convenience init() {
-        self.init(queue: DispatchQueue(label: "catto.swar.audio", qos: .userInitiated))
+        self.init(controlQueue: DispatchQueue(label: "catto.swar.audio.control", qos: .userInitiated),
+                  producerQueue: DispatchQueue(label: "catto.swar.audio.producer", qos: .userInitiated))
     }
 
-    // The supplied execution context must be serial, like the production queue.
-    init(queue: DispatchQueue) {
-        self.queue = queue
-        queue.setSpecific(key: queueKey, value: 1)
+    init(controlQueue: DispatchQueue, producerQueue: DispatchQueue) {
+        self.controlQueue = controlQueue
+        self.producerQueue = producerQueue
+        controlQueue.setSpecific(key: controlQueueKey, value: 1)
+        producerQueue.setSpecific(key: producerQueueKey, value: 1)
         let state = state
-        queue.async { [queue] in state.startTimer(on: queue) }
+        // Start the producer timer on the producer queue
+        producerQueue.async { [producerQueue] in state.startProducerTimer(on: producerQueue) }
     }
 
     deinit { closeSynchronously() }
 
     public func open(_ url: URL) async throws -> PlaybackSnapshot {
-        try await perform { state in
+        try await performOnControl { state in
             try Self.open(url, on: state)
         }
     }
 
     public func open(_ url: URL, outputDeviceID: UInt32?) async throws -> PlaybackSnapshot {
-        try await perform { state in
+        try await performOnControl { state in
             state.deviceID = outputDeviceID
             return try Self.open(url, on: state)
         }
     }
 
     public func open(_ url: URL, outputDeviceID: UInt32?, crossfade: Bool) async throws -> PlaybackSnapshot {
-        try await perform { state in
+        try await performOnControl { state in
             state.deviceID = outputDeviceID
             state.processed = crossfade
             return try Self.open(url, on: state)
@@ -150,12 +156,13 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     }
 
     public func togglePlayback() async throws -> PlaybackSnapshot {
-        try await perform { state in
+        try await performOnControl { state in
             guard let session = state.session else { throw AudioFailure("Open an audio file first.") }
             do {
                 if session.isPlaying { try session.pause() }
                 else { try session.play() }
                 state.error = nil; state.needsRecovery = false
+                state.scheduleProducerTimerUpdate()
                 return state.snapshot()
             } catch {
                 try? session.pause()
@@ -167,11 +174,12 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     }
 
     public func seek(to seconds: Double) async throws -> PlaybackSnapshot {
-        try await perform { state in
+        try await performOnControl { state in
             guard seconds.isFinite, let session = state.session else { throw AudioFailure("No seekable file is open.") }
             do {
                 try session.seek(seconds)
                 state.error = nil; state.needsRecovery = false
+                state.scheduleProducerTimerUpdate()
                 return state.snapshot()
             } catch {
                 try? session.pause()
@@ -183,11 +191,12 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     }
 
     public func seek(to seconds: Double, resume: Bool) async throws -> PlaybackSnapshot {
-        try await perform { state in
+        try await performOnControl { state in
             guard seconds.isFinite, let session = state.session else { throw AudioFailure("No seekable file is open.") }
             do {
                 try session.seek(seconds, resume: resume)
                 state.error = nil; state.needsRecovery = false
+                state.scheduleProducerTimerUpdate()
                 return state.snapshot()
             } catch {
                 try? session.pause()
@@ -199,15 +208,23 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     }
 
     public func selectOutput(_ deviceID: UInt32?, pause: Bool = false, exclusive: Bool = false) async throws -> PlaybackSnapshot {
-        try await switchOutput(deviceID, pause: pause, force: false, resumeOverride: nil, exclusive: exclusive)
+        try await performOnControl { state in
+            let snapshot = try Self.switchOutput(deviceID, pause: pause, force: false, resumeOverride: nil, exclusive: exclusive, state: state)
+            state.scheduleProducerTimerUpdate()
+            return snapshot
+        }
     }
 
     public func recoverOutput(_ deviceID: UInt32?, resume: Bool, exclusive: Bool = false) async throws -> PlaybackSnapshot {
-        try await switchOutput(deviceID, pause: !resume, force: true, resumeOverride: resume, exclusive: exclusive)
+        try await performOnControl { state in
+            let snapshot = try Self.switchOutput(deviceID, pause: !resume, force: true, resumeOverride: resume, exclusive: exclusive, state: state)
+            state.scheduleProducerTimerUpdate()
+            return snapshot
+        }
     }
 
     public func suspendOutput() async -> PlaybackSnapshot {
-        (try? await perform { state in
+        (try? await performOnControl { state in
             if let session = state.session { try? session.pause() }
             let saved = state.snapshot()
             let recovery = state.session.map { session in
@@ -217,36 +234,117 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
             } ?? state.routeRecovery
             state.closeSession()
             state.routeRecovery = recovery
+            state.scheduleProducerTimerUpdate()
             return PlaybackSnapshot(source: saved.source, duration: saved.duration, position: saved.position,
                 playbackToken: saved.playbackToken, continuationID: saved.continuationID)
         }) ?? PlaybackSnapshot()
     }
 
-    private func switchOutput(_ deviceID: UInt32?, pause: Bool, force: Bool, resumeOverride: Bool?, exclusive: Bool = false) async throws -> PlaybackSnapshot {
-        try await perform { state in
-            _ = state.snapshot()
-            guard let session = state.session else {
-                state.deviceID = deviceID
-                if let recovery = state.routeRecovery {
-                    do {
-                        let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), url: recovery.url, deviceID: deviceID, entryID: recovery.entryID, token: recovery.token, exclusive: exclusive, processed: state.processed)
-                        state.session = replacement; state.url = recovery.url
-                        try replacement.seek(recovery.position)
-                        if resumeOverride == true { try replacement.play() }
-                        state.routeRecovery = nil; state.error = nil; state.needsRecovery = false
-                        state.exclusiveOutput = exclusive
-                    } catch {
-                        state.closeSession(); state.routeRecovery = recovery; state.needsRecovery = true
-                        throw error
-                    }
+    private func performOnControl<T: Sendable>(_ operation: @escaping @Sendable (EngineState) throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            let state = state
+            controlQueue.async {
+                defer { state.updateProducerTimer() }
+                continuation.resume(with: Result { try operation(state) })
+            }
+        }
+    }
+
+    /// For producer queue operations that need to be scheduled from control queue context
+    private func scheduleOnProducer(_ operation: @escaping @Sendable (EngineState) -> Void) {
+        producerQueue.async { operation(self.state) }
+    }
+
+    public func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async {
+        guard !Task.isCancelled else { return }
+        let request = UUID()
+        let shouldPrepare = (try? await performOnControl { state -> Bool in
+            guard let session = state.session, session.pcm.current.token == token else { return false }
+            if session.pcm.hasAudibleCrossfade { return false }
+            if session.pcm.requestedID == next?.id, session.pcm.requestedToken == token { return false }
+            state.preparation = request
+            state.preparer.invalidate(request)
+            if session.pcm.hasQueuedBoundary { try session.seek(session.position) }
+            guard session.pcm.current.token == token else { return false }
+            session.pcm.request(next?.id, after: token)
+            return next != nil
+        }) ?? false
+        guard shouldPrepare, let next, !Task.isCancelled else { return }
+        let format = try? await performOnControl { state -> (Double, Int)? in
+            guard let session = state.session, session.processed else { return nil }
+            return (session.decoder.pcmFormat.mSampleRate, Int(session.decoder.pcmFormat.mChannelsPerFrame))
+        }
+        let prepared = await state.preparer.prepare(next, request: request,
+            outputRate: format?.0, outputChannels: format?.1)
+        guard !Task.isCancelled, let prepared else { return }
+        _ = try? await performOnControl { state in
+            guard state.preparation == request, let session = state.session,
+                  session.pcm.current.token == token else { return }
+            _ = session.pcm.install(prepared)
+        }
+    }
+
+    public func prepareCrossfade(_ next: PlaybackContinuation, currentRoot: URL, overlap: Double, after token: UUID) async {
+        guard !Task.isCancelled else { return }
+        let context = try? await performOnControl { state -> (PlaybackContinuation, Double, UUID, Int)? in
+            guard let session = state.session, session.processed, session.pcm.current.token == token,
+                  session.pcm.requestedID == next.id, !session.pcm.hasQueuedBoundary else { return nil }
+            return (PlaybackContinuation(id: token, url: session.pcm.current.url, accessRoot: currentRoot),
+                    session.decoder.pcmFormat.mSampleRate, state.preparation, Int(session.decoder.pcmFormat.mChannelsPerFrame))
+        }
+        guard let context = context ?? nil else { return }
+        let pair = await state.preparer.prepareCrossfade(current: context.0, next: next,
+            overlap: overlap, rate: context.1, channels: context.3, request: context.2)
+        guard !Task.isCancelled, let pair else { return }
+        _ = try? await performOnControl { state in
+            guard state.preparation == context.2, let session = state.session,
+                  session.pcm.current.token == token else { return }
+            _ = session.pcm.install(pair)
+        }
+    }
+
+    public func snapshot() async -> PlaybackSnapshot {
+        await withCheckedContinuation { continuation in
+            let state = state
+            controlQueue.async { continuation.resume(returning: state.snapshot()) }
+        }
+    }
+
+    /// For application termination: stop/dispose the unit before releasing file access.
+    public func shutdown() { closeSynchronously() }
+
+    private func closeSynchronously() {
+        let state = state
+        // Drain pending work on both queues before releasing decoder/device resources.
+        producerQueue.sync { state.closeProducer() }
+        controlQueue.sync { state.closeControl() }
+    }
+
+    private static func switchOutput(_ deviceID: UInt32?, pause: Bool, force: Bool, resumeOverride: Bool?, exclusive: Bool, state: EngineState) throws -> PlaybackSnapshot {
+        _ = state.snapshot()
+        guard let session = state.session else {
+            state.deviceID = deviceID
+            if let recovery = state.routeRecovery {
+                do {
+                    let replacement = try OutputSession(decoder: DecoderFactory.open(url: recovery.url), url: recovery.url, deviceID: deviceID, entryID: recovery.entryID, token: recovery.token, exclusive: exclusive, processed: state.processed)
+                    state.session = replacement; state.url = recovery.url
+                    try replacement.seek(recovery.position)
+                    if resumeOverride == true { try replacement.play() }
+                    state.routeRecovery = nil; state.error = nil; state.needsRecovery = false
+                    state.exclusiveOutput = exclusive
+                } catch {
+                    state.closeSession(); state.routeRecovery = recovery; state.needsRecovery = true
+                    throw error
                 }
                 state.exclusiveOutput = exclusive
+                state.scheduleProducerTimerUpdate()
                 return state.snapshot()
             }
             if !force, state.exclusiveOutput == exclusive, session.device.id == deviceID, session.outputStatus.error == nil, state.error == nil {
                 state.error = nil; state.needsRecovery = false
                 if pause { try session.pause() }
                 state.deviceID = deviceID
+                state.scheduleProducerTimerUpdate()
                 return state.snapshot()
             }
             let previous = state.deviceID
@@ -266,6 +364,7 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 if resume { try replacement.play() }
                 state.deviceID = deviceID
                 state.exclusiveOutput = exclusive
+                state.scheduleProducerTimerUpdate()
                 return state.snapshot()
             } catch {
                 let failure = error
@@ -286,88 +385,10 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
                 throw failure
             }
         }
-    }
-
-    public func prepareNext(_ next: PlaybackContinuation?, after token: UUID) async {
-        guard !Task.isCancelled else { return }
-        let request = UUID()
-        let shouldPrepare = (try? await perform { state -> Bool in
-            guard let session = state.session, session.pcm.current.token == token else { return false }
-            if session.pcm.hasAudibleCrossfade { return false }
-            if session.pcm.requestedID == next?.id, session.pcm.requestedToken == token { return false }
-            state.preparation = request
-            state.preparer.invalidate(request)
-            if session.pcm.hasQueuedBoundary { try session.seek(session.position) }
-            guard session.pcm.current.token == token else { return false }
-            session.pcm.request(next?.id, after: token)
-            return next != nil
-        }) ?? false
-        guard shouldPrepare, let next, !Task.isCancelled else { return }
-        let format = try? await perform { state -> (Double, Int)? in
-            guard let session = state.session, session.processed else { return nil }
-            return (session.decoder.pcmFormat.mSampleRate, Int(session.decoder.pcmFormat.mChannelsPerFrame))
-        }
-        let prepared = await state.preparer.prepare(next, request: request,
-            outputRate: format?.0, outputChannels: format?.1)
-        guard !Task.isCancelled, let prepared else { return }
-        _ = try? await perform { state in
-            guard state.preparation == request, let session = state.session,
-                  session.pcm.current.token == token else { return }
-            _ = session.pcm.install(prepared)
-        }
-    }
-
-    public func prepareCrossfade(_ next: PlaybackContinuation, currentRoot: URL, overlap: Double, after token: UUID) async {
-        guard !Task.isCancelled else { return }
-        let context = try? await perform { state -> (PlaybackContinuation, Double, UUID, Int)? in
-            guard let session = state.session, session.processed, session.pcm.current.token == token,
-                  session.pcm.requestedID == next.id, !session.pcm.hasQueuedBoundary else { return nil }
-            return (PlaybackContinuation(id: token, url: session.pcm.current.url, accessRoot: currentRoot),
-                    session.decoder.pcmFormat.mSampleRate, state.preparation, Int(session.decoder.pcmFormat.mChannelsPerFrame))
-        }
-        guard let context = context ?? nil else { return }
-        let pair = await state.preparer.prepareCrossfade(current: context.0, next: next,
-            overlap: overlap, rate: context.1, channels: context.3, request: context.2)
-        guard !Task.isCancelled, let pair else { return }
-        _ = try? await perform { state in
-            guard state.preparation == context.2, let session = state.session,
-                  session.pcm.current.token == token else { return }
-            _ = session.pcm.install(pair)
-        }
-    }
-
-    public func snapshot() async -> PlaybackSnapshot {
-        await withCheckedContinuation { continuation in
-            let state = state
-            queue.async { continuation.resume(returning: state.snapshot()) }
-        }
-    }
-
-    /// For application termination: stop/dispose the unit before releasing file access.
-    public func shutdown() { closeSynchronously() }
-
-    private func closeSynchronously() {
-        let state = state
-        // Drain pending work before releasing decoder/device resources. The last
-        // owner can also release the engine on its own queue; syncing there
-        // would deadlock. Neither branch queues deferred teardown or captures self.
-        if DispatchQueue.getSpecific(key: queueKey) != nil { state.close() }
-        else { queue.sync { state.close() } }
-    }
-
-    private func perform<T: Sendable>(_ operation: @escaping @Sendable (EngineState) throws -> T) async throws -> T {
-        try await withCheckedThrowingContinuation { continuation in
-            let state = state
-            queue.async {
-                defer { state.updateTimer() }
-                continuation.resume(with: Result { try operation(state) })
-            }
-        }
-    }
 }
 
 private final class EngineState: @unchecked Sendable {
-    // Every field is accessed only on AudioPlaybackEngine.queue.
+    // Fields accessed from BOTH queues (protected by queue-specific access patterns):
     var session: OutputSession?
     let preparer = ContinuationPreparer()
     var preparation = UUID()
@@ -378,15 +399,21 @@ private final class EngineState: @unchecked Sendable {
     var routeRecovery: (url: URL, position: Double, entryID: UUID?, token: UUID)?
     var error: String?
     var needsRecovery = false
-    private var timer: DispatchSourceTimer?
-    private var pumping = false
+    
+    // Producer queue only:
+    private var producerTimer: DispatchSourceTimer?
 
-    func startTimer(on queue: DispatchQueue) {
+    func scheduleProducerTimerUpdate() {
+        // Called on control queue - schedule timer update on producer queue
+        // We don't need to pass state, the producer queue will check session.isPlaying
+    }
+
+    func startProducerTimer(on queue: DispatchQueue) {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .distantFuture)
         timer.setEventHandler { [weak self] in
             guard let self, let session, session.isPlaying else { return }
-            defer { self.updateTimer() }
+            defer { self.scheduleProducerTimerUpdate() }
             do { try session.pump() }
             catch {
                 try? session.pause()
@@ -395,24 +422,11 @@ private final class EngineState: @unchecked Sendable {
                 engineLog.error("Playback stopped: \(error.localizedDescription, privacy: .public)")
             }
         }
-        self.timer = timer
+        self.producerTimer = timer
         timer.resume()
     }
 
-    func updateTimer() {
-        let shouldPump = session?.isPlaying == true
-        guard pumping != shouldPump else { return }
-        pumping = shouldPump
-        if shouldPump {
-            timer?.schedule(deadline: .now(), repeating: .milliseconds(40), leeway: .milliseconds(10))
-        } else {
-            // Keep the source balanced and reusable, without waking while idle.
-            timer?.schedule(deadline: .distantFuture)
-        }
-    }
-
     func snapshot() -> PlaybackSnapshot {
-        defer { updateTimer() }
         let audible = session?.pcm.audible
         if let audible { url = audible.segment.url }
         return PlaybackSnapshot(source: audible.map { ($0.segment.decoder as? ConvertedPCMDecoder)?.originalSource ?? $0.segment.decoder.source },
@@ -437,7 +451,17 @@ private final class EngineState: @unchecked Sendable {
     }
 
     func closeSession() { preparer.invalidate(); preparation = UUID(); session?.close(); session = nil; url = nil; routeRecovery = nil; error = nil; needsRecovery = false }
-    func close() { timer?.cancel(); timer = nil; pumping = false; closeSession() }
+
+    func closeControl() {
+        // Called on control queue
+    }
+
+    func closeProducer() {
+        // Called on producer queue
+        producerTimer?.cancel()
+        producerTimer = nil
+        closeSession()
+    }
 }
 
 private final class OutputSession {

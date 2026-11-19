@@ -22,6 +22,8 @@ struct ArtistsView: View {
 
     @State private var artists: [ArtistBrowseCollection] = []
     @State private var arranger = ArtistBrowseArranger()
+    @State private var renderItems: [ArtistRenderItem] = []
+    @State private var currentTrackIDCache: String?
 
     private var visibleArtists: [ArtistBrowseCollection] {
         if case .artist(let name) = selection { return artists.filter { $0.name == name } }
@@ -46,8 +48,8 @@ struct ArtistsView: View {
         }
     }
 
-    private var renderItems: [ArtistRenderItem] {
-        visibleArtists.flatMap { artist in
+    private func rebuildRenderItems() {
+        renderItems = visibleArtists.flatMap { artist in
             var items: [ArtistRenderItem] = [.header(artist)]
             for album in artist.albums {
                 items.append(.album(artist: artist.name, album: album))
@@ -64,7 +66,7 @@ struct ArtistsView: View {
     }
 
     var body: some View {
-        let currentTrackID = library.trackID(at: player.currentURL)
+        let currentTrackID = currentTrackIDCache
         GeometryReader { geometry in
             let listWidth = min(285, max(180, geometry.size.width * 0.28))
             let compact = geometry.size.width - listWidth < 560
@@ -140,8 +142,15 @@ struct ArtistsView: View {
                 guard !Task.isCancelled else { return }
                 artists = result
                 if case .artist(let name) = selection, !result.contains(where: { $0.name == name }) { selection = .all }
+                rebuildRenderItems()
             } catch is CancellationError { }
             catch { /* Preparation has no fallible I/O; retain the displayed snapshot. */ }
+        }
+        .onChange(of: player.currentURL) {
+            currentTrackIDCache = library.trackID(at: player.currentURL)
+        }
+        .onChange(of: selection) { _ in
+            rebuildRenderItems()
         }
     }
 
