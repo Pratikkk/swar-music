@@ -417,8 +417,16 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
     private func closeSynchronously() {
         let state = state
         // Drain pending work on both queues before releasing decoder/device resources.
-        producerQueue.sync { state.closeProducer() }
-        controlQueue.sync { state.closeControl() }
+        if DispatchQueue.getSpecific(key: producerQueueKey) == nil {
+            producerQueue.sync { state.closeProducer() }
+        } else {
+            state.closeProducer()
+        }
+        if DispatchQueue.getSpecific(key: controlQueueKey) == nil {
+            controlQueue.sync { state.closeControl() }
+        } else {
+            state.closeControl()
+        }
     }
 
     private static func switchOutput(_ deviceID: UInt32?, pause: Bool, force: Bool, resumeOverride: Bool?, exclusive: Bool, state: EngineState) throws -> PlaybackSnapshot {

@@ -113,7 +113,6 @@ public enum RhythmAnalysis {
         var position: Int64 = 0
 
         // Fast-path sample extractor for common PCM formats
-        let channelStride = bytes / channels
         let sampleExtractor: (UnsafeRawPointer, Int, Int) -> Double
 
         if floating {
@@ -132,13 +131,16 @@ public enum RhythmAnalysis {
             switch bits {
             case 16:
                 sampleExtractor = { ptr, frame, channel in
-                    let int16Ptr = ptr.assumingMemoryBound(to: Int16.self)
-                    let raw = int16Ptr[frame * channels + channel]
-                    return Double(raw) / Double(Int16.max)
+                    let offset = frame * bytes + channel * sampleBytes
+                    let first = UInt16(ptr.load(fromByteOffset: offset, as: UInt8.self))
+                    let second = UInt16(ptr.load(fromByteOffset: offset + 1, as: UInt8.self))
+                    let raw = bigEndian ? first << 8 | second : first | second << 8
+                    return signed
+                        ? Double(Int16(bitPattern: raw)) / 32768
+                        : (Double(raw) - 32768) / 32768
                 }
             case 24, 20:
                 sampleExtractor = { ptr, frame, channel in
-                    let baseOffset = frame * bytes + channel * sampleBytes
                     var raw: UInt32 = 0
                     if bigEndian {
                         raw = UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes, as: UInt8.self)) << 16
@@ -149,7 +151,7 @@ public enum RhythmAnalysis {
                         raw |= UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes + 1, as: UInt8.self)) << 8
                         raw |= UInt32(ptr.load(fromByteOffset: frame * bytes + channel * sampleBytes + 2, as: UInt8.self)) << 16
                     }
-                    if highAligned { raw >>= 8 }
+                    if highAligned { raw >>= sampleBytes * 8 - bits }
                     if bits == 20 { raw &= 0xFFFFF }
                     let range = UInt32(1) << bits
                     let half = Float(range / 2)
@@ -158,20 +160,27 @@ public enum RhythmAnalysis {
                 }
             case 32:
                 sampleExtractor = { ptr, frame, channel in
-                    let int32Ptr = ptr.assumingMemoryBound(to: Int32.self)
-                    let raw = int32Ptr[frame * channels + channel]
-                    return Double(raw) / Double(Int32.max)
+                    let offset = frame * bytes + channel * sampleBytes
+                    var raw: UInt32 = 0
+                    for byte in 0..<4 {
+                        let shift = (bigEndian ? 3 - byte : byte) * 8
+                        raw |= UInt32(ptr.load(fromByteOffset: offset + byte, as: UInt8.self)) << shift
+                    }
+                    return signed
+                        ? Double(Int32(bitPattern: raw)) / Double(Int32.max)
+                        : (Double(raw) - 2_147_483_648) / 2_147_483_648
                 }
             case 8:
                 sampleExtractor = { ptr, frame, channel in
-                    let uint8Ptr = ptr.assumingMemoryBound(to: UInt8.self)
-                    let raw = uint8Ptr[frame * channels + channel]
-                    return Double(raw) / Double(UInt8.max)
+                    let offset = frame * bytes + channel * sampleBytes
+                    let raw = ptr.load(fromByteOffset: offset, as: UInt8.self)
+                    return signed
+                        ? Double(Int8(bitPattern: raw)) / Double(Int8.max)
+                        : (Double(raw) - 128) / 128
                 }
             default:
                 // Fallback for unsupported bit depths
                 sampleExtractor = { ptr, frame, channel in
-                    let baseOffset = frame * bytes + channel * sampleBytes
                     var raw: UInt64 = 0
                     for byte in 0..<sampleBytes {
                         let shift = (bigEndian ? sampleBytes - byte - 1 : byte) * 8
@@ -191,24 +200,16 @@ public enum RhythmAnalysis {
             }
         }
 
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: 8192 * bytes, alignment: 16)
-        defer { buffer.deallocate() }
-        let started = ProcessInfo.processInfo.systemUptime
-        let count = Int(ceil(Double(decoder.frameCount) / f.mSampleRate * 100))
-        var sums = [Double](repeating: 0, count: count), counts = [Int](repeating: 0, count: count)
-        let stride = max(1, Int(f.mSampleRate / 4000))
-        var position: Int64 = 0
         while position < decoder.frameCount {
             try Task.checkCancellation()
             guard ProcessInfo.processInfo.systemUptime - started < timeLimit else { throw AudioFailure("Rhythm analysis exceeded its background time budget.") }
             let frames = try decoder.read(into: buffer, frames: UInt32(min(8192, decoder.frameCount - position)))
             guard frames > 0 else { break }
-            let ptr = buffer.assumingMemoryBound(to: UInt8.self)
             for frame in 0..<Int(frames) where (Int(position) + frame) % stride == 0 {
                 var energy = 0.0
                 for channel in 0..<channels {
                     let sample = sampleExtractor(buffer, frame, channel)
-                    if sample.isFinite { energy += min(1, sample * sample) / Double(channels) }
+                    if sample.isFinite { energy += min(1.0, sample * sample) / Double(channels) }
                 }
                 let bin = min(count - 1, Int(Double(position + Int64(frame)) / f.mSampleRate * 100))
                 sums[bin] += energy; counts[bin] += 1
@@ -241,7 +242,7 @@ public enum RhythmAnalysis {
 public actor RhythmStore {
     public static let shared = RhythmStore()
     private let directory: URL?
-    private var tail: Task<Void, Never>?
+    private var tail: Task<RhythmProfile, Error>?
     private var tailKey: String?  // Track the key associated with the current tail task
     
     // In-memory LRU cache with bounds
@@ -277,7 +278,7 @@ public actor RhythmStore {
     public func cancelForURL(_ url: URL, accessRoot: URL) async {
         let key = await makeKey(url: url, accessRoot: accessRoot)
         // Cancel any in-flight task for this key
-        if let task = tail, tailKey == key {
+        if tailKey == key {
             // The tail task is for this key, cancel it
             tail?.cancel()
             tail = nil
@@ -307,6 +308,7 @@ public actor RhythmStore {
     }
 
     public func profile(url: URL, accessRoot: URL, codecDirectory: URL? = nil) async throws -> RhythmProfile {
+        try Task.checkCancellation()
         // Generate key first to check memory cache
         let key = await makeKey(url: url, accessRoot: accessRoot)
         if key.isEmpty { throw AudioFailure("The song is unavailable for analysis.") }
@@ -321,7 +323,7 @@ public actor RhythmStore {
         
         let previous = tail, directory = directory
         let task = Task.detached(priority: .utility) {
-            await previous?.value
+            _ = try? await previous?.value
             try Task.checkCancellation()
             let acquired = accessRoot.startAccessingSecurityScopedResource()
             defer { if acquired { accessRoot.stopAccessingSecurityScopedResource() } }

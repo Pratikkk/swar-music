@@ -6,7 +6,7 @@ import os
 struct EngineLifetimeTests {
     @Test func deinitWaitsForPendingAudioQueueWork() {
         let queue = DispatchQueue(label: "test.swar.lifetime.pending")
-        let owner = OSAllocatedUnfairLock(initialState: Optional(AudioPlaybackEngine(queue: queue)))
+        let owner = OSAllocatedUnfairLock(initialState: Optional(AudioPlaybackEngine(controlQueue: queue, producerQueue: queue)))
         let entered = DispatchSemaphore(value: 0)
         let unblock = DispatchSemaphore(value: 0)
         let releasing = DispatchSemaphore(value: 0)
@@ -30,7 +30,7 @@ struct EngineLifetimeTests {
 
     @Test func deinitAndRepeatedShutdownOnAudioQueueDoNotDeadlock() {
         let queue = DispatchQueue(label: "test.swar.lifetime.reentrant")
-        let owner = OSAllocatedUnfairLock(initialState: Optional(AudioPlaybackEngine(queue: queue)))
+        let owner = OSAllocatedUnfairLock(initialState: Optional(AudioPlaybackEngine(controlQueue: queue, producerQueue: queue)))
         let released = DispatchSemaphore(value: 0)
         queue.async {
             owner.withLock {

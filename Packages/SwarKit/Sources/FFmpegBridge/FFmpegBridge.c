@@ -30,6 +30,7 @@ typedef struct {
 } SwarFFAPI;
 static pthread_mutex_t g_api_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void *g_library = NULL;
+static char *g_library_path = NULL;
 static SwarFFAPI g_api;
 static int g_api_loaded = 0;
 struct SwarFFDecoder {
@@ -95,6 +96,11 @@ static int next_frame(SwarFFDecoder *d, char *error, size_t size) {
 static int load_shared_api(const char *library, void **out_library, SwarFFAPI *out_api, char *error, size_t size) {
     pthread_mutex_lock(&g_api_mutex);
     if (g_api_loaded) {
+        if (strcmp(library, g_library_path) != 0) {
+            snprintf(error, size, "A different bundled codec library is already loaded");
+            pthread_mutex_unlock(&g_api_mutex);
+            return -1;
+        }
         *out_library = g_library;
         *out_api = g_api;
         pthread_mutex_unlock(&g_api_mutex);
@@ -122,7 +128,16 @@ static int load_shared_api(const char *library, void **out_library, SwarFFAPI *o
         return -1;
     }
 
+    char *library_path = strdup(library);
+    if (!library_path) {
+        snprintf(error, size, "Could not cache the bundled codec library path");
+        dlclose(handle);
+        pthread_mutex_unlock(&g_api_mutex);
+        return -1;
+    }
+
     g_library = handle;
+    g_library_path = library_path;
     g_api = api;
     g_api_loaded = 1;
     *out_library = g_library;

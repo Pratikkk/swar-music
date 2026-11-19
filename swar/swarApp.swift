@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AppKit
+import Combine
 import SwarUI
 import Library
 import Player
@@ -59,9 +60,6 @@ final class SwarAppDelegate: NSObject, NSApplicationDelegate {
         guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
               let icon = NSImage(contentsOf: url) else { return }
         NSApplication.shared.applicationIconImage = icon
-
-        // Initialize occlusion observer
-        _ = OcclusionObserver.shared
 
         // Notify Player and AudioEngine of occlusion changes
         occlusionObserver = NotificationCenter.default
