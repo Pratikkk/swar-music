@@ -101,7 +101,7 @@ samples: samples,
 progress: player.duration > 0 ? state.displayedPosition(player.position) / player.duration : 0,
 duration: player.duration,
 mini: mini,
-isDragging: state.dragging,
+isPlaying: player.isPlaying,
 changed: { fraction in
 if !state.dragging {
 state.begin(at: state.displayedPosition(player.position))

@@ -11,9 +11,10 @@ private struct WaveformGeometryRequest: Equatable {
 @MainActor
 struct WaveformSeekSurface: View {
     let samples: [Float]
-    let progress: Double // Base progress from player (low-frequency ~25 Hz updates)
+    let progress: Double
     let duration: Double
     let mini: Bool
+    var isPlaying: Bool = false
     var cornerRadius: CGFloat = 6
     var isDragging = false
     let changed: (Double) -> Void
@@ -35,7 +36,7 @@ struct WaveformSeekSurface: View {
         // pausing when playback stops, at end of track, or when app is occluded/backgrounded.
         // The base `progress` comes from the low-frequency player.position (~25 Hz / 40 ms timer).
         // We interpolate between updates using the timeline's high-resolution date.
-        TimelineView(.animation(minimumInterval: 1.0 / 120, paused: progress >= 1.0 || duration <= 0 || progress.isNaN || progress.isInfinite || occlusionObserver.shouldPauseAnimations)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 120, paused: !isPlaying || progress >= 1.0 || duration <= 0 || progress.isNaN || progress.isInfinite || occlusionObserver.shouldPauseAnimations)) { timeline in
             waveformView(progress: displayProgress(at: timeline.date))
         }
         .onChange(of: progress, initial: true) { _, newProgress in
