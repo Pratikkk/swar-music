@@ -256,9 +256,10 @@ private struct CachedSweepingPhrase: View {
 
     @State private var cachedAttributedString: AttributedString?
     @State private var lastCacheKey: (lineId: Int, words: [LyricsWord], end: Double)?
+    @StateObject private var occlusionObserver = OcclusionObserver.shared
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !player.isPlaying)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !player.isPlaying || occlusionObserver.shouldPauseAnimations)) { context in
             let position = clock.displayPosition(at: context.date)
             Text(buildAttributedString(position: position))
         }
