@@ -27,6 +27,7 @@ struct WaveformSeekSurface: View {
     // State for 120 Hz interpolation: track last known base progress and when it was observed
     @State private var lastBaseProgress: Double = 0
     @State private var lastBaseTime: TimeInterval = 0
+    @State private var cachedPath: Path = Path()
     @StateObject private var occlusionObserver = OcclusionObserver.shared
 
     var body: some View {
@@ -61,8 +62,7 @@ struct WaveformSeekSurface: View {
             let request = WaveformGeometryRequest(samples: samples, size: geometry.size, mini: mini)
 
             Canvas { context, size in
-                let request = WaveformGeometryRequest(samples: samples, size: size, mini: mini)
-                let path = Self.path(samples: request.samples, size: request.size, mini: request.mini)
+                let path = cachedPath.isEmpty ? Self.path(samples: request.samples, size: request.size, mini: request.mini) : cachedPath
                 context.fill(path, with: .color(.primary.opacity(colorScheme == .dark ? 0.25 : 0.19)))
 
                 var playedContext = context
@@ -87,7 +87,9 @@ struct WaveformSeekSurface: View {
             }
             .drawingGroup(opaque: false, colorMode: .extendedLinear)
             .frame(height: mini ? 24 : 44)
-            .onChange(of: request, initial: true) {}
+            .onChange(of: request, initial: true) { _, newRequest in
+                cachedPath = Self.path(samples: newRequest.samples, size: newRequest.size, mini: newRequest.mini)
+            }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .local)
                 .onChanged { value in
