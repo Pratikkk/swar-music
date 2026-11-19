@@ -150,7 +150,7 @@ private struct NowPlayingArtwork: View {
                         }
                     VStack(spacing: 6) {
                         Text(title).font(.system(size: 23, weight: .semibold))
-                            .lineLimit(2).frame(height: 54).frame(maxWidth: .infinity)
+                            .lineLimit(nil).frame(maxWidth: .infinity)
                             .textSelection(.enabled).help(title)
                             .contentTransition(.opacity)
                         metadata.frame(height: 18)
