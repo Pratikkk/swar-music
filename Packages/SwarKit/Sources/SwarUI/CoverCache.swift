@@ -41,7 +41,7 @@ final class CoverCache: @unchecked Sendable {
     private var inFlight: [String: Flight] = [:]
     // Registration, completion and cancellation share one lock so a cancelled
     // cell cannot leave an orphan task or remove a newer request for the same key.
-    private let inFlightLock = NSLock()
+    private let inFlightLock = NSRecursiveLock()
     /// Scale the memory budget with physical RAM: roughly 0.4% of memory,
     /// clamped between 16 MB (small Macs) and 64 MB (large Macs).
     private let costLimit: Int = {

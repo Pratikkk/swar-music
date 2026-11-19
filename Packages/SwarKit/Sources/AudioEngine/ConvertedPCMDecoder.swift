@@ -135,7 +135,7 @@ private final class ConverterFeed: @unchecked Sendable {
     init(source: CrossfadeFloatSource, buffer: AVAudioPCMBuffer) { self.source = source; self.buffer = buffer }
     func provide(_ packets: AVAudioPacketCount, status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
         do {
-            let count = min(Int64(min(packets, 4096), buffer.frameCapacity), source.decoder.frameCount - position)
+            let count = min(Int64(min(packets, min(4096, buffer.frameCapacity))), source.decoder.frameCount - position)
             guard count > 0 else { status.pointee = .endOfStream; return nil }
             let samples = buffer.mutableAudioBufferList.pointee.mBuffers.mData!.assumingMemoryBound(to: Float.self)
             try source.read(into: samples, frames: Int(count))
