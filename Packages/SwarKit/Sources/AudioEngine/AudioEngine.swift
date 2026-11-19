@@ -11,7 +11,7 @@ private let timerLog = Logger(subsystem: "catto.swar", category: "AudioTimer")
 private let errorLog = Logger(subsystem: "catto.swar", category: "AudioError")
 
 // Notification name for occlusion state changes
-extension Notification.Name {
+public extension Notification.Name {
     static let swarOcclusionStateChanged = Notification.Name("swarOcclusionStateChanged")
 }
 
