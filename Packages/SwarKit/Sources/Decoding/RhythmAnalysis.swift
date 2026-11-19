@@ -36,7 +36,7 @@ public enum RhythmAnalysis {
         }
         let low = max(1, Int(rate * 60 / 180)), high = Int(rate * 60 / 60)
         var scores = [Double](repeating: 0, count: high + 2)
-   l        let n = centered.count
+           let n = centered.count
      var prefixSq = [Double](repeating: 0, count: n + 1)
         for i in 0..<n { prefixSq[i + 1] = prefixSq[i] + centered[i] * centered[i] }
         centered.withUnsafeBufferPointer { buf in
