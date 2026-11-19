@@ -560,10 +560,9 @@ private final class EngineState: @unchecked Sendable {
             let isPlaying = session?.isPlaying ?? false
             let isPaused = self.isProducerPaused
             self.sessionLock.unlock()
-            
-            guard let session, isPlaying, !isPaused else { return }
-            defer { self.scheduleProducerTimerUpdate() }
-            do { try session.pump() }
+             guard let session, isPlaying, !isPaused else { return }
+
+             do { try session.pump() }
             catch {
                 self.sessionLock.lock()
                 try? session.pause()
