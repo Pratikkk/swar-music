@@ -136,7 +136,7 @@ struct CollectionManagerView: View {
         } message: {
             let size = page?.tracks.filter { pendingBatchTrash.contains($0.id) }
                 .reduce(Int64(0)) { $0 + max(0, $1.fileSize) } ?? 0
-            Text("Move \(pendingBatchTrash.count) reviewed files (\(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))) to macOS Trash? Swar checks that an unselected copy remains in every duplicate group. This cannot guarantee the copies contain identical audio. The operation stops on error and any files already moved remain in Trash.")
+            Text("Move \(pendingBatchTrash.count) reviewed files (\(size.formatted(.byteCount(style: .file)))) to macOS Trash? Swar checks that an unselected copy remains in every duplicate group. This cannot guarantee the copies contain identical audio. The operation stops on error and any files already moved remain in Trash.")
         }
         .alert("Move Song to Trash?", isPresented: $showTrashConfirmation) {
             Button("Move to Trash", role: .destructive) {
@@ -181,7 +181,7 @@ struct CollectionManagerView: View {
         HStack(spacing: 20) {
             metric(summary.songs.formatted(), label: "Songs")
             metric(summary.albums.formatted(), label: "Albums")
-            metric(ByteCountFormatter.string(fromByteCount: summary.bytes, countStyle: .file), label: "Indexed size")
+            metric(summary.bytes.formatted(.byteCount(style: .file)), label: "Indexed size")
             metric(durationLabel(summary.duration), label: "Duration")
             Spacer(minLength: 0)
         }

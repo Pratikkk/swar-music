@@ -205,7 +205,7 @@ private struct SongInfoView: View {
                     info("Duration", String(format: "%d:%02d", Int(max(0, track.duration)) / 60, Int(max(0, track.duration)) % 60))
                     info("Source", track.sourceFormat?.description ?? track.codec ?? "Unavailable")
                     info("Bitrate", track.bitRate.map { String(format: "%.0f kbps", Double($0) / 1000) } ?? "—")
-                    info("File Size", ByteCountFormatter.string(fromByteCount: track.fileSize, countStyle: .file))
+                    info("File Size", track.fileSize.formatted(.byteCount(style: .file)))
                     info("Modified", track.modifiedAt.formatted(date: .abbreviated, time: .shortened))
                     info("Location", (try? library.location(for: track).file.path) ?? track.relativePath)
                     if let error = track.error { info("Read Error", error) }

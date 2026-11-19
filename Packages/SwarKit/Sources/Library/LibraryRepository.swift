@@ -296,7 +296,7 @@ public actor LibraryRepository {
             let recent = rows.map { row in
                 LibraryAlbumSummary(title: row["album"], artist: row["albumArtist"], artworkKey: row["artworkKey"], trackCount: row["trackCount"], playableCount: row["playableCount"], losslessTrackCount: row["losslessTrackCount"])
             }
-            let favourites = try LibraryTrack.fetchAll(db, sql: "SELECT * FROM tracks WHERE " + visible + " AND EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isFavorite = 1) ORDER BY addedAt DESC, id LIMIT ?", arguments: [max(1, limit)])
+            let favourites = try LibraryTrack.fetchAll(db, sql: "SELECT " + browseSelection + " FROM tracks WHERE " + visible + " AND EXISTS (SELECT 1 FROM track_preferences p WHERE p.trackID = tracks.id AND p.isFavorite = 1) ORDER BY addedAt DESC, id LIMIT ?", arguments: [max(1, limit)])
             return LibraryOverview(trackCount: count, albumCount: albumCount, losslessCount: lossless, favourites: favourites, recentAlbums: recent)
         }
     }
