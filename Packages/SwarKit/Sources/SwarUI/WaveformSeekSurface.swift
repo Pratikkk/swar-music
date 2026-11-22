@@ -131,9 +131,10 @@ struct WaveformSeekSurface: View {
             }
             .focusable().focused($focused).focusEffectDisabled()
             .overlay {
+                // Subtle focus ring that only appears when focused, matching bottom player style
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .strokeBorder(focused ? palette.accent.opacity(0.65) : .clear, lineWidth: 1)
-                    .padding(-3).allowsHitTesting(false)
+                    .strokeBorder(focused ? palette.accent.opacity(0.35) : .clear, lineWidth: 1)
+                    .padding(-2).allowsHitTesting(false)
             }
             .onKeyPress(.leftArrow) { step(mini ? -1 : -5); return .handled }
             .onKeyPress(.rightArrow) { step(mini ? 1 : 5); return .handled }
@@ -174,16 +175,19 @@ struct WaveformSeekSurface: View {
         guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return Path() }
         let count = max(1, Int(min(mini ? 72 : 120, size.width / (mini ? 4 : 4.5))))
         let values = amplitudes(samples: samples, count: count)
+        // Bottom inset for proper baseline alignment (matches mini player bar)
         let bottomInset: CGFloat = 2
         guard !values.isEmpty else {
             return Path(roundedRect: CGRect(x: 0, y: size.height - bottomInset - 1, width: size.width, height: 1), cornerRadius: 0.5)
         }
         let cell = size.width / CGFloat(values.count)
         let gap = min(mini ? 1.5 : 1.75, cell * 0.4)
-        let availableHeight = max(1, size.height - 4)
+        // Use full available height minus bottom inset for proper baseline alignment
+        let availableHeight = size.height - bottomInset
         var path = Path()
         for (index, amplitude) in values.enumerated() {
-            let height = min(size.height, max(min(1.5, size.height), availableHeight * CGFloat(amplitude)))
+            let barHeight = max(1.5, availableHeight * CGFloat(amplitude))
+            let height = min(availableHeight, max(1.5, availableHeight * CGFloat(amplitude)))
             path.addRoundedRect(in: CGRect(x: CGFloat(index) * cell + gap / 2,
                 y: size.height - bottomInset - height, width: cell - gap, height: height),
                 cornerSize: CGSize(width: min(1.5, cell / 2), height: 1.5))

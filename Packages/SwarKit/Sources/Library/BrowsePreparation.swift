@@ -44,7 +44,7 @@ public actor ArtistBrowseArranger {
                 }
                 let songs = ordered.enumerated().map { index, track in
                     ArtistBrowseSong(track: track, number: index + 1,
-                        startsDisc: index > 0 && track.discNumber != ordered[index - 1].discNumber)
+                        startsDisc: index == 0 || track.discNumber != ordered[index - 1].discNumber)
                 }
                 let seconds = ordered.reduce(0) { $0 + ($1.duration.isFinite ? max(0, $1.duration) : 0) }
                 let minutes = ceil(seconds / 60)

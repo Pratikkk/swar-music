@@ -22,12 +22,28 @@ struct ArtistsView: View {
 
     @State private var artists: [ArtistBrowseCollection] = []
     @State private var arranger = ArtistBrowseArranger()
-    @State private var renderItems: [ArtistRenderItem] = []
     @State private var currentTrackIDCache: String?
 
     private var visibleArtists: [ArtistBrowseCollection] {
         if case .artist(let name) = selection { return artists.filter { $0.name == name } }
         return artists
+    }
+
+    private var renderItems: [ArtistRenderItem] {
+        visibleArtists.flatMap { artist in
+            var items: [ArtistRenderItem] = [.header(artist)]
+            for album in artist.albums {
+                items.append(.album(artist: artist.name, album: album))
+                for song in album.songs {
+                    if song.startsDisc {
+                        items.append(.disc(artist: artist.name, album: album,
+                                           disc: max(1, song.track.discNumber)))
+                    }
+                    items.append(.song(artist: artist.name, album: album, song: song))
+                }
+            }
+            return items
+        }
     }
 
     /// A single flat row model lets the native List virtualize artists, albums
@@ -45,23 +61,6 @@ struct ArtistsView: View {
             case .disc(let artist, let album, let disc): "disc\u{1f}\(artist)\u{1f}\(album.title)\u{1f}\(disc)"
             case .song(_, _, let song): "song\u{1f}\(song.track.id)"
             }
-        }
-    }
-
-    private func rebuildRenderItems() {
-        renderItems = visibleArtists.flatMap { artist in
-            var items: [ArtistRenderItem] = [.header(artist)]
-            for album in artist.albums {
-                items.append(.album(artist: artist.name, album: album))
-                for song in album.songs {
-                    if song.startsDisc {
-                        items.append(.disc(artist: artist.name, album: album,
-                                           disc: max(1, song.track.discNumber)))
-                    }
-                    items.append(.song(artist: artist.name, album: album, song: song))
-                }
-            }
-            return items
         }
     }
 
@@ -142,15 +141,14 @@ struct ArtistsView: View {
                 guard !Task.isCancelled else { return }
                 artists = result
                 if case .artist(let name) = selection, !result.contains(where: { $0.name == name }) { selection = .all }
-                rebuildRenderItems()
             } catch is CancellationError { }
             catch { /* Preparation has no fallible I/O; retain the displayed snapshot. */ }
         }
         .onChange(of: player.currentURL) {
             currentTrackIDCache = library.trackID(at: player.currentURL)
         }
-        .onChange(of: selection) { _ in
-            rebuildRenderItems()
+        .task {
+            currentTrackIDCache = library.trackID(at: player.currentURL)
         }
     }
 
@@ -311,7 +309,8 @@ struct ArtistsView: View {
     }
 
     private func canPlay(_ tracks: [LibraryTrack]) -> Bool { tracks.contains { $0.error == nil } }
-    private func start(_ tracks: [LibraryTrack], shuffle: Bool) {
-        if let first = tracks.first(where: { $0.error == nil }) { play(first, tracks, shuffle) }
-    }
+private func start(_ tracks: [LibraryTrack], shuffle: Bool) {
+    let playable = tracks.filter { $0.error == nil }
+    if let first = playable.first { play(first, playable, shuffle) }
+}
 }
