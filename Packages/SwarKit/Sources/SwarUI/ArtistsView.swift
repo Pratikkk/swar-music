@@ -156,6 +156,13 @@ struct ArtistsView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 4) {
+                    if artists.isEmpty {
+                        if library.isScanning {
+                            ProgressView().padding()
+                        } else {
+                            Text("No artists found").foregroundStyle(.secondary).padding()
+                        }
+                    }
                     selectionRow(.all) {
                         HStack(spacing: 9) {
                             Image(systemName: "music.mic").font(.title2).frame(width: 36, height: 36)
@@ -242,9 +249,10 @@ struct ArtistsView: View {
             CoverArt(url: library.artworkURL(album.artworkKey), title: album.title, cornerRadius: 4)
                 .frame(width: size, height: size)
                 .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "play.fill").font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white).frame(width: 28, height: 28)
-                        .background(.black.opacity(0.5), in: Circle()).padding(7)
+Image(systemName: "play.fill").font(.system(size: 12, weight: .semibold))
+    .foregroundStyle(.white).frame(width: 28, height: 28)
+    .background(.black.opacity(0.5), in: Circle()).padding(7)
+    .accessibilityHidden(true)
                 }
         }
         .buttonStyle(PlaybackButtonStyle(unavailable: !canPlay(album.tracks)))
@@ -259,8 +267,8 @@ struct ArtistsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 actions(album.tracks, label: "Actions for \(album.title)")
             }
-            let metadata = [album.tracks.first?.genre, album.tracks.first?.year]
-                .compactMap { $0 }.filter { !$0.isEmpty && $0 != "Unknown Genre" }.joined(separator: " · ")
+let metadata = [album.tracks.first?.genre, album.tracks.first?.year]
+    .compactMap { $0 }.filter { !$0.isEmpty && $0 != "Unknown Genre" && $0 != "Unknown Year" }.joined(separator: " · ")
             if !metadata.isEmpty {
                 Text(metadata).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }

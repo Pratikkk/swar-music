@@ -8,7 +8,7 @@ public struct ArtistBrowseSong: Identifiable, Sendable {
 }
 
 public struct ArtistBrowseAlbum: Identifiable, Sendable {
-    public var id: String { title }
+    public var id: String { title + "\u{1f}" + (tracks.first?.id ?? "") }
     public let title: String
     public let tracks: [LibraryTrack]
     public let songs: [ArtistBrowseSong]
