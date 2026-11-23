@@ -26,6 +26,7 @@ public final class FFmpegDecoder: AudioDecoding {
     private let fileURL: URL
     private let libraryURL: URL
     private var errorBuffer = [CChar](repeating: 0, count: 512)
+    private let seekScratch: UnsafeMutableRawPointer
 
     public init(url: URL, codecDirectory: URL? = nil) throws {
         guard url.isFileURL else { throw AudioFailure("Only local audio files are supported.") }
@@ -54,9 +55,10 @@ public final class FFmpegDecoder: AudioDecoding {
             mChannelsPerFrame: UInt32(info.channels), mBitsPerChannel: UInt32(info.pcm_bits), mReserved: 0)
         frameCount = info.frame_count
         decoder = opened
+        seekScratch = .allocate(byteCount: 4096 * Int(bytes), alignment: 16)
     }
 
-    deinit { swar_ff_close(decoder) }
+    deinit { seekScratch.deallocate(); swar_ff_close(decoder) }
 
     public func tag(_ aliases: String...) -> String? {
         for key in aliases {
@@ -98,9 +100,9 @@ public final class FFmpegDecoder: AudioDecoding {
     }
 
     private func seekFromBeginning(to target: Int64) throws {
-        var message = [CChar](repeating: 0, count: 512)
-        guard let fresh = swar_ff_open(fileURL.path, libraryURL.path, &message, message.count) else {
-            throw AudioFailure(Self.message(message))
+        let errorCapacity = errorBuffer.count
+        guard let fresh = swar_ff_open(fileURL.path, libraryURL.path, &errorBuffer, errorCapacity) else {
+            throw AudioFailure(Self.message(errorBuffer))
         }
         let info = swar_ff_info(fresh)
         guard info.sample_rate == source.sampleRate, Int(info.channels) == source.channels,
@@ -115,10 +117,8 @@ public final class FFmpegDecoder: AudioDecoding {
         swar_ff_close(decoder)
         decoder = fresh
         var remaining = target
-        let scratch = UnsafeMutableRawPointer.allocate(byteCount: 4096 * Int(pcmFormat.mBytesPerFrame), alignment: 16)
-        defer { scratch.deallocate() }
         while remaining > 0 {
-            let count = try read(into: scratch, frames: UInt32(min(remaining, 4096)))
+            let count = try read(into: seekScratch, frames: UInt32(min(remaining, 4096)))
             guard count > 0 else { throw AudioFailure("The seek target is beyond the decoded audio.") }
             remaining -= Int64(count)
         }
