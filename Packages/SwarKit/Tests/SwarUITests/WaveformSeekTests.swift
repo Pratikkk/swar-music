@@ -4,6 +4,10 @@ import SwiftUI
 
 @MainActor
 struct WaveformSeekTests {
+    @Test func waveformAnimationRateStaysWithinTheUiRefreshBudget() {
+        #expect((30...60).contains(WaveformSeekSurface.maximumAnimationFramesPerSecond))
+    }
+
     @Test func pointerMappingClampsToSongBoundaries() {
         #expect(WaveformSeekSurface.fraction(-20, width: 200) == 0)
         #expect(WaveformSeekSurface.fraction(50, width: 200) == 0.25)

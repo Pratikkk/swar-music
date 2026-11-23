@@ -7,9 +7,10 @@ private struct WaveformGeometryRequest: Equatable {
 }
 
 /// Cached song geometry stays still; only the progress mask and pointer feedback move.
-/// Uses Canvas + drawingGroup for Metal-backed GPU rendering at 120 Hz on ProMotion.
 @MainActor
 struct WaveformSeekSurface: View {
+    static let maximumAnimationFramesPerSecond: Double = 60
+
     let samples: [Float]
     let progress: Double
     let duration: Double
@@ -25,18 +26,16 @@ struct WaveformSeekSurface: View {
     @FocusState private var focused: Bool
     @State private var hoverFraction: Double?
     @State private var pointerDragging = false
-    // State for 120 Hz interpolation: track last known base progress and when it was observed
+    // Interpolate between low-frequency player position updates.
     @State private var lastBaseProgress: Double = 0
     @State private var lastBaseTime: TimeInterval = 0
     @State private var cachedPath: Path = Path()
     @StateObject private var occlusionObserver = OcclusionObserver.shared
 
     var body: some View {
-        // TimelineView drives 120 Hz interpolation on ProMotion when playing,
-        // pausing when playback stops, at end of track, or when app is occluded/backgrounded.
-        // The base `progress` comes from the low-frequency player.position (~25 Hz / 40 ms timer).
-        // We interpolate between updates using the timeline's high-resolution date.
-        TimelineView(.animation(minimumInterval: 1.0 / 120, paused: !isPlaying || progress >= 1.0 || duration <= 0 || progress.isNaN || progress.isInfinite || occlusionObserver.shouldPauseAnimations)) { timeline in
+        // Interpolate between low-frequency position updates at up to 60 Hz.
+        // Pause when playback stops, reaches the end, or the app is occluded/backgrounded.
+        TimelineView(.animation(minimumInterval: 1.0 / Self.maximumAnimationFramesPerSecond, paused: !isPlaying || progress >= 1.0 || duration <= 0 || progress.isNaN || progress.isInfinite || occlusionObserver.shouldPauseAnimations)) { timeline in
             waveformView(progress: displayProgress(at: timeline.date))
         }
         .onChange(of: progress, initial: true) { _, newProgress in
