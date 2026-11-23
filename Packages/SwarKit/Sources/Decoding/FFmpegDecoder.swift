@@ -26,7 +26,7 @@ public final class FFmpegDecoder: AudioDecoding {
     private let fileURL: URL
     private let libraryURL: URL
     private var errorBuffer = [CChar](repeating: 0, count: 512)
-    private let seekScratch: UnsafeMutableRawPointer
+    private var seekScratch: UnsafeMutableRawPointer?
 
     public init(url: URL, codecDirectory: URL? = nil) throws {
         guard url.isFileURL else { throw AudioFailure("Only local audio files are supported.") }
@@ -55,10 +55,9 @@ public final class FFmpegDecoder: AudioDecoding {
             mChannelsPerFrame: UInt32(info.channels), mBitsPerChannel: UInt32(info.pcm_bits), mReserved: 0)
         frameCount = info.frame_count
         decoder = opened
-        seekScratch = .allocate(byteCount: 4096 * Int(bytes), alignment: 16)
     }
 
-    deinit { seekScratch.deallocate(); swar_ff_close(decoder) }
+    deinit { seekScratch?.deallocate(); swar_ff_close(decoder) }
 
     public func tag(_ aliases: String...) -> String? {
         for key in aliases {
@@ -117,11 +116,23 @@ public final class FFmpegDecoder: AudioDecoding {
         swar_ff_close(decoder)
         decoder = fresh
         var remaining = target
-        while remaining > 0 {
-            let count = try read(into: seekScratch, frames: UInt32(min(remaining, 4096)))
-            guard count > 0 else { throw AudioFailure("The seek target is beyond the decoded audio.") }
-            remaining -= Int64(count)
+        if remaining > 0 {
+            let scratch = try seekScratchBuffer()
+            while remaining > 0 {
+                let count = try read(into: scratch, frames: UInt32(min(remaining, 4096)))
+                guard count > 0 else { throw AudioFailure("The seek target is beyond the decoded audio.") }
+                remaining -= Int64(count)
+            }
         }
+    }
+
+    private func seekScratchBuffer() throws -> UnsafeMutableRawPointer {
+        if let seekScratch { return seekScratch }
+        let (byteCount, overflow) = 4096.multipliedReportingOverflow(by: Int(pcmFormat.mBytesPerFrame))
+        guard !overflow, byteCount > 0 else { throw AudioFailure("The decoder scratch-buffer size is invalid.") }
+        let buffer = UnsafeMutableRawPointer.allocate(byteCount: byteCount, alignment: 16)
+        seekScratch = buffer
+        return buffer
     }
 
     private static func message(_ bytes: [CChar]) -> String {

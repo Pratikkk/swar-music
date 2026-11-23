@@ -43,6 +43,8 @@ struct SwarFFDecoder {
     int stream, offset, drained;
     int64_t seek_target, delivered;
     enum AVSampleFormat sample_format;
+    enum AVSampleFormat packed_format;
+    int storage_bytes, planar, can_copy_frame;
     SwarFFInfo info;
     const char *label;
 };
@@ -202,7 +204,10 @@ SwarFFDecoder *swar_ff_open(const char *path, const char *library, char *error, 
     }
     d->sample_format = d->frame->format;
     enum AVSampleFormat packed = A(av_get_packed_sample_fmt)(d->sample_format);
-    int storage_bits = 8 * A(av_get_bytes_per_sample)(packed);
+    d->packed_format = packed;
+    d->storage_bytes = A(av_get_bytes_per_sample)(packed);
+    int storage_bits = 8 * d->storage_bytes;
+    d->planar = A(av_sample_fmt_is_planar)(d->sample_format);
     if (packed != AV_SAMPLE_FMT_S16 && packed != AV_SAMPLE_FMT_S32 && packed != AV_SAMPLE_FMT_FLT && packed != AV_SAMPLE_FMT_U8) {
         snprintf(error, size, "Unsupported decoded PCM representation"); goto failure;
     }
@@ -223,6 +228,9 @@ SwarFFDecoder *swar_ff_open(const char *path, const char *library, char *error, 
         d->info.sample_rate < 1 || d->info.sample_rate > 384000) {
         snprintf(error, size, "Unsupported source format (up to 32-bit, 384 kHz, 8 channels)"); goto failure;
     }
+    d->can_copy_frame = !d->planar && d->storage_bytes == (d->info.pcm_bits + 7) / 8 &&
+        (d->info.is_float || d->info.pcm_bits == d->storage_bytes * 8) &&
+        d->packed_format != AV_SAMPLE_FMT_U8;
     AVRational samples = {1, (int)d->info.sample_rate};
     if (stream->duration != AV_NOPTS_VALUE)
         d->info.frame_count = A(av_rescale_q)(stream->duration, stream->time_base, samples);
@@ -264,8 +272,8 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
     *read = 0;
     int stride = (d->info.pcm_bits + 7) / 8;
     int channels = d->info.channels;
-    int storage = A(av_get_bytes_per_sample)(d->sample_format);
-    int planar = A(av_sample_fmt_is_planar)(d->sample_format);
+    int storage = d->storage_bytes;
+    int planar = d->planar;
     uint8_t *dest = output;
     while (*read < requested) {
         if (d->codec->codec_id == AV_CODEC_ID_ALAC && d->delivered >= d->info.frame_count) return 0;
@@ -312,7 +320,7 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
         if ((uint32_t)count > requested - *read) count = (int)(requested - *read);
         if (d->codec->codec_id == AV_CODEC_ID_ALAC && count > d->info.frame_count - d->delivered)
             count = (int)(d->info.frame_count - d->delivered);
-       if (!planar && storage == stride && (d->info.is_float || d->info.pcm_bits == storage * 8) && A(av_get_packed_sample_fmt)(d->sample_format) != AV_SAMPLE_FMT_U8) {
+       if (d->can_copy_frame) {
            size_t bytes = (size_t)count * (size_t)channels * (size_t)stride;
            const uint8_t *src = d->frame->extended_data[0] + (size_t)d->offset * (size_t)channels * (size_t)storage;
            memcpy(dest, src, bytes);
@@ -330,7 +338,7 @@ int swar_ff_read(SwarFFDecoder *d, void *output, uint32_t requested, uint32_t *r
                 // preserves the 24-bit two's-complement sign bit (bit 23);
                 // arithmetic sign extension would only affect the omitted byte.
                 if (!d->info.is_float && d->info.pcm_bits < storage * 8) value >>= storage * 8 - d->info.pcm_bits;
-                if (A(av_get_packed_sample_fmt)(d->sample_format) == AV_SAMPLE_FMT_U8) value ^= 0x80;
+                if (d->packed_format == AV_SAMPLE_FMT_U8) value ^= 0x80;
                 memcpy(dest, &value, stride);
                 dest += stride;
             }
