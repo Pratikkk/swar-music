@@ -18,6 +18,11 @@ private struct SharedTrackPageRequest: Equatable {
     let reversed: Bool
 }
 
+struct PlaybackRefreshRequest: Equatable {
+    let isPlaying: Bool
+    let isPaused: Bool
+}
+
 /// Local library browsing and the single-file playback surface.
 @MainActor
 public struct LibraryView: View {
@@ -33,6 +38,7 @@ public struct LibraryView: View {
     @FocusState private var searchFocused: Bool
     @FocusState private var sidebarFocused: Bool
     @State private var player: Player
+    @StateObject private var occlusionObserver = OcclusionObserver.shared
     @State private var selectedAlbum: String?
     @State private var requestedAlbum: String?
     @State private var showImporter = false
@@ -145,9 +151,8 @@ public struct LibraryView: View {
             lastTrackSearch = request.search
             await library.reload(resetLimit: true)
         }
-        .task(id: player.isPlaying) {
-            @ObservedObject var observer = OcclusionObserver.shared
-            while player.isPlaying && !Task.isCancelled && !observer.shouldPauseAnimations {
+        .task(id: PlaybackRefreshRequest(isPlaying: player.isPlaying, isPaused: occlusionObserver.shouldPauseAnimations)) {
+            while player.isPlaying && !Task.isCancelled && !occlusionObserver.shouldPauseAnimations {
                 await player.refresh()
                 do { try await Task.sleep(for: .milliseconds(400)) }
                 catch { break }
