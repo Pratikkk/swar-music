@@ -323,7 +323,6 @@ public final class AudioPlaybackEngine: PlaybackDriving, @unchecked Sendable {
         try await withCheckedThrowingContinuation { continuation in
             let state = state
             controlQueue.async {
-                defer { state.scheduleProducerTimerUpdate() }
                 continuation.resume(with: Result { try operation(state) })
             }
         }
@@ -527,6 +526,7 @@ private final class EngineState: @unchecked Sendable {
     private var producerTimer: DispatchSourceTimer?
     private var isProducerPaused = false
     private weak var producerQueue: DispatchQueue?
+    private var lastTimerInterval: DispatchTimeInterval?
 
     func scheduleProducerTimerUpdate() {
         // Called on control queue - schedule timer update on producer queue
@@ -538,12 +538,15 @@ private final class EngineState: @unchecked Sendable {
 
     private func updateProducerTimerOnProducerQueue() {
         let shouldPump = session?.isPlaying == true && !isProducerPaused
-        if shouldPump {
-            // Schedule repeating timer at 40ms interval with 10ms leeway
-            producerTimer?.schedule(deadline: .now(), repeating: .milliseconds(40), leeway: .milliseconds(10))
-        } else {
-            // Stop timer - schedule to distant future
+        let interval: DispatchTimeInterval = shouldPump ? .milliseconds(150) : .milliseconds(0)
+        // Use distantFuture to stop instead of a zero repeating interval
+        let stop = !shouldPump
+        if !stop, lastTimerInterval == interval { return }
+        lastTimerInterval = stop ? nil : interval
+        if stop {
             producerTimer?.schedule(deadline: .distantFuture)
+        } else {
+            producerTimer?.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(10))
         }
     }
 
