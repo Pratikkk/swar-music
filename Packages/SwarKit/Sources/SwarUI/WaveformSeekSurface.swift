@@ -177,18 +177,17 @@ struct WaveformSeekSurface: View {
         // Bottom inset for proper baseline alignment (matches mini player bar)
         let bottomInset: CGFloat = 2
         guard !values.isEmpty else {
-            return Path(roundedRect: CGRect(x: 0, y: size.height - bottomInset - 1, width: size.width, height: 1), cornerRadius: 0.5)
+            return Path(roundedRect: CGRect(x: 0, y: max(0, size.height - bottomInset - 1), width: size.width, height: 1), cornerRadius: 0.5)
         }
         let cell = size.width / CGFloat(values.count)
         let gap = min(mini ? 1.5 : 1.75, cell * 0.4)
         // Use full available height minus bottom inset for proper baseline alignment
-        let availableHeight = size.height - bottomInset
+        let availableHeight = max(1, size.height - bottomInset)
         var path = Path()
         for (index, amplitude) in values.enumerated() {
-            let barHeight = max(1.5, availableHeight * CGFloat(amplitude))
             let height = min(availableHeight, max(1.5, availableHeight * CGFloat(amplitude)))
             path.addRoundedRect(in: CGRect(x: CGFloat(index) * cell + gap / 2,
-                y: size.height - bottomInset - height, width: cell - gap, height: height),
+                y: max(0, size.height - bottomInset - height), width: cell - gap, height: height),
                 cornerSize: CGSize(width: min(1.5, cell / 2), height: 1.5))
         }
         return path

@@ -113,6 +113,7 @@ final class CrossfadeFloatSource {
     private let signed: Bool
     private let bigEndian: Bool
     private let highAligned: Bool
+    private let fastPath: Bool
     private let scratch: UnsafeMutableRawPointer
 
     init(_ decoder: any AudioDecoding) throws {
@@ -130,6 +131,13 @@ final class CrossfadeFloatSource {
         signed = format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
         bigEndian = format.mFormatFlags & kAudioFormatFlagIsBigEndian != 0
         highAligned = format.mFormatFlags & kAudioFormatFlagIsAlignedHigh != 0
+        // Fast path: native-endian, low-aligned PCM can be read with typed pointers,
+        // avoiding a per-sample byte loop on every pump tick.
+        fastPath = !bigEndian && !highAligned && (
+            (floating && bits == 32) ||
+            (!floating && bits == 16 && signed) ||
+            (!floating && bits == 32 && signed)
+        )
         scratch = .allocate(byteCount: CrossfadePCMReader.maximumReadFrames * bytes, alignment: 16)
     }
     deinit { scratch.deallocate() }
@@ -142,22 +150,42 @@ final class CrossfadeFloatSource {
             received += count
         }
         let data = scratch.assumingMemoryBound(to: UInt8.self)
-        for i in 0..<(frames * channels) {
-            var raw: UInt64 = 0
-            for byte in 0..<sampleBytes {
-                raw |= UInt64(data[i * sampleBytes + byte]) << ((bigEndian ? sampleBytes - byte - 1 : byte) * 8)
+        let total = frames * channels
+        if fastPath {
+            let raw = UnsafeMutableRawPointer(data)
+            switch (floating, bits) {
+            case (true, 32):
+                let floatPtr = raw.assumingMemoryBound(to: Float32.self)
+                for i in 0..<total {
+                    let v = floatPtr[i]
+                    output[i] = v.isFinite ? Float(max(-1, min(1, v))) : 0
+                }
+            case (false, 16):
+                let intPtr = raw.assumingMemoryBound(to: Int16.self)
+                for i in 0..<total { output[i] = Float(Int16(intPtr[i])) / 32768 }
+            case (false, 32):
+                let intPtr = raw.assumingMemoryBound(to: Int32.self)
+                for i in 0..<total { output[i] = Float(Int32(intPtr[i])) / 2147483648 }
+            default: break
             }
-            let sample: Double
-            if floating { sample = bits == 32 ? Double(Float(bitPattern: UInt32(truncatingIfNeeded: raw))) : Double(bitPattern: raw) }
-            else {
-                if highAligned { raw >>= sampleBytes * 8 - bits }
-                let range = UInt64(1) << bits
-                raw &= range - 1
-                let half = Int64(range / 2)
-                let value = signed ? (raw >= range / 2 ? Int64(raw) - Int64(range) : Int64(raw)) : Int64(raw) - half
-                sample = Double(value) / Double(half)
+        } else {
+            for i in 0..<total {
+                var raw: UInt64 = 0
+                for byte in 0..<sampleBytes {
+                    raw |= UInt64(data[i * sampleBytes + byte]) << ((bigEndian ? sampleBytes - byte - 1 : byte) * 8)
+                }
+                let sample: Double
+                if floating { sample = bits == 32 ? Double(Float(bitPattern: UInt32(truncatingIfNeeded: raw))) : Double(bitPattern: raw) }
+                else {
+                    if highAligned { raw >>= sampleBytes * 8 - bits }
+                    let range = UInt64(1) << bits
+                    raw &= range - 1
+                    let half = Int64(range / 2)
+                    let value = signed ? (raw >= range / 2 ? Int64(raw) - Int64(range) : Int64(raw)) : Int64(raw) - half
+                    sample = Double(value) / Double(half)
+                }
+                output[i] = sample.isFinite ? Float(max(-1, min(1, sample))) : 0
             }
-            output[i] = sample.isFinite ? Float(max(-1, min(1, sample))) : 0
         }
     }
 }

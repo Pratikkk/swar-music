@@ -32,6 +32,9 @@ public enum WaveformAnalysis {
         let bigEndian = format.mFormatFlags & kAudioFormatFlagIsBigEndian != 0
         let signed = format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
         let highAligned = format.mFormatFlags & kAudioFormatFlagIsAlignedHigh != 0
+        // Fast path: native-endian, low-aligned PCM read via typed pointers; 24-bit/big-endian
+        // fall back to the byte loop below.
+        let fastPath = !bigEndian && !highAligned
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: 16384 * frameBytes, alignment: 16)
         defer { buffer.deallocate() }
         let started = ProcessInfo.processInfo.systemUptime
@@ -59,6 +62,12 @@ public enum WaveformAnalysis {
             switch bits {
             case 16:
                 sampleExtractor = { ptr, frame, channel in
+                    if fastPath {
+                        let intPtr = ptr.assumingMemoryBound(to: Int16.self)
+                        return signed
+                            ? Double(Int16(intPtr[frame * channels + channel])) / 32768
+                            : (Double(UInt16(bitPattern: intPtr[frame * channels + channel])) - 32768) / 32768
+                    }
                     let offset = frame * frameBytes + channel * sampleBytes
                     let first = UInt16(ptr.load(fromByteOffset: offset, as: UInt8.self))
                     let second = UInt16(ptr.load(fromByteOffset: offset + 1, as: UInt8.self))
@@ -90,6 +99,12 @@ public enum WaveformAnalysis {
                 }
             case 32:
                 sampleExtractor = { ptr, frame, channel in
+                    if fastPath {
+                        let intPtr = ptr.assumingMemoryBound(to: Int32.self)
+                        return signed
+                            ? Double(Int32(intPtr[frame * channels + channel])) / Double(Int32.max)
+                            : (Double(UInt32(bitPattern: intPtr[frame * channels + channel])) - 2_147_483_648) / 2_147_483_648
+                    }
                     let offset = frame * frameBytes + channel * sampleBytes
                     var raw: UInt32 = 0
                     for byte in 0..<4 {
